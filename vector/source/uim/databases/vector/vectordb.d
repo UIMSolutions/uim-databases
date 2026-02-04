@@ -1,4 +1,4 @@
-module vectordb;
+module uim.databases.vector.vectordb;
 
 import std.algorithm;
 import std.array;

@@ -1,4 +1,4 @@
-module vectorops;
+module uim.databases.vector.vectorops;
 
 import std.math;
 import std.algorithm;
