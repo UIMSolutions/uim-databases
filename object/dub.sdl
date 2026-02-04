@@ -1,5 +1,5 @@
 // Metadata
-name "relational"
+name "object"
 description "A collection of libraries built up over eight years of experience with the D language."
 homepage "https://www.sueel.de/uim/framework"
 authors "Ozan Nurettin Süel" "UI Manufaktur"
@@ -8,7 +8,7 @@ license "Apache-2.0"
 
 // Target
 targetType "library"
-targetName "uim-databases-relational"
+targetName "uim-databases-object"
 
 // Dependencies
 dependency "uim-framework" version="~>24.2.1"

@@ -10,53 +10,37 @@ license "Apache-2.0"
 targetType "library"
 targetName "uim-framework"
 
-// External dependencies
-dependency "dlib" version="~>1.3.2"
-dependency "colored" version="~>0.0.31"
-dependency "vibe-d" version="~>0.10.3"
-dependency "dyaml" version="~>0.10.0"
+// Dependencies
+dependency "uim-framework:oop" version="~>24.2.1"
 
-// Internal Dependencies
-dependency ":compilers" version="*"
-dependency ":core" version="*"
-dependency ":css" version="*"
-dependency ":datascience" version="*"
-dependency ":engineering" version="*"
-dependency ":errors" version="*"
-dependency ":events" version="*"
-dependency ":filesystems" version="*"
-dependency ":html" version="*"
-dependency ":i18n" version="*"
-dependency ":jsons" version="*"
-dependency ":logging" version="*"
-dependency ":numerical" version="*"
-dependency ":oop" version="*"
-dependency ":services" version="*"
+// Configurations
+configuration "default" {
+	targetType "library"
+}
 
-// Neural networks
-dependency ":neural" version="*"
+configuration "modules" {
+	targetType "library"
+	versions "show_module"
+}
 
-// Source files
-sourceFiles "./source/uim/framework.d"
+configuration "tests" {
+	targetType "library"
+	versions "show_module" "show_test"
+}
 
-// Subpackages
-subPackage "compilers"
-subPackage "core"
-subPackage "css"
-subPackage "datascience"
-subPackage "engineering"
-subPackage "errors"
-subPackage "events"
-subPackage "html"
-subPackage "i18n"
-subPackage "jsons"
-subPackage "logging"
-subPackage "numerical"
-subPackage "neural"
-subPackage "oop"
-subPackage "security"
-subPackage "services"
-subPackage "filesystems"
+configuration "inits" {
+	targetType "library"
+	versions "show_module" "show_init"
+}
 
-buildRequirements "allowWarnings" "silenceDeprecations"
-buildOptions "ignoreDeprecations" "debugInfo"
+configuration "calls" {
+	targetType "library"
+	versions "show_module" "show_test" "show_function"
+}
+
+configuration "verbose" {
+	targetType "library"
+	versions "show_module" "show_test" "show_init" "show_function"
+}
+
+
