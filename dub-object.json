@@ -1,0 +1,13 @@
+{
+	"name": "object-database",
+	"description": "An object/document database implementation in D with vibe.d REST API",
+	"authors": ["Your Name"],
+	"copyright": "Copyright © 2026",
+	"license": "MIT",
+	"dependencies": {
+		"vibe-d": "~>0.9.0"
+	},
+	"versions": ["VibeDefaultMain"],
+	"mainSourceFile": "source/objectapp.d",
+	"targetType": "executable"
+}

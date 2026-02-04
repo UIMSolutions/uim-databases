@@ -1,0 +1,664 @@
+module relationaldb;
+
+import std.datetime;
+import std.algorithm;
+import std.array;
+import std.range;
+import std.exception;
+import std.conv;
+import std.string;
+import vibe.data.json;
+
+/// Column data types
+enum ColumnType {
+    INTEGER,
+    FLOAT,
+    STRING,
+    BOOLEAN,
+    DATE,
+    JSON
+}
+
+/// Column definition
+struct Column {
+    string name;
+    ColumnType type;
+    bool nullable = true;
+    bool primaryKey = false;
+    bool unique = false;
+    Json defaultValue;
+    
+    this(string name, ColumnType type, bool nullable = true) {
+        this.name = name;
+        this.type = type;
+        this.nullable = nullable;
+    }
+}
+
+/// Table schema
+class Schema {
+    string tableName;
+    Column[] columns;
+    string primaryKeyColumn;
+    string[][string] foreignKeys;  // column -> [refTable, refColumn]
+    string[][string] uniqueConstraints;  // constraint_name -> [columns]
+    
+    this(string tableName) {
+        this.tableName = tableName;
+    }
+    
+    /// Add a column to the schema
+    void addColumn(Column column) {
+        columns ~= column;
+        if (column.primaryKey) {
+            primaryKeyColumn = column.name;
+        }
+    }
+    
+    /// Add a foreign key constraint
+    void addForeignKey(string column, string refTable, string refColumn) {
+        foreignKeys[column] = [refTable, refColumn];
+    }
+    
+    /// Get column by name
+    Column* getColumn(string name) {
+        foreach (ref col; columns) {
+            if (col.name == name) return &col;
+        }
+        return null;
+    }
+    
+    /// Validate a row against the schema
+    void validateRow(Json row) {
+        foreach (col; columns) {
+            if (col.name !in row) {
+                if (!col.nullable && col.defaultValue.type == Json.Type.undefined) {
+                    throw new Exception("Column '" ~ col.name ~ "' cannot be null");
+                }
+                continue;
+            }
+            
+            auto value = row[col.name];
+            if (value.type == Json.Type.null_ && !col.nullable) {
+                throw new Exception("Column '" ~ col.name ~ "' cannot be null");
+            }
+            
+            // Type validation
+            if (value.type != Json.Type.null_) {
+                validateType(value, col.type, col.name);
+            }
+        }
+    }
+    
+    private void validateType(Json value, ColumnType expectedType, string colName) {
+        bool valid = false;
+        
+        final switch (expectedType) {
+            case ColumnType.INTEGER:
+                valid = value.type == Json.Type.int_;
+                break;
+            case ColumnType.FLOAT:
+                valid = value.type == Json.Type.float_ || value.type == Json.Type.int_;
+                break;
+            case ColumnType.STRING:
+                valid = value.type == Json.Type.string;
+                break;
+            case ColumnType.BOOLEAN:
+                valid = value.type == Json.Type.bool_;
+                break;
+            case ColumnType.DATE:
+                valid = value.type == Json.Type.string;  // ISO date string
+                break;
+            case ColumnType.JSON:
+                valid = true;  // Any JSON type
+                break;
+        }
+        
+        if (!valid) {
+            throw new Exception("Column '" ~ colName ~ "' type mismatch");
+        }
+    }
+    
+    /// Get schema as JSON
+    Json toJson() {
+        auto schemaJson = Json.emptyObject;
+        schemaJson["tableName"] = tableName;
+        schemaJson["primaryKey"] = primaryKeyColumn;
+        
+        Json[] colsJson;
+        foreach (col; columns) {
+            auto colJson = Json.emptyObject;
+            colJson["name"] = col.name;
+            colJson["type"] = to!string(col.type);
+            colJson["nullable"] = col.nullable;
+            colJson["primaryKey"] = col.primaryKey;
+            colJson["unique"] = col.unique;
+            colsJson ~= colJson;
+        }
+        schemaJson["columns"] = serializeToJson(colsJson);
+        
+        return schemaJson;
+    }
+}
+
+/// Row with metadata
+struct Row {
+    Json data;
+    SysTime createdAt;
+    SysTime updatedAt;
+    
+    this(Json data) {
+        this.data = data;
+        this.createdAt = Clock.currTime();
+        this.updatedAt = Clock.currTime();
+    }
+    
+    void update(Json newData) {
+        this.data = newData;
+        this.updatedAt = Clock.currTime();
+    }
+}
+
+/// WHERE clause condition
+struct WhereCondition {
+    string column;
+    string op;  // =, !=, >, <, >=, <=, LIKE, IN, IS NULL, IS NOT NULL
+    Json value;
+    
+    bool matches(Json row) {
+        if (column !in row) {
+            return op == "IS NULL";
+        }
+        
+        auto cellValue = row[column];
+        
+        switch (op) {
+            case "=":
+                return jsonEquals(cellValue, value);
+            case "!=":
+                return !jsonEquals(cellValue, value);
+            case ">":
+                return jsonCompare(cellValue, value) > 0;
+            case "<":
+                return jsonCompare(cellValue, value) < 0;
+            case ">=":
+                return jsonCompare(cellValue, value) >= 0;
+            case "<=":
+                return jsonCompare(cellValue, value) <= 0;
+            case "LIKE":
+                if (cellValue.type == Json.Type.string && value.type == Json.Type.string) {
+                    string pattern = value.get!string;
+                    string str = cellValue.get!string;
+                    return matchesLike(str, pattern);
+                }
+                return false;
+            case "IN":
+                if (value.type == Json.Type.array) {
+                    foreach (v; value) {
+                        if (jsonEquals(cellValue, v)) return true;
+                    }
+                }
+                return false;
+            case "IS NULL":
+                return cellValue.type == Json.Type.null_;
+            case "IS NOT NULL":
+                return cellValue.type != Json.Type.null_;
+            default:
+                return false;
+        }
+    }
+    
+    private bool matchesLike(string str, string pattern) {
+        // Simple LIKE implementation: % = wildcard
+        pattern = pattern.replace("%", ".*");
+        import std.regex;
+        auto re = regex("^" ~ pattern ~ "$");
+        return !matchFirst(str, re).empty;
+    }
+    
+    private bool jsonEquals(Json a, Json b) {
+        if (a.type != b.type) return false;
+        
+        final switch (a.type) {
+            case Json.Type.undefined:
+            case Json.Type.null_:
+                return true;
+            case Json.Type.bool_:
+                return a.get!bool == b.get!bool;
+            case Json.Type.int_:
+                return a.get!long == b.get!long;
+            case Json.Type.float_:
+                return a.get!double == b.get!double;
+            case Json.Type.string:
+                return a.get!string == b.get!string;
+            case Json.Type.array:
+            case Json.Type.object:
+                return a.toString() == b.toString();
+        }
+    }
+    
+    private int jsonCompare(Json a, Json b) {
+        if (a.type == Json.Type.int_ && b.type == Json.Type.int_) {
+            long av = a.get!long;
+            long bv = b.get!long;
+            return av < bv ? -1 : (av > bv ? 1 : 0);
+        }
+        if ((a.type == Json.Type.float_ || a.type == Json.Type.int_) &&
+            (b.type == Json.Type.float_ || b.type == Json.Type.int_)) {
+            double av = a.type == Json.Type.float_ ? a.get!double : a.get!long;
+            double bv = b.type == Json.Type.float_ ? b.get!double : b.get!long;
+            return av < bv ? -1 : (av > bv ? 1 : 0);
+        }
+        if (a.type == Json.Type.string && b.type == Json.Type.string) {
+            string av = a.get!string;
+            string bv = b.get!string;
+            return av < bv ? -1 : (av > bv ? 1 : 0);
+        }
+        return 0;
+    }
+}
+
+/// Query result for SELECT
+struct QueryResult {
+    Json[] rows;
+    string[] columns;
+    size_t rowCount;
+}
+
+/// Table class
+class Table {
+    string name;
+    Schema schema;
+    Row[] rows;
+    long[Json] primaryKeyIndex;  // pk_value -> row_index
+    
+    this(string name, Schema schema) {
+        this.name = name;
+        this.schema = schema;
+    }
+    
+    /// Insert a row
+    long insert(Json data) {
+        // Apply defaults
+        foreach (col; schema.columns) {
+            if (col.name !in data && col.defaultValue.type != Json.Type.undefined) {
+                data[col.name] = col.defaultValue;
+            }
+        }
+        
+        // Validate
+        schema.validateRow(data);
+        
+        // Check primary key uniqueness
+        if (schema.primaryKeyColumn.length > 0) {
+            auto pkValue = data[schema.primaryKeyColumn];
+            if (pkValue in primaryKeyIndex) {
+                throw new Exception("Primary key violation: duplicate value");
+            }
+        }
+        
+        // Check unique constraints
+        foreach (col; schema.columns) {
+            if (col.unique && col.name in data) {
+                auto value = data[col.name];
+                foreach (row; rows) {
+                    if (col.name in row.data && jsonEquals(row.data[col.name], value)) {
+                        throw new Exception("Unique constraint violation on column '" ~ col.name ~ "'");
+                    }
+                }
+            }
+        }
+        
+        auto row = Row(data);
+        long index = rows.length;
+        rows ~= row;
+        
+        // Update index
+        if (schema.primaryKeyColumn.length > 0 && schema.primaryKeyColumn in data) {
+            primaryKeyIndex[data[schema.primaryKeyColumn]] = index;
+        }
+        
+        return index;
+    }
+    
+    /// Select rows with WHERE clause
+    QueryResult select(string[] selectColumns, WhereCondition[] conditions, 
+                      string orderBy = "", bool ascending = true, 
+                      size_t limit = 0, size_t offset = 0) {
+        Row[] filtered;
+        
+        // Filter rows
+        foreach (row; rows) {
+            bool match = true;
+            foreach (cond; conditions) {
+                if (!cond.matches(row.data)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                filtered ~= row;
+            }
+        }
+        
+        // Sort
+        if (orderBy.length > 0) {
+            filtered.sort!((a, b) {
+                if (orderBy !in a.data || orderBy !in b.data) return false;
+                int cmp = compareJsonValues(a.data[orderBy], b.data[orderBy]);
+                return ascending ? cmp < 0 : cmp > 0;
+            });
+        }
+        
+        // Apply offset and limit
+        if (offset > 0 && offset < filtered.length) {
+            filtered = filtered[offset .. $];
+        } else if (offset >= filtered.length) {
+            filtered = [];
+        }
+        
+        if (limit > 0 && limit < filtered.length) {
+            filtered = filtered[0 .. limit];
+        }
+        
+        // Project columns
+        Json[] results;
+        foreach (row; filtered) {
+            Json projectedRow = Json.emptyObject;
+            
+            if (selectColumns.length == 0 || selectColumns[0] == "*") {
+                projectedRow = row.data.clone;
+            } else {
+                foreach (col; selectColumns) {
+                    if (col in row.data) {
+                        projectedRow[col] = row.data[col];
+                    }
+                }
+            }
+            results ~= projectedRow;
+        }
+        
+        return QueryResult(results, selectColumns, results.length);
+    }
+    
+    /// Update rows matching conditions
+    size_t update(Json updates, WhereCondition[] conditions) {
+        size_t updated = 0;
+        
+        foreach (ref row; rows) {
+            bool match = true;
+            foreach (cond; conditions) {
+                if (!cond.matches(row.data)) {
+                    match = false;
+                    break;
+                }
+            }
+            
+            if (match) {
+                // Merge updates
+                foreach (string key, value; updates) {
+                    row.data[key] = value;
+                }
+                row.updatedAt = Clock.currTime();
+                updated++;
+            }
+        }
+        
+        return updated;
+    }
+    
+    /// Delete rows matching conditions
+    size_t deleteRows(WhereCondition[] conditions) {
+        size_t deleted = 0;
+        Row[] remaining;
+        
+        foreach (row; rows) {
+            bool match = true;
+            foreach (cond; conditions) {
+                if (!cond.matches(row.data)) {
+                    match = false;
+                    break;
+                }
+            }
+            
+            if (match) {
+                deleted++;
+            } else {
+                remaining ~= row;
+            }
+        }
+        
+        rows = remaining;
+        rebuildPrimaryKeyIndex();
+        
+        return deleted;
+    }
+    
+    /// Count rows matching conditions
+    size_t count(WhereCondition[] conditions = []) {
+        if (conditions.length == 0) {
+            return rows.length;
+        }
+        
+        size_t cnt = 0;
+        foreach (row; rows) {
+            bool match = true;
+            foreach (cond; conditions) {
+                if (!cond.matches(row.data)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) cnt++;
+        }
+        return cnt;
+    }
+    
+    /// Get row by primary key
+    Json getByPrimaryKey(Json pkValue) {
+        auto ptr = pkValue in primaryKeyIndex;
+        if (ptr is null) {
+            throw new Exception("Row with primary key not found");
+        }
+        return rows[*ptr].data.clone;
+    }
+    
+    private void rebuildPrimaryKeyIndex() {
+        primaryKeyIndex.clear();
+        if (schema.primaryKeyColumn.length == 0) return;
+        
+        foreach (i, row; rows) {
+            if (schema.primaryKeyColumn in row.data) {
+                primaryKeyIndex[row.data[schema.primaryKeyColumn]] = i;
+            }
+        }
+    }
+    
+    private bool jsonEquals(Json a, Json b) {
+        if (a.type != b.type) return false;
+        
+        final switch (a.type) {
+            case Json.Type.undefined:
+            case Json.Type.null_:
+                return true;
+            case Json.Type.bool_:
+                return a.get!bool == b.get!bool;
+            case Json.Type.int_:
+                return a.get!long == b.get!long;
+            case Json.Type.float_:
+                return a.get!double == b.get!double;
+            case Json.Type.string:
+                return a.get!string == b.get!string;
+            case Json.Type.array:
+            case Json.Type.object:
+                return a.toString() == b.toString();
+        }
+    }
+    
+    private int compareJsonValues(Json a, Json b) {
+        if (a.type == Json.Type.undefined && b.type == Json.Type.undefined) return 0;
+        if (a.type == Json.Type.undefined) return 1;
+        if (b.type == Json.Type.undefined) return -1;
+        
+        if (a.type == Json.Type.int_ && b.type == Json.Type.int_) {
+            long av = a.get!long;
+            long bv = b.get!long;
+            return av < bv ? -1 : (av > bv ? 1 : 0);
+        }
+        if ((a.type == Json.Type.float_ || a.type == Json.Type.int_) &&
+            (b.type == Json.Type.float_ || b.type == Json.Type.int_)) {
+            double av = a.type == Json.Type.float_ ? a.get!double : a.get!long;
+            double bv = b.type == Json.Type.float_ ? b.get!double : b.get!long;
+            return av < bv ? -1 : (av > bv ? 1 : 0);
+        }
+        if (a.type == Json.Type.string && b.type == Json.Type.string) {
+            string av = a.get!string;
+            string bv = b.get!string;
+            return av < bv ? -1 : (av > bv ? 1 : 0);
+        }
+        
+        return a.toString() < b.toString() ? -1 : (a.toString() > b.toString() ? 1 : 0);
+    }
+}
+
+/// Relational Database
+class RelationalDatabase {
+    string name;
+    Table[string] tables;
+    
+    this(string name = "default") {
+        this.name = name;
+    }
+    
+    /// Create a table
+    void createTable(Schema schema) {
+        if (schema.tableName in tables) {
+            throw new Exception("Table '" ~ schema.tableName ~ "' already exists");
+        }
+        tables[schema.tableName] = new Table(schema.tableName, schema);
+    }
+    
+    /// Drop a table
+    void dropTable(string tableName) {
+        tables.remove(tableName);
+    }
+    
+    /// Get a table
+    Table getTable(string tableName) {
+        auto ptr = tableName in tables;
+        if (ptr is null) {
+            throw new Exception("Table '" ~ tableName ~ "' not found");
+        }
+        return *ptr;
+    }
+    
+    /// Check if table exists
+    bool hasTable(string tableName) {
+        return (tableName in tables) !is null;
+    }
+    
+    /// List all tables
+    string[] listTables() {
+        return tables.keys.dup;
+    }
+    
+    /// Perform an INNER JOIN between two tables
+    QueryResult join(string leftTable, string rightTable, 
+                    string leftColumn, string rightColumn,
+                    WhereCondition[] leftConditions = [],
+                    WhereCondition[] rightConditions = []) {
+        auto left = getTable(leftTable);
+        auto right = getTable(rightTable);
+        
+        Json[] results;
+        
+        foreach (leftRow; left.rows) {
+            // Check left conditions
+            bool leftMatch = true;
+            foreach (cond; leftConditions) {
+                if (!cond.matches(leftRow.data)) {
+                    leftMatch = false;
+                    break;
+                }
+            }
+            if (!leftMatch) continue;
+            
+            if (leftColumn !in leftRow.data) continue;
+            auto leftValue = leftRow.data[leftColumn];
+            
+            foreach (rightRow; right.rows) {
+                // Check right conditions
+                bool rightMatch = true;
+                foreach (cond; rightConditions) {
+                    if (!cond.matches(rightRow.data)) {
+                        rightMatch = false;
+                        break;
+                    }
+                }
+                if (!rightMatch) continue;
+                
+                if (rightColumn !in rightRow.data) continue;
+                auto rightValue = rightRow.data[rightColumn];
+                
+                // Check join condition
+                if (jsonEquals(leftValue, rightValue)) {
+                    Json joined = Json.emptyObject;
+                    
+                    // Add left table columns with prefix
+                    foreach (string key, value; leftRow.data) {
+                        joined[leftTable ~ "." ~ key] = value;
+                    }
+                    
+                    // Add right table columns with prefix
+                    foreach (string key, value; rightRow.data) {
+                        joined[rightTable ~ "." ~ key] = value;
+                    }
+                    
+                    results ~= joined;
+                }
+            }
+        }
+        
+        return QueryResult(results, [], results.length);
+    }
+    
+    /// Get database statistics
+    Json getStats() {
+        auto stats = Json.emptyObject;
+        stats["name"] = name;
+        stats["tableCount"] = tables.length;
+        
+        Json[] tablesInfo;
+        foreach (tableName, table; tables) {
+            auto tableInfo = Json.emptyObject;
+            tableInfo["name"] = tableName;
+            tableInfo["rowCount"] = table.rows.length;
+            tableInfo["columnCount"] = table.schema.columns.length;
+            tablesInfo ~= tableInfo;
+        }
+        stats["tables"] = serializeToJson(tablesInfo);
+        
+        return stats;
+    }
+    
+    private bool jsonEquals(Json a, Json b) {
+        if (a.type != b.type) return false;
+        
+        final switch (a.type) {
+            case Json.Type.undefined:
+            case Json.Type.null_:
+                return true;
+            case Json.Type.bool_:
+                return a.get!bool == b.get!bool;
+            case Json.Type.int_:
+                return a.get!long == b.get!long;
+            case Json.Type.float_:
+                return a.get!double == b.get!double;
+            case Json.Type.string:
+                return a.get!string == b.get!string;
+            case Json.Type.array:
+            case Json.Type.object:
+                return a.toString() == b.toString();
+        }
+    }
+}

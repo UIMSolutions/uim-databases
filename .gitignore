@@ -1,0 +1,16 @@
+.dub/
+*.o
+*.obj
+*.exe
+vector-database
+vector-database.so
+vector-database.dylib
+vector-database.dll
+vector-database.a
+vector-database.lib
+__test__*__
+*.lst
+docs/
+*.swp
+*.bak
+*~

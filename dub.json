@@ -1,0 +1,28 @@
+{
+	"name": "databases",
+	"description": "Vector, Object, and Relational database implementations in D with vibe.d REST APIs",
+	"authors": ["Your Name"],
+	"copyright": "Copyright © 2026",
+	"license": "MIT",
+	"dependencies": {
+		"vibe-d": "~>0.9.0"
+	},
+	"versions": ["VibeDefaultMain"],
+	"configurations": [
+		{
+			"name": "vector",
+			"targetType": "executable",
+			"mainSourceFile": "source/app.d"
+		},
+		{
+			"name": "object",
+			"targetType": "executable",
+			"mainSourceFile": "source/objectapp.d"
+		},
+		{
+			"name": "relational",
+			"targetType": "executable",
+			"mainSourceFile": "source/relationalapp.d"
+		}
+	]
+}
