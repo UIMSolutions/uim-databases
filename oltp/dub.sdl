@@ -1,0 +1,12 @@
+name "uim-databases-oltp"
+description "OLTP (Online Transaction Processing) Library for UIM Databases"
+authors "UIM Solutions"
+copyright "Copyright © 2026, UIM Solutions"
+license "Apache-2.0"
+
+targetType "library"
+
+dependency "vibe-d" version="~>0.9.0"
+
+sourcePaths "source"
+importPaths "source"
