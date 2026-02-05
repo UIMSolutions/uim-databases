@@ -1,0 +1,20 @@
+name "uim-databases-rtad"
+description "Real-time Analytical Database for UIM suite"
+authors "UIMSolutions"
+copyright "Copyright © 2026 UIMSolutions"
+license "Apache-2.0"
+
+targetType "library"
+
+configuration "library" {
+    targetType "library"
+    excludedSourceFiles "source/app.d"
+}
+
+configuration "application" {
+    targetType "executable"
+    mainSourceFile "source/app.d"
+    versions "VibeDefaultMain"
+}
+
+dependency "vibe-d" version="~0.9.0"
