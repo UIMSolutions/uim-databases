@@ -5,7 +5,7 @@ import vibe.http.server;
 import vibe.core.log;
 import uim.databases.rtad;
 
-void main() {
+shared static this() {
     auto settings = new HTTPServerSettings();
     settings.port = 8086;
     settings.bindAddresses = ["127.0.0.1"];
@@ -20,16 +20,9 @@ void main() {
     
     // Start processor
     processor.start();
-    scope(exit) processor.stop();
     
     // Setup and listen
-    auto listener = listenHTTP(settings, api.router);
-    scope (exit) listener.stopListening();
+    listenHTTP(settings, api.router);
     
     logInfo("Real-time Analytical Database server running on http://localhost:8086");
-    logInfo("Storage: %s (series: %d, points: %d)", 
-        storage.name, storage.seriesCount, storage.totalPointCount);
-
-
-}    
-    runEventLoop();
+}

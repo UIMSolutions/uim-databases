@@ -17,4 +17,4 @@ configuration "application" {
     versions "VibeDefaultMain"
 }
 
-dependency "vibe-d" version="~0.9.0"
+dependency "uim-framework" version=">~26.2.1"
