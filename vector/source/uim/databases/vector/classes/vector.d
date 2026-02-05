@@ -5,9 +5,22 @@ import uim.databases.vector;
 
 /// Represents a vector with its identifier and metadata
 class Vector {
-    string id;
-    double[] values;
-    string[string] metadata;
+    this() {
+    }
+
+    // #region id
+    /// Identifier of the vector
+    protected string _id;
+    @property string id() const {
+        return _id;
+    }
+    @property void id(string value) {
+        _id = value;
+    }
+    // #endregion id
+
+    protected double[] _values;
+    protected string[string] _metadata;
 
     this(string id, double[] values, string[string] metadata = null) {
         this.id = id;
