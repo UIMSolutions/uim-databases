@@ -1,41 +1,51 @@
 module uim.databases.oltp;
 
-/// UIM OLTP (Online Transaction Processing) Library
+/// UIM OLTP (Online Transaction Processing) Database
 /// 
-/// This module provides comprehensive OLTP functionality including:
+/// A complete OLTP database system with:
+/// - In-memory storage with persistence
 /// - Transaction management with ACID properties
-/// - Connection pooling for efficient resource management
-/// - Query builder for safe SQL construction
-/// - Support for multiple isolation levels
+/// - Lock manager for concurrency control
+/// - Write-Ahead Logging (WAL) for durability
+/// - REST API for remote access
+/// - Multiple isolation levels
 /// 
 /// Example usage:
 /// ```d
 /// import uim.databases.oltp;
 /// 
-/// // Create connection pool
-/// auto pool = new ConnectionPool("host=localhost;db=mydb", 10);
+/// // Create and start database
+/// auto db = new OLTPDatabase("mydb");
 /// 
-/// // Acquire connection
-/// auto conn = pool.acquire();
+/// // Create a table
+/// db.createTable("users", ["id", "name", "email"]);
 /// 
 /// // Begin transaction
-/// auto txn = conn.beginTransaction(IsolationLevel.serializable);
+/// auto txn = db.beginTransaction();
 /// 
 /// try {
-///     // Execute queries within transaction
-///     txn.execute("INSERT INTO users (name, email) VALUES ('John', 'john@example.com')");
-///     txn.execute("UPDATE accounts SET balance = balance - 100 WHERE user_id = 1");
+///     // Insert data
+///     auto data = Json(["name": "John", "email": "john@example.com"]);
+///     auto rowId = txn.insert("users", data);
+///     
+///     // Query data
+///     auto rows = txn.query("users", "name", "John");
 ///     
 ///     // Commit transaction
 ///     txn.commit();
 /// } catch (Exception e) {
-///     // Rollback on error
 ///     txn.rollback();
-/// } finally {
-///     // Release connection back to pool
-///     pool.release(conn);
 /// }
+/// 
+/// // Checkpoint and shutdown
+/// db.checkpoint();
+/// db.shutdown();
 /// ```
 
 public import uim.databases.oltp.interfaces;
 public import uim.databases.oltp.classes;
+public import uim.databases.oltp.storage;
+public import uim.databases.oltp.lock;
+public import uim.databases.oltp.wal;
+public import uim.databases.oltp.database;
+public import uim.databases.oltp.api;

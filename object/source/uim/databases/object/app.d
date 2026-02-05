@@ -1,4 +1,4 @@
-module source.objectapp;
+module uim.databases.object.app;
 
 import vibe.vibe;
 import vibe.data.json;

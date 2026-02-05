@@ -1,23 +1,8 @@
-module uim.databases.vector.vectordb;
+module uim.databases.vector.classes.database;
 
-import std.algorithm;
-import std.array;
-import std.range;
-import std.exception;
-import std.conv;
-import vectorops;
+import uim.databases.vector;
 
-/// Search result containing vector and its distance
-struct SearchResult {
-    Vector vector;
-    double distance;
-    
-    int opCmp(ref const SearchResult other) const {
-        if (distance < other.distance) return -1;
-        if (distance > other.distance) return 1;
-        return 0;
-    }
-}
+@safe:
 
 /// Main vector database class
 class VectorDatabase {

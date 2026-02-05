@@ -1,6 +1,6 @@
 // Metadata
-name "uim-framework"
-description "A collection of libraries built up over eight years of experience with the D language."
+name "vector"
+description "Vector Database Module"
 homepage "https://www.sueel.de/uim/framework"
 authors "Ozan Nurettin Süel" "UI Manufaktur"
 copyright "Copyright © 2018-2026, Ozan Nurettin Süel"
@@ -8,10 +8,10 @@ license "Apache-2.0"
 
 // Target
 targetType "library"
-targetName "uim-framework"
+targetName "uim-databases-vector"
 
 // Dependencies
-dependency "uim-framework:oop" version="~>24.2.1"
+dependency "uim-framework" version="~>24.2.1"
 
 // Configurations
 configuration "default" {

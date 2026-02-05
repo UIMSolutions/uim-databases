@@ -5,24 +5,6 @@ import std.algorithm;
 import std.range;
 import std.array;
 
-/// Represents a vector with its identifier and metadata
-struct Vector {
-    string id;
-    double[] values;
-    string[string] metadata;
-
-    this(string id, double[] values, string[string] metadata = null) {
-        this.id = id;
-        this.values = values.dup;
-        this.metadata = metadata;
-    }
-
-    /// Get the dimensionality of the vector
-    @property size_t dimension() const {
-        return values.length;
-    }
-}
-
 /// Calculate the Euclidean distance between two vectors
 double euclideanDistance(const double[] a, const double[] b) {
     assert(a.length == b.length, "Vectors must have the same dimension");
