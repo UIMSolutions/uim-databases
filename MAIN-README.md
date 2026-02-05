@@ -1,6 +1,6 @@
 # Database Implementations in D with vibe.d
 
-This workspace contains three complete database implementations in D language with REST APIs powered by vibe.d:
+This workspace contains seven complete database implementations in D language with REST APIs powered by vibe.d:
 
 ## 🗄️ Databases
 
@@ -97,6 +97,23 @@ Relationship database for modeling networks with advanced graph algorithms and c
 
 ---
 
+### 7. Real-Time Analytical Database (RTAD)
+Time-series database for streaming data ingestion, real-time aggregations, and analytics.
+
+**Features:**
+- Streaming data ingestion with buffering
+- Real-time aggregations (sum, mean, min, max, stddev, percentiles)
+- Time-series storage with tag-based organization
+- Pattern-based metric queries
+- Moving averages and exponential weighted calculations
+- Rate of change tracking
+- Asynchronous stream processing
+- Full REST API for ingestion and queries
+
+**Documentation:** See [RTAD-README.md](RTAD-README.md)
+
+---
+
 ## 🚀 Quick Start
 
 ### Run Each Database
@@ -119,6 +136,9 @@ cd olap && dub run
 
 # Graph Database (8085)
 cd graph && dub run
+
+# Real-Time Analytical Database (8086)
+cd rtad && dub run
 ```
 
 ### Run Examples
@@ -141,22 +161,26 @@ dub run --single olap-example.d
 
 # Graph database example
 dub run --single graph-example.d
+
+# Real-Time Analytical Database example
+dub run --single rtad-example.d
 ```
 
 ## 📊 Comparison
 
-| Feature | Vector DB | Object DB | Relational | OLTP | OLAP | Graph |
-|---------|-----------|-----------|-----------|------|------|-------|
-| **Data Model** | Vectors | JSON | Typed Rows | Transactional | Columnar | Nodes/Edges |
-| **Best For** | Similarity | Flexible | Structured | ACID Txns | Analytics | Relationships |
-| **Query Type** | k-NN | Document | SQL | Transactions | Aggregations | Traversal |
-| **Schema** | Fixed dims | Schema-less | Strict | Strict | Strict | Flexible |
-| **Joins** | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ |
-| **Transactions** | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Locking** | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Aggregations** | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ |
-| **Pathfinding** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| **Centrality** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Feature | Vector DB | Object DB | Relational | OLTP | OLAP | Graph | RTAD |
+|---------|-----------|-----------|-----------|------|------|-------|------|
+| **Data Model** | Vectors | JSON | Typed Rows | Transactional | Columnar | Nodes/Edges | Time-Series |
+| **Best For** | Similarity | Flexible | Structured | ACID Txns | Analytics | Relationships | Real-time |
+| **Query Type** | k-NN | Document | SQL | Transactions | Aggregations | Traversal | Stream |
+| **Schema** | Fixed dims | Schema-less | Strict | Strict | Strict | Flexible | Dynamic |
+| **Joins** | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **Transactions** | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **Locking** | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **Aggregations** | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ |
+| **Pathfinding** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| **Time-Series** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **Streaming** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 ## 🛠️ Use Cases
 
@@ -202,6 +226,14 @@ dub run --single graph-example.d
 - Dependency analysis
 - Organizational hierarchies
 
+### Real-Time Analytical Database
+- System monitoring (CPU, memory, disk)
+- Application metrics (latency, throughput, errors)
+- IoT sensor data collection
+- Infrastructure observability
+- Financial market data
+- User engagement analytics
+
 ## 📁 Project Structure
 
 ```
@@ -212,18 +244,21 @@ DATABASES/
 ├── oltp/                     # ACID transactional database
 ├── olap/                     # Data warehouse analytics
 ├── graph/                    # Graph relationship database
+├── rtad/                     # Real-time analytical database
 ├── example.d                 # Vector DB example
 ├── object-example.d          # Object DB example
 ├── relational-example.d      # Relational DB example
 ├── oltp-database-example.d   # OLTP DB example
 ├── olap-example.d            # OLAP DB example
 ├── graph-example.d           # Graph DB example
+├── rtad-example.d            # RTAD example
 ├── README.md                 # Vector DB docs
 ├── OBJECT-README.md          # Object DB docs
 ├── RELATIONAL-README.md      # Relational DB docs
 ├── OLTP-README.md            # OLTP DB docs
 ├── OLAP-README.md            # OLAP DB docs
 ├── GRAPH-README.md           # Graph DB docs
+├── RTAD-README.md            # RTAD docs
 └── MAIN-README.md            # This file
 ```
 
@@ -238,6 +273,7 @@ cd relational && dub build --build=release
 cd oltp && dub build --build=release
 cd olap && dub build --build=release
 cd graph && dub build --build=release
+cd rtad && dub build --build=release
 ```
 
 ### Dependencies
@@ -253,6 +289,7 @@ cd graph && dub build --build=release
 - **OLTP DB**: In-memory with WAL recovery
 - **OLAP DB**: In-memory columnar storage
 - **Graph DB**: In-memory adjacency lists
+- **RTAD**: In-memory time-series with buffering
 
 ### Concurrency & Thread Safety
 - **Vector DB**: Read-write locks
@@ -261,6 +298,7 @@ cd graph && dub build --build=release
 - **OLTP DB**: Row-level locking + WAL
 - **OLAP DB**: RWMutex protection
 - **Graph DB**: RWMutex protection
+- **RTAD**: RWMutex protection, async stream processor
 
 ### Query Capabilities
 - **Vector DB**: k-NN search, distance metrics
@@ -269,6 +307,7 @@ cd graph && dub build --build=release
 - **OLTP DB**: Transactions, isolation levels
 - **OLAP DB**: Aggregations, slicing, dicing
 - **Graph DB**: Traversal, pathfinding, centrality
+- **RTAD**: Time-window, pattern, aggregations, latest
 
 ## 📚 Documentation Files
 
@@ -279,6 +318,7 @@ cd graph && dub build --build=release
 - [OLTP-README.md](OLTP-README.md) - OLTP database detailed documentation
 - [OLAP-README.md](OLAP-README.md) - OLAP database detailed documentation
 - [GRAPH-README.md](GRAPH-README.md) - Graph database detailed documentation
+- [RTAD-README.md](RTAD-README.md) - Real-Time Analytical Database detailed documentation
 
 ## 🎯 Future Enhancements
 
@@ -323,6 +363,13 @@ cd graph && dub build --build=release
 - [ ] GROUP BY
 - [ ] SQL parser
 
+### Real-Time Analytical Database
+- [ ] Persistent storage (RocksDB)
+- [ ] Resampling and downsampling
+- [ ] Alerting on threshold violations
+- [ ] Anomaly detection
+- [ ] Distributed stream processing
+
 ## 📄 License
 
 MIT License
@@ -339,4 +386,4 @@ Contributions welcome! Each database is modular and can be enhanced independentl
 
 ---
 
-**Choose the right database for your use case or use all three together!**
+**Choose the right database for your use case or use all seven together!**

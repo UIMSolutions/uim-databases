@@ -1,22 +1,48 @@
-name "uim-databases-oltp"
+// Metadata
+name "oltp"
 description "OLTP (Online Transaction Processing) Database for UIM Databases"
-authors "UIM Solutions"
-copyright "Copyright © 2026, UIM Solutions"
+homepage "https://www.sueel.de/uim/databases/oltp"
+authors "Ozan Nurettin Süel" "UI Manufaktur"
+copyright "Copyright © 2018-2026, Ozan Nurettin Süel"
 license "Apache-2.0"
 
-targetType "executable"
-mainSourceFile "source/uim/databases/oltp/oltpapp.d"
+// Target
+targetType "library"
+targetName "uim-databases-oltp"
 
-dependency "vibe-d" version="~>0.9.0"
+// Dependencies
+dependency "uim-framework" version="~>26.2.1"
 
-sourcePaths "source"
-importPaths "source"
-
-configuration "library" {
-    targetType "library"
-    excludedSourceFiles "source/uim/databases/oltp/oltpapp.d"
+// Configurations
+configuration "default" {
+	targetType "library"
 }
 
-configuration "application" {
-    targetType "executable"
+configuration "modules" {
+	targetType "library"
+	versions "show_module"
+}
+
+configuration "tests" {
+	targetType "library"
+	versions "show_module" "show_test"
+}
+
+configuration "inits" {
+	targetType "library"
+	versions "show_module" "show_init"
+}
+
+configuration "calls" {
+	targetType "library"
+	versions "show_module" "show_test" "show_function"
+}
+
+configuration "verbose" {
+	targetType "library"
+	versions "show_module" "show_test" "show_init" "show_function"
+}
+
+configuration "execute" {
+	targetType "executable"
 }
