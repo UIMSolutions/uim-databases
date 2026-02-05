@@ -8,6 +8,12 @@ class Vector {
     this() {
     }
 
+    this(string id, double[] values, string[string] metadata = null) {
+        this.id = id;
+        this.values = values.dup;
+        this.metadata = metadata.dup;
+    }
+
     // #region id
     /// Identifier of the vector
     protected string _id;
@@ -66,12 +72,6 @@ class Vector {
         assert(v.metadata["category"] == "test");
     }   
     // #endregion metadata
-
-    this(string id, double[] values, string[string] metadata = null) {
-        this.id = id;
-        this.values = values.dup;
-        this.metadata = metadata.dup;
-    }
 
     /// Get the dimensionality of the vector
     @property size_t dimension() const {

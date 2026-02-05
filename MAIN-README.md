@@ -4,7 +4,7 @@ This workspace contains three complete database implementations in D language wi
 
 ## 🗄️ Databases
 
-### 1. Vector Database (Port 8080)
+### 1. Vector Database
 Similarity search and nearest neighbor queries using various distance metrics.
 
 **Features:**
@@ -13,16 +13,11 @@ Similarity search and nearest neighbor queries using various distance metrics.
 - Vector operations
 - Metadata support
 
-**Run:**
-```bash
-dub --config=vector
-```
-
 **Documentation:** See [README.md](README.md)
 
 ---
 
-### 2. Object Database (Port 8081)
+### 2. Object Database
 Document-oriented database for storing JSON objects with flexible querying.
 
 **Features:**
@@ -34,16 +29,11 @@ Document-oriented database for storing JSON objects with flexible querying.
 - Sorting & pagination
 - Bulk operations
 
-**Run:**
-```bash
-dub --config=object
-```
-
 **Documentation:** See [OBJECT-README.md](OBJECT-README.md)
 
 ---
 
-### 3. Relational Database (Port 8082)
+### 3. Relational Database
 SQL-like relational database with typed schemas, constraints, and JOIN operations.
 
 **Features:**
@@ -55,68 +45,118 @@ SQL-like relational database with typed schemas, constraints, and JOIN operation
 - ORDER BY, LIMIT, OFFSET
 - Schema management
 
-**Run:**
-```bash
-dub --config=relational
-```
-
 **Documentation:** See [RELATIONAL-README.md](RELATIONAL-README.md)
+
+---
+
+### 4. OLTP Database
+High-performance transactional database with full ACID compliance, connection pooling, and write-ahead logging.
+
+**Features:**
+- ACID transactions with isolation levels (READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE)
+- Connection pooling with configurable sizes
+- Row-level locking (shared, exclusive, intent)
+- Write-Ahead Logging (WAL) with recovery
+- Transaction timestamps and rollback
+- Full REST API for operations
+
+**Documentation:** See [OLTP-README.md](OLTP-README.md)
+
+---
+
+### 5. OLAP Database
+Data warehouse system optimized for analytical queries with columnar storage and multidimensional analysis.
+
+**Features:**
+- Columnar storage for analytical efficiency
+- Fact tables and dimension tables
+- OLAP cubes with measures and hierarchies
+- Aggregation operations (sum, avg, min, max, count, distinct)
+- Slicing, dicing, pivoting, drill-down, roll-up
+- Complex hierarchy support
+- Full REST API for analytics
+
+**Documentation:** See [OLAP-README.md](OLAP-README.md)
+
+---
+
+### 6. Graph Database
+Relationship database for modeling networks with advanced graph algorithms and centrality measures.
+
+**Features:**
+- Nodes and edges with properties
+- Thread-safe concurrent access
+- Graph traversal (BFS, DFS)
+- Pathfinding (shortest path, all paths)
+- Connected components
+- Centrality measures (degree, betweenness, closeness, PageRank)
+- Efficient adjacency list representation
+- Full REST API for graph operations
+
+**Documentation:** See [GRAPH-README.md](GRAPH-README.md)
 
 ---
 
 ## 🚀 Quick Start
 
-### Run All Three Simultaneously
+### Run Each Database
 
 ```bash
-# Terminal 1 - Vector Database
-dub --config=vector
+# Vector Database (8080)
+cd vector && dub run
 
-# Terminal 2 - Object Database  
-dub --config=object
+# Object Database (8081)
+cd object && dub run
 
-# Terminal 3 - Relational Database
-dub --config=relational
-```
+# Relational Database (8082)
+cd relational && dub run
 
-### Test the Databases
+# OLTP Database (8083)
+cd oltp && dub run
 
-```bash
-# Vector DB
-curl http://localhost:8080/health
+# OLAP Database (8084)
+cd olap && dub run
 
-# Object DB
-curl http://localhost:8081/health
-
-# Relational DB
-curl http://localhost:8082/health
+# Graph Database (8085)
+cd graph && dub run
 ```
 
 ### Run Examples
 
 ```bash
 # Vector database example
-rdmd example.d
+dub run --single example.d
 
 # Object database example
-rdmd object-example.d
+dub run --single object-example.d
 
 # Relational database example
-rdmd relational-example.d
+dub run --single relational-example.d
+
+# OLTP database example
+dub run --single oltp-database-example.d
+
+# OLAP database example
+dub run --single olap-example.d
+
+# Graph database example
+dub run --single graph-example.d
 ```
 
 ## 📊 Comparison
 
-| Feature | Vector DB | Object DB | Relational DB |
-|---------|-----------|-----------|---------------|
-| **Port** | 8080 | 8081 | 8082 |
-| **Data Model** | Vectors | JSON Documents | Typed Rows |
-| **Best For** | Similarity search | Flexible schemas | Structured data |
-| **Query Type** | k-NN search | Document queries | SQL-like queries |
-| **Schema** | Fixed dimension | Schema-less | Strict schema |
-| **Joins** | ❌ | ❌ | ✅ INNER JOIN |
-| **Indexing** | ❌ | ✅ Field indexes | ✅ Primary key |
-| **Constraints** | ❌ | ❌ | ✅ Full constraints |
+| Feature | Vector DB | Object DB | Relational | OLTP | OLAP | Graph |
+|---------|-----------|-----------|-----------|------|------|-------|
+| **Data Model** | Vectors | JSON | Typed Rows | Transactional | Columnar | Nodes/Edges |
+| **Best For** | Similarity | Flexible | Structured | ACID Txns | Analytics | Relationships |
+| **Query Type** | k-NN | Document | SQL | Transactions | Aggregations | Traversal |
+| **Schema** | Fixed dims | Schema-less | Strict | Strict | Strict | Flexible |
+| **Joins** | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ |
+| **Transactions** | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| **Locking** | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| **Aggregations** | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ |
+| **Pathfinding** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **Centrality** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 ## 🛠️ Use Cases
 
@@ -126,14 +166,12 @@ rdmd relational-example.d
 - Recommendation systems
 - Anomaly detection
 - Face recognition
-- Content-based retrieval
 
 ### Object Database
 - User profiles with varying attributes
 - Product catalogs
 - Event logs
 - Configuration storage
-- CMS content
 - Flexible data structures
 
 ### Relational Database
@@ -142,27 +180,51 @@ rdmd relational-example.d
 - Inventory tracking
 - Financial records
 - Traditional CRUD applications
-- Data with foreign key relationships
+
+### OLTP Database
+- Real-time transaction processing
+- Banking/payment systems
+- E-commerce order processing
+- Reservation systems
+- High-concurrency applications
+
+### OLAP Database
+- Business intelligence
+- Data warehousing
+- Sales analysis
+- Trend analysis
+- Executive dashboards
+
+### Graph Database
+- Social networks
+- Knowledge graphs
+- Recommendation systems
+- Dependency analysis
+- Organizational hierarchies
 
 ## 📁 Project Structure
 
 ```
 DATABASES/
-├── source/
-│   ├── app.d                 # Vector DB API
-│   ├── vectorops.d           # Vector operations
-│   ├── vectordb.d            # Vector database core
-│   ├── objectapp.d           # Object DB API
-│   ├── objectdb.d            # Object database core
-│   ├── relationalapp.d       # Relational DB API
-│   └── relationaldb.d        # Relational database core
+├── vector/                   # Vector similarity search
+├── object/                   # Document-oriented database
+├── relational/               # SQL-like relational database
+├── oltp/                     # ACID transactional database
+├── olap/                     # Data warehouse analytics
+├── graph/                    # Graph relationship database
 ├── example.d                 # Vector DB example
 ├── object-example.d          # Object DB example
 ├── relational-example.d      # Relational DB example
+├── oltp-database-example.d   # OLTP DB example
+├── olap-example.d            # OLAP DB example
+├── graph-example.d           # Graph DB example
 ├── README.md                 # Vector DB docs
 ├── OBJECT-README.md          # Object DB docs
 ├── RELATIONAL-README.md      # Relational DB docs
-└── dub.json                  # Project configuration
+├── OLTP-README.md            # OLTP DB docs
+├── OLAP-README.md            # OLAP DB docs
+├── GRAPH-README.md           # Graph DB docs
+└── MAIN-README.md            # This file
 ```
 
 ## 🔧 Development
@@ -170,63 +232,53 @@ DATABASES/
 ### Build
 ```bash
 # Build specific database
-dub build --config=vector
-dub build --config=object
-dub build --config=relational
+cd vector && dub build --build=release
+cd object && dub build --build=release
+cd relational && dub build --build=release
+cd oltp && dub build --build=release
+cd olap && dub build --build=release
+cd graph && dub build --build=release
 ```
 
 ### Dependencies
-- **vibe.d**: Web framework and HTTP server
+- **vibe.d** (~0.9.0): Web framework and HTTP server
 - **D compiler**: DMD, LDC, or GDC
 
-## 📝 API Examples
+## 🎯 Features Summary
 
-### Vector Database
-```bash
-# Add vector
-curl -X POST http://localhost:8080/vectors \
-  -H "Content-Type: application/json" \
-  -d '{"id": "vec1", "vector": [0.1, 0.2, ...], "metadata": {}}'
+### Storage & Persistence
+- **Vector DB**: In-memory with metadata
+- **Object DB**: In-memory JSON documents
+- **Relational DB**: In-memory typed rows
+- **OLTP DB**: In-memory with WAL recovery
+- **OLAP DB**: In-memory columnar storage
+- **Graph DB**: In-memory adjacency lists
 
-# Search
-curl -X POST http://localhost:8080/search \
-  -H "Content-Type: application/json" \
-  -d '{"vector": [0.1, 0.2, ...], "k": 5}'
-```
+### Concurrency & Thread Safety
+- **Vector DB**: Read-write locks
+- **Object DB**: RWMutex protection
+- **Relational DB**: RWMutex protection
+- **OLTP DB**: Row-level locking + WAL
+- **OLAP DB**: RWMutex protection
+- **Graph DB**: RWMutex protection
 
-### Object Database
-```bash
-# Create collection
-curl -X POST http://localhost:8081/collections/users
+### Query Capabilities
+- **Vector DB**: k-NN search, distance metrics
+- **Object DB**: Field queries, nested access
+- **Relational DB**: SQL-like, JOINs, complex WHERE
+- **OLTP DB**: Transactions, isolation levels
+- **OLAP DB**: Aggregations, slicing, dicing
+- **Graph DB**: Traversal, pathfinding, centrality
 
-# Insert document
-curl -X POST http://localhost:8081/collections/users/documents \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Alice", "age": 28}'
+## 📚 Documentation Files
 
-# Query
-curl -X POST http://localhost:8081/collections/users/find \
-  -H "Content-Type: application/json" \
-  -d '{"where": [{"field": "age", "op": ">", "value": 25}]}'
-```
-
-### Relational Database
-```bash
-# Create table
-curl -X POST http://localhost:8082/tables \
-  -H "Content-Type: application/json" \
-  -d '{"name": "users", "columns": [...]}'
-
-# Insert row
-curl -X POST http://localhost:8082/tables/users/insert \
-  -H "Content-Type: application/json" \
-  -d '{"id": 1, "name": "Alice", "age": 28}'
-
-# Select
-curl -X POST http://localhost:8082/tables/users/select \
-  -H "Content-Type: application/json" \
-  -d '{"columns": ["*"], "where": [{"column": "age", "op": ">", "value": 25}]}'
-```
+- [MAIN-README.md](MAIN-README.md) - This file, overview of all databases
+- [README.md](README.md) - Vector database detailed documentation
+- [OBJECT-README.md](OBJECT-README.md) - Object database detailed documentation
+- [RELATIONAL-README.md](RELATIONAL-README.md) - Relational database detailed documentation
+- [OLTP-README.md](OLTP-README.md) - OLTP database detailed documentation
+- [OLAP-README.md](OLAP-README.md) - OLAP database detailed documentation
+- [GRAPH-README.md](GRAPH-README.md) - Graph database detailed documentation
 
 ## 🎯 Future Enhancements
 
@@ -235,10 +287,27 @@ curl -X POST http://localhost:8082/tables/users/select \
 - [ ] Authentication & authorization
 - [ ] Replication
 - [ ] Backups
+- [ ] Monitoring & metrics
 
 ### Vector Database
 - [ ] HNSW indexing
 - [ ] Vector quantization
+- [ ] Batch operations
+
+### OLTP Database
+- [ ] MVCC (multi-version concurrency control)
+- [ ] Distributed transactions
+- [ ] Query optimization
+
+### OLAP Database
+- [ ] Bitmap indexes
+- [ ] Compression algorithms
+- [ ] Incremental cube building
+
+### Graph Database
+- [ ] Query optimization
+- [ ] Distributed graph processing
+- [ ] Advanced algorithms (community detection)
 - [ ] Multi-collection support
 
 ### Object Database

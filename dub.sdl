@@ -11,37 +11,21 @@ targetType "library"
 targetName "uim-databases"
 
 // External dependencies
-dependency "uim-framework" version="~>24.2.1"
+dependency "uim-framework" version="~>26.2.1"
 
 // Internal Dependencies
 dependency ":object" version="*"
 dependency ":relational" version="*"
 dependency ":vector" version="*"
 
-// Neural networks
-dependency ":neural" version="*"
-
 // Source files
 sourceFiles "./source/uim/databases.d"
 
 // Subpackages
 subPackage "compilers"
-subPackage "core"
-subPackage "css"
-subPackage "datascience"
-subPackage "engineering"
-subPackage "errors"
-subPackage "events"
-subPackage "html"
-subPackage "i18n"
-subPackage "jsons"
-subPackage "logging"
-subPackage "numerical"
-subPackage "neural"
-subPackage "oop"
-subPackage "security"
-subPackage "services"
-subPackage "filesystems"
+subPackage "object"
+subPackage "relational"
+subPackage "vector"
 
 buildRequirements "allowWarnings" "silenceDeprecations"
 buildOptions "ignoreDeprecations" "debugInfo"
