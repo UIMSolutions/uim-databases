@@ -17,10 +17,55 @@ class Vector {
     @property void id(string value) {
         _id = value;
     }
+    ///
+    unittest {
+        mixin(ShowTests!"Vector ID Property Test");
+
+        Vector v = new Vector();
+        v.id = "vec1";
+        assert(v.id == "vec1");
+    }
     // #endregion id
 
+    // #region values
+    /// Values of the vector
     protected double[] _values;
+    @property double[] values() const {
+        return _values.dup;
+    }
+    @property void values(double[] vals) {
+        _values = vals.dup;
+    }
+    ///
+    unittest {
+        mixin(ShowTests!"Vector Values Property Test");
+
+        Vector v = new Vector();
+        v.values = [1.0, 2.0, 3.0];
+        assert(v.values.length == 3);
+        assert(v.values[0] == 1.0);
+    }
+    // #endregion values
+    
+    // #region metadata
+    /// Metadata associated with the vector
     protected string[string] _metadata;
+    @property void metadata(string[string] meta) {
+        _metadata = meta.dup;
+    }
+    @property string[string] metadata() const {
+        return _metadata.dup;
+    }
+        ///
+    unittest {
+        mixin(ShowTests!"Vector Metadata Property Test");
+
+        Vector v = new Vector();
+        v.metadata = ["author": "Alice", "category": "test"];
+        assert(v.metadata["author"] == "Alice");
+        assert(v.metadata["category"] == "test");
+    }   
+    // #endregion metadata
 
     this(string id, double[] values, string[string] metadata = null) {
         this.id = id;
