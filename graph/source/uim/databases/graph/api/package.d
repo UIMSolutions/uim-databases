@@ -1,33 +1,36 @@
 module uim.databases.graph.api;
 
-import vibe.http.router;
 import vibe.http.server;
+import vibe.http.router : URLRouter;
 import vibe.core.log;
 import vibe.data.json;
 import std.algorithm;
 import std.array;
+import std.conv;
 import uim.databases.graph.storage.graph;
 import uim.databases.graph.storage.node;
 import uim.databases.graph.storage.edge;
 import uim.databases.graph.query;
+import vibe.http.server;
+import std.conv : to;
 
 /// Graph REST API
 class GraphRestAPI {
     private {
         GraphStorage _graph;
         GraphQueryEngine _queryEngine;
-        Router _router;
+        URLRouter _router;
     }
     
     this(GraphStorage graph) {
         _graph = graph;
         _queryEngine = new GraphQueryEngine(graph);
-        _router = new Router();
+        _router = new URLRouter();
         setupRoutes();
     }
     
     /// Get router
-    @property Router router() {
+    @property URLRouter router() {
         return _router;
     }
     
@@ -78,7 +81,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -88,21 +91,21 @@ class GraphRestAPI {
                 auto node = _graph.getNode(nodeId);
                 if (node is null) {
                     res.statusCode = 404;
-                    res.writeJson(["error": "Node not found"]);
+                    res.writeJsonBody(["error": "Node not found"]);
                     return;
                 }
                 res.writeJsonBody(node.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
         void handleCreateNode(HTTPServerRequest req, HTTPServerResponse res) {
             try {
                 auto body_ = req.json;
-                auto label = body_.get!string("label", "");
-                auto props = body_.get!Json("properties", Json.emptyObject);
+                auto label = "label" in body_ ? body_["label"].get!string : "";
+                auto props = "properties" in body_ ? body_["properties"] : Json.emptyObject;
                 
                 auto node = new Node(label, props);
                 auto nodeId = _graph.addNode(node);
@@ -114,7 +117,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 400;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -125,7 +128,7 @@ class GraphRestAPI {
                 
                 if (!_graph.updateNode(nodeId, body_)) {
                     res.statusCode = 404;
-                    res.writeJson(["error": "Node not found"]);
+                    res.writeJsonBody(["error": "Node not found"]);
                     return;
                 }
                 
@@ -134,7 +137,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 400;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -144,7 +147,7 @@ class GraphRestAPI {
                 
                 if (!_graph.deleteNode(nodeId)) {
                     res.statusCode = 404;
-                    res.writeJson(["error": "Node not found"]);
+                    res.writeJsonBody(["error": "Node not found"]);
                     return;
                 }
                 
@@ -153,7 +156,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -168,7 +171,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -183,7 +186,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -198,7 +201,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -212,7 +215,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -222,24 +225,24 @@ class GraphRestAPI {
                 auto edge = _graph.getEdge(edgeId);
                 if (edge is null) {
                     res.statusCode = 404;
-                    res.writeJson(["error": "Edge not found"]);
+                    res.writeJsonBody(["error": "Edge not found"]);
                     return;
                 }
                 res.writeJsonBody(edge.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
         void handleCreateEdge(HTTPServerRequest req, HTTPServerResponse res) {
             try {
                 auto body_ = req.json;
-                auto fromId = body_.get!string("from", "");
-                auto toId = body_.get!string("to", "");
-                auto type = body_.get!string("type", "RELATES_TO");
-                auto directed = body_.get!bool("directed", true);
-                auto props = body_.get!Json("properties", Json.emptyObject);
+                auto fromId = "from" in body_ ? body_["from"].get!string : "";
+                auto toId = "to" in body_ ? body_["to"].get!string : "";
+                auto type = "type" in body_ ? body_["type"].get!string : "RELATES_TO";
+                auto directed = "directed" in body_ ? body_["directed"].get!bool : true;
+                auto props = "properties" in body_ ? body_["properties"] : Json.emptyObject;
                 
                 auto edge = new Edge(fromId, toId, type, directed, props);
                 auto edgeId = _graph.addEdge(edge);
@@ -251,7 +254,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 400;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -262,7 +265,7 @@ class GraphRestAPI {
                 
                 if (!_graph.updateEdge(edgeId, body_)) {
                     res.statusCode = 404;
-                    res.writeJson(["error": "Edge not found"]);
+                    res.writeJsonBody(["error": "Edge not found"]);
                     return;
                 }
                 
@@ -271,7 +274,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 400;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -281,7 +284,7 @@ class GraphRestAPI {
                 
                 if (!_graph.deleteEdge(edgeId)) {
                     res.statusCode = 404;
-                    res.writeJson(["error": "Edge not found"]);
+                    res.writeJsonBody(["error": "Edge not found"]);
                     return;
                 }
                 
@@ -290,7 +293,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result);
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -302,7 +305,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -313,7 +316,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -325,7 +328,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -338,7 +341,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -348,7 +351,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -360,7 +363,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -371,7 +374,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -381,7 +384,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -391,7 +394,7 @@ class GraphRestAPI {
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -401,8 +404,8 @@ class GraphRestAPI {
                 auto result = _queryEngine.calculatePageRank(iterations);
                 res.writeJsonBody(result.toJson());
             } catch (Exception e) {
-                res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.statusCwriteJsonode = 500;
+                res.writeJsonBody(["error": e.msg]);
             }
         }
         
@@ -412,12 +415,9 @@ class GraphRestAPI {
                 res.writeJsonBody(stats);
             } catch (Exception e) {
                 res.statusCode = 500;
-                res.writeJson(["error": e.msg]);
+                res.writeJsonBody(["error": e.msg]);
             }
         }
     }
 }
 
-import vibe.http.server;
-import vibe.http.router;
-import std.conv : to;

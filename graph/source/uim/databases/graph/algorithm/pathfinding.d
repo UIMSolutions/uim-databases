@@ -42,7 +42,8 @@ class PathfindingEngine {
         }
         
         auto visited = new bool[string];
-        auto queue = DList!string(startNodeId);
+        auto queue = DList!string();
+        queue.insertBack(startNodeId);
         auto parent = new string[string];
         
         visited[startNodeId] = true;
@@ -115,7 +116,8 @@ class PathfindingEngine {
         }
         
         auto visited = new bool[string];
-        auto queue = DList!string(startNodeId);
+        auto queue = DList!string();
+        queue.insertBack(startNodeId);
         auto parent = new string[string];
         
         visited[startNodeId] = true;
@@ -165,7 +167,8 @@ class PathfindingEngine {
         auto ancestors2 = new bool[string];
         
         auto visited1 = new bool[string];
-        auto queue1 = DList!string(nodeId1);
+        auto queue1 = DList!string();
+        queue1.insertBack(nodeId1);
         visited1[nodeId1] = true;
         ancestors1[nodeId1] = true;
         
@@ -185,7 +188,8 @@ class PathfindingEngine {
         }
         
         auto visited2 = new bool[string];
-        auto queue2 = DList!string(nodeId2);
+        auto queue2 = DList!string();
+        queue2.insertBack(nodeId2);
         visited2[nodeId2] = true;
         
         while (!queue2.empty) {

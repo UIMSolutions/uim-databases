@@ -2,6 +2,8 @@ module uim.databases.graph.storage.node;
 
 import std.uuid;
 import std.datetime;
+import std.algorithm;
+import std.array;
 import vibe.data.json;
 
 /// Graph node

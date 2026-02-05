@@ -22,7 +22,8 @@ class TraversalEngine {
     /// Breadth-first search
     Node[] bfs(string startNodeId) {
         auto visited = new bool[string];
-        auto queue = DList!string(startNodeId);
+        auto queue = DList!string();
+        queue.insertBack(startNodeId);
         Node[] result;
         
         visited[startNodeId] = true;
@@ -82,7 +83,8 @@ class TraversalEngine {
         if (fromNodeId == toNodeId) return true;
         
         auto visited = new bool[string];
-        auto queue = DList!string(fromNodeId);
+        auto queue = DList!string();
+        queue.insertBack(fromNodeId);
         visited[fromNodeId] = true;
         
         while (!queue.empty) {
@@ -108,36 +110,28 @@ class TraversalEngine {
     /// Get all neighbors within distance
     Node[] neighborsWithinDistance(string nodeId, size_t distance) {
         auto visited = new bool[string];
-        auto queue = DList!string[string];
-        queue[nodeId] = DList!string();
+        string[] currentLevel;
+        currentLevel ~= nodeId;
         Node[] result;
         
         visited[nodeId] = true;
         
-        size_t currentDistance = 0;
-        while (!queue.empty && currentDistance < distance) {
-            string[] nextQueue;
+        for (size_t d = 0; d < distance; d++) {
+            string[] nextLevel;
             
-            foreach (key; queue.byKey()) {
-                auto neighbors = _graph.getNeighbors(key);
+            foreach (nid; currentLevel) {
+                auto neighbors = _graph.getNeighbors(nid);
                 foreach (neighbor; neighbors) {
                     if (!(neighbor.id in visited)) {
                         visited[neighbor.id] = true;
-                        nextQueue ~= neighbor.id;
+                        nextLevel ~= neighbor.id;
                         result ~= neighbor;
                     }
                 }
             }
             
-            // Prepare next level
-            foreach (key; queue.byKey()) {
-                queue.remove(key);
-            }
-            foreach (nodeToAdd; nextQueue) {
-                queue[nodeToAdd] = DList!string();
-            }
-            
-            currentDistance++;
+            currentLevel = nextLevel;
+            if (currentLevel.empty) break;
         }
         
         return result;

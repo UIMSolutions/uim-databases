@@ -63,7 +63,8 @@ class CentralityEngine {
         // For each pair of nodes, find shortest path
         foreach (i, sourceNode; allNodes) {
             auto visited = new bool[string];
-            auto queue = DList!string(sourceNode.id);
+            auto queue = DList!string();
+            queue.insertBack(sourceNode.id);
             auto parent = new string[][string];
             
             visited[sourceNode.id] = true;
@@ -124,34 +125,28 @@ class CentralityEngine {
             size_t reachableCount = 0;
             
             auto visited = new bool[string];
-            auto queue = DList!string[string];
-            queue[node.id] = DList!string();
+            string[] currentLevel;
+            currentLevel ~= node.id;
             visited[node.id] = true;
             
             size_t distance = 0;
-            while (!queue.empty && reachableCount < allNodes.length - 1) {
+            while (!currentLevel.empty && reachableCount < allNodes.length - 1) {
                 distance++;
-                string[] nextBatch;
+                string[] nextLevel;
                 
-                foreach (key; queue.byKey()) {
-                    auto neighbors = _graph.getNeighbors(key);
+                foreach (nodeId; currentLevel) {
+                    auto neighbors = _graph.getNeighbors(nodeId);
                     foreach (neighbor; neighbors) {
                         if (!(neighbor.id in visited)) {
                             visited[neighbor.id] = true;
-                            nextBatch ~= neighbor.id;
+                            nextLevel ~= neighbor.id;
                             sumDistances += distance;
                             reachableCount++;
                         }
                     }
                 }
                 
-                foreach (key; queue.byKey()) {
-                    queue.remove(key);
-                }
-                
-                foreach (n; nextBatch) {
-                    queue[n] = DList!string();
-                }
+                currentLevel = nextLevel;
             }
             
             auto score = reachableCount > 0 && sumDistances > 0 ? 
