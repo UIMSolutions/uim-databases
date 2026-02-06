@@ -1,6 +1,7 @@
 module uim.databases.oltp.interfaces.pool;
 
-import uim.databases.oltp.interfaces.connection;
+import uim.databases.oltp;
+@safe:
 
 /// Interface for connection pooling
 interface IConnectionPool {

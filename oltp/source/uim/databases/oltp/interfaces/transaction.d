@@ -1,6 +1,7 @@
 module uim.databases.oltp.interfaces.transaction;
 
-import std.datetime;
+import uim.databases.oltp;
+@safe:
 
 /// Transaction isolation levels
 enum IsolationLevel {
@@ -10,13 +11,7 @@ enum IsolationLevel {
     serializable
 }
 
-/// Transaction state
-enum TransactionState {
-    active,
-    committed,
-    aborted,
-    failed
-}
+
 
 /// Interface for OLTP transactions
 interface ITransaction {

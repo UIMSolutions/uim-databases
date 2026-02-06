@@ -1,19 +1,7 @@
-module uim.databases.oltp.lock.manager;
+module uim.databases.oltp.classes.lock;
 
-import core.sync.mutex;
-import core.thread;
-import std.datetime;
-import std.algorithm;
-import vibe.core.log;
-import uim.databases.oltp.lock.mode;
-
-/// Represents a lock held on a resource
-struct Lock {
-    string resourceId;
-    string transactionId;
-    LockMode mode;
-    SysTime acquiredAt;
-}
+import uim.databases.oltp;
+@safe:
 
 /// Lock manager for handling concurrent access
 class LockManager {
@@ -169,5 +157,3 @@ class LockManager {
         }
     }
 }
-
-import vibe.data.json;

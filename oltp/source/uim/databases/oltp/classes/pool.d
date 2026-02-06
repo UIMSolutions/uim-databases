@@ -1,12 +1,8 @@
 module uim.databases.oltp.classes.pool;
 
 import core.sync.mutex;
-import std.container : DList;
-import std.format;
-import vibe.core.log;
-import uim.databases.oltp.interfaces.pool;
-import uim.databases.oltp.interfaces.connection;
-import uim.databases.oltp.classes.connection;
+import uim.databases.oltp;
+@safe:
 
 /// Thread-safe connection pool implementation
 class ConnectionPool : IConnectionPool {

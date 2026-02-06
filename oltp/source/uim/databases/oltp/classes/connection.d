@@ -1,9 +1,7 @@
 module uim.databases.oltp.classes.connection;
 
-import vibe.core.log;
-import uim.databases.oltp.interfaces.connection;
-import uim.databases.oltp.interfaces.transaction;
-import uim.databases.oltp.classes.transaction;
+import uim.databases.oltp;
+@safe:
 
 /// Basic implementation of IConnection
 class Connection : IConnection {

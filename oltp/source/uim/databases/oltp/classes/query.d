@@ -5,9 +5,8 @@
 *****************************************************************************************************************/
 module uim.databases.oltp.classes.query;
 
-import std.array;
-import std.format;
-import vibe.core.log;
+import uim.databases.oltp;
+@safe:
 
 /// Query builder for OLTP operations
 class Query {
