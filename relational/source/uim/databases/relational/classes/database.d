@@ -19,14 +19,14 @@ struct QueryResult {
 /// Relational Database
 class RelationalDatabase {
   string name;
-  Table[string] tables;
+  IRDBTable[string] tables;
 
   this(string name = "default") {
     this.name = name;
   }
 
   /// Create a table
-  void createTable(Schema schema) {
+  void createTable(IRDBSchema schema) {
     if (schema.tableName in tables) {
       throw new Exception("Table '" ~ schema.tableName ~ "' already exists");
     }
@@ -39,7 +39,7 @@ class RelationalDatabase {
   }
 
   /// Get a table
-  Table getTable(string tableName) {
+  IRDBTable getTable(string tableName) {
     auto ptr = tableName in tables;
     if (ptr is null) {
       throw new Exception("Table '" ~ tableName ~ "' not found");
@@ -66,7 +66,6 @@ class RelationalDatabase {
     auto right = getTable(rightTable);
 
     Json[] results;
-
     foreach (leftRow; left.rows) {
       // Check left conditions
       bool leftMatch = true;

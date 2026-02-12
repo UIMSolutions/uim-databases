@@ -1,16 +1,12 @@
 module uim.databases.relational.app;
 
-import vibe.vibe;
-import vibe.data.json;
-import std.conv;
-import std.algorithm;
-import std.array;
-import std.string;
-import relationaldb;
+import uim.databases.relational;
+@safe:
 
 /// Global relational database instance
 shared RelationalDatabase db;
 
+/*
 void main() {
     // Initialize the database
     db = cast(shared)new RelationalDatabase("main");

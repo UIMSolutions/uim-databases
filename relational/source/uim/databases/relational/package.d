@@ -6,6 +6,8 @@
 module uim.databases.relational;
 
 public {
+  import uim.oop;
+
   import uim.databases.relational.classes;
   import uim.databases.relational.enumerations;
   import uim.databases.relational.helpers;

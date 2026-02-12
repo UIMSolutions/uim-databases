@@ -3,29 +3,60 @@
 * License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file. 
 * Authors: Ozan Nurettin Süel (aka UIManufaktur)
 *****************************************************************************************************************/
-module uim.databases.relational.classes;
+module uim.databases.relational.classes.table;
 
 import uim.databases.relational;
 
 @safe:
 
 /// Table class
-class Table {
-  string name;
-  Schema schema;
-  Row[] rows;
-  long[Json] primaryKeyIndex; // pk_value -> row_index
-
-  this(string name, Schema schema) {
+class RDBTable : UIMObject, IRDBTable {
+  this(string name, IRDBSchema schema) {
     this.name = name;
     this.schema = schema;
+  }
+
+  protected string _name;
+  string name() {
+    return _name;
+  }
+  IRDBTable name(string value) {
+    _name = value;
+    return this;
+  }
+
+  protected IRDBSchema _schema;
+  IRDBSchema schema() {
+    return _schema;
+  }
+  IRDBTable schema(IRDBSchema value) {
+    _schema = value;
+    return this;
+  }
+
+  protected IRDBRow[] _rows;  
+  IRDBRow[] rows() {
+    return _rows;
+  }
+  IRDBTable rows(IRDBRow[] value) {
+    _rows = value;
+    return this;
+  }
+
+  protected long[Json] _primaryKeyIndex; // pk_value -> row_index
+  long[Json] primaryKeyIndex() {
+    return _primaryKeyIndex;
+  }
+  IRDBTable primaryKeyIndex(long[Json] value) {
+    _primaryKeyIndex = value;
+    return this;
   }
 
   /// Insert a row
   long insert(Json data) {
     // Apply defaults
     foreach (col; schema.columns) {
-      if (col.name !in data && col.defaultValue.type != Json.Type.undefined) {
+      if (!data.hasKey(col.name) && !col.defaultValue.isUndefined) {
         data[col.name] = col.defaultValue;
       }
     }
@@ -53,7 +84,7 @@ class Table {
       }
     }
 
-    auto row = Row(data);
+    auto row = IRDBRow(data);
     long index = rows.length;
     rows ~= row;
 
@@ -99,7 +130,7 @@ class Table {
     if (offset > 0 && offset < filtered.length) {
       filtered = filtered[offset .. $];
     } else if (offset >= filtered.length) {
-      filtered = [];
+      filtered = null;
     }
 
     if (limit > 0 && limit < filtered.length) {
@@ -114,11 +145,7 @@ class Table {
       if (selectColumns.length == 0 || selectColumns[0] == "*") {
         projectedRow = row.data.clone;
       } else {
-        foreach (col; selectColumns) {
-          if (col in row.data) {
-            projectedRow[col] = row.data[col];
-          }
-        }
+        selectColumns.filter!(col => col in row.data).each!(col => projectedRow[col] = row.data[col]);
       }
       results ~= projectedRow;
     }
@@ -251,18 +278,18 @@ class Table {
     if (b.type == Json.Type.undefined)
       return -1;
 
-    if (a.type == Json.Type.int_ && b.type == Json.Type.int_) {
+    if (a.isInteger && b.isInteger) {
       long av = a.get!long;
       long bv = b.get!long;
       return av < bv ? -1 : (av > bv ? 1 : 0);
     }
-    if ((a.type == Json.Type.float_ || a.type == Json.Type.int_) &&
-      (b.type == Json.Type.float_ || b.type == Json.Type.int_)) {
+    if ((a.isDouble || a.isInteger) &&
+      (b.isDouble || b.isInteger)) {
       double av = a.type == Json.Type.float_ ? a.get!double : a.get!long;
       double bv = b.type == Json.Type.float_ ? b.get!double : b.get!long;
       return av < bv ? -1 : (av > bv ? 1 : 0);
     }
-    if (a.type == Json.Type.string && b.type == Json.Type.string) {
+    if (a.isString && b.isString) {
       string av = a.get!string;
       string bv = b.get!string;
       return av < bv ? -1 : (av > bv ? 1 : 0);

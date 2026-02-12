@@ -3,42 +3,98 @@
 * License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file. 
 * Authors: Ozan Nurettin Süel (aka UIManufaktur)
 *****************************************************************************************************************/
-module uim.databases.relational.classes;
+module uim.databases.relational.classes.schema;
 
 import uim.databases.relational;
 
 @safe:
 
 /// Table schema
-class Schema {
-  string tableName;
-  Column[] columns;
-  string primaryKeyColumn;
-  string[][string] foreignKeys; // column -> [refTable, refColumn]
-  string[][string] uniqueConstraints; // constraint_name -> [columns]
-
+class RDBSchema : UIMObject, IRDBSchema {
   this(string tableName) {
     this.tableName = tableName;
   }
 
+  // #region tableName
+  protected string _tableName;
+  string tableName() {
+    return _tableName;
+  }
+
+  IRDBSchema tableName(string value) {
+    _tableName = value;
+    return this;
+  }
+  // #endregion tableName
+
+  // #region columns
+  protected IRDBColumn[] _columns;
+  IRDBSchema columns(IRDBColumn[] value) {
+    _columns = value;
+    return this;
+  }
+
+  IRDBColumn[] columns() {
+    return _columns;
+  }
+  // #endregion columns
+
+  // #region primaryKeyColumn
+  protected string _primaryKeyColumn;
+  string primaryKeyColumn() {
+    return _primaryKeyColumn;
+  }
+
+  IRDBSchema primaryKeyColumn(string value) {
+    _primaryKeyColumn = value;
+    return this;
+  }
+  // #endregion primaryKeyColumn
+
+  // #region foreignKeys
+  protected string[][string] _foreignKeys;
+  string[][string] foreignKeys() {
+    return _foreignKeys;
+  }
+
+  IRDBSchema foreignKeys(string[][string] value) {
+    _foreignKeys = value;
+    return this;
+  }
+  // #endregion foreignKeys
+
+  // #region uniqueConstraints
+  protected string[][string] _uniqueConstraints;
+  string[][string] uniqueConstraints() {
+    return _uniqueConstraints;
+  }
+
+  IRDBSchema uniqueConstraints(string[][string] value) {
+    _uniqueConstraints = value;
+    return this;
+  }
+  // #endregion uniqueConstraints
+
   /// Add a column to the schema
-  void addColumn(Column column) {
-    columns ~= column;
+  IRDBSchema addColumn(IRDBColumn column) {
+    _columns ~= column;
     if (column.primaryKey) {
-      primaryKeyColumn = column.name;
+      _primaryKeyColumn = column.name;
     }
+    return this;
   }
 
   /// Add a foreign key constraint
-  void addForeignKey(string column, string refTable, string refColumn) {
-    foreignKeys[column] = [refTable, refColumn];
+  IRDBSchema addForeignKey(string column, string refTable, string refColumn) {
+    _foreignKeys[column] = [refTable, refColumn];
+    return this;
   }
 
   /// Get column by name
-  Column* getColumn(string name) {
+  IRDBColumn getColumn(string name) {
     foreach (ref col; columns) {
       if (col.name == name)
-        return &col;
+        return col;
     }
     return null;
   }
@@ -95,12 +151,12 @@ class Schema {
   }
 
   /// Get schema as JSON
-  Json toJson() {
-    auto schemaJson = Json.emptyObject;
+  override Json toJson() {
+    auto schemaJson = super.toJson();
     schemaJson["tableName"] = tableName;
     schemaJson["primaryKey"] = primaryKeyColumn;
 
-    Json[] colsJson;
+    Json colsJson = Json.emptyArray;
     foreach (col; columns) {
       auto colJson = Json.emptyObject;
       colJson["name"] = col.name;
@@ -110,8 +166,39 @@ class Schema {
       colJson["unique"] = col.unique;
       colsJson ~= colJson;
     }
-    schemaJson["columns"] = serializeToJson(colsJson);
+    schemaJson["columns"] = colsJson;
+
+    Json fkJson = Json.emptyObject;
+    foreach (col, refs; foreignKeys) {
+      fkJson[col] = [refs[0], refs[1]].toJson;
+    }
+    schemaJson["foreignKeys"] = fkJson;
+
+    Json ucJson = Json.emptyObject;
+    foreach (col, constraint; uniqueConstraints) {
+      ucJson[col] = constraint.toJson;
+    }
+    schemaJson["uniqueConstraints"] = ucJson;
 
     return schemaJson;
+  }
+}
+/// 
+unittest {
+  import std.stdio;
+  import std.json;
+
+  void testSchema() {
+    auto schema = RDBSchema("users")
+      .addColumn(RDBColumn("id", ColumnType.INTEGER, false).primaryKey(true))
+      .addColumn(RDBColumn("name", ColumnType.STRING, false))
+      .addColumn(RDBColumn("email", ColumnType.STRING, true).unique(true))
+      .addForeignKey("id", "profiles", "user_id");
+
+    assert(schema.tableName == "users");
+    assert(schema.columns.length == 3);
+    assert(schema.primaryKeyColumn == "id");
+    assert(schema.foreignKeys["id"] == ["profiles", "user_id"]);
+    assert(schema.getColumn("email").unique);
   }
 }
