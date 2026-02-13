@@ -8,7 +8,7 @@ module uim.databases.columndb.errors.table;
 @safe:
 
 /// Exception for table operations
-class TableException : Exception {
+class TableException : CdbException {
   this(string message, string file = __FILE__, size_t line = __LINE__) {
     super("Table error: " ~ message, file, line);
   }

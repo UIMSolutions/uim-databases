@@ -8,7 +8,7 @@ module uim.databases.columndb.errors.typemismatch;
 @safe:
 
 /// Exception for type mismatch
-class TypeMismatchException : Exception {
+class TypeMismatchException : CdbException {
   this(string expectedType, string actualType, string file = __FILE__, size_t line = __LINE__) {
     super("Type mismatch: expected " ~ expectedType ~ ", got " ~ actualType, file, line);
   }

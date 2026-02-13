@@ -5,14 +5,14 @@
 *****************************************************************************************************************/
 module uim.databases.columndb.errors.columnnotfound;
 
-@safe:import uim.databases.columndb;
+import uim.databases.columndb;
 
 mixin(ShowModule!());
 
 @safe:
 
 /// Exception for column not found
-class ColumnNotFoundException : Exception {
+class ColumnNotFoundException : CdbException {
   this(string columnName, string file = __FILE__, size_t line = __LINE__) {
     super("Column not found: " ~ columnName, file, line);
   }

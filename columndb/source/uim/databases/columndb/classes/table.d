@@ -25,11 +25,11 @@ class CdbTable : ICdbTable {
     _columnOrder = [];
   }
 
-  override string name() const {
+  string name() const {
     return _name;
   }
 
-  override void addColumn(ICdbColumn column) {
+  void addColumn(ICdbColumn column) {
     if (column.name() in _columns) {
       throw new DuplicateColumnException(column.name());
     }
@@ -54,16 +54,16 @@ class CdbTable : ICdbTable {
     return _columnOrder.dup;
   }
 
-  override ulong rowCount() const {
+  ulong rowCount() const {
     if (_columns.length == 0) return 0;
     return _columns[_columnOrder[0]].rowCount();
   }
 
-  override ulong columnCount() const {
+  ulong columnCount() const {
     return _columns.length;
   }
 
-  override void insertRow(Json[string] row) {
+  void insertRow(Json[string] row) {
     foreach (colName; _columnOrder) {
       if (colName in row) {
         _columns[colName].append(row[colName]);
@@ -139,5 +139,40 @@ class CdbTable : ICdbTable {
     return result;
   }
 }
-
+///
+unittest {
+  auto table = new CdbTable("test");
+  assert(table.name == "test");
+  assert(table.rowCount == 0);
+  assert(table.columnCount == 0);
+  
+  auto col1 = new CdbColumn("id", ColumnType.Int);
+  col1.append(1);
+  col1.append(2);
+  col1.append(3);
+  
+  auto col2 = new CdbColumn("name", ColumnType.String);
+  col2.append("Alice");
+  col2.append("Bob");
+  col2.append("Charlie");
+  
+  table.addColumn(col1);
+  table.addColumn(col2);
+  
+  assert(table.rowCount == 3);
+  assert(table.columnCount == 2);
+  
+  auto row = table.getRow(1);
+  assert(row["id"] == 2);
+  assert(row["name"] == "Bob");
+  
+  auto indices = table.query("name", "Charlie");
+  assert(indices.length == 1 && indices[0] == 2);
+  
+  auto stats = table.getStats();
+  assert(stats.tableName == "test");
+  assert(stats.rowCount == 3);
+  assert(stats.columnCount == 2);
+  assert(stats.totalMemory > 0);    
+}
 

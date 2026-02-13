@@ -12,8 +12,8 @@ mixin(ShowModule!());
 @safe:
 
 /// Exception for invalid column operations
-class ColumnException : Exception {
+class CdbException : Exception {
   this(string message, string file = __FILE__, size_t line = __LINE__) {
-    super("Column error: " ~ message, file, line);
+    super(message, file, line);
   }
 }

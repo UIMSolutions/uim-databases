@@ -8,7 +8,7 @@ module uim.databases.columndb.errors.duplicatecolumn;
 @safe:
 
 /// Exception for duplicate column
-class DuplicateColumnException : Exception {
+class DuplicateColumnException : CdbException {
   this(string columnName, string file = __FILE__, size_t line = __LINE__) {
     super("Duplicate column: " ~ columnName, file, line);
   }

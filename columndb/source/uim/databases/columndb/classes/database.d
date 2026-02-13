@@ -105,5 +105,37 @@ class CdbDatabase : ICdbDatabase {
     return stats;
   }
 }
+/// 
+unittest {
+  auto db = new CdbDatabase("testdb");
+  assert(db.name == "testdb");
+  assert(db.tableCount == 0);
+  
+  auto table = db.createTable("users");
+  assert(db.tableCount == 1);
+  assert(db.hasTable("users"));
+  
+  auto col = new Column("id", ColumnType.Int);
+  table.addColumn(col);
+  
+  table.insertRow(["id": 1]);
+  table.insertRow(["id": 2]);
+  
+  assert(table.rowCount == 2);
+  assert(table.getRow(0)["id"] == 1);
+  assert(table.getRow(1)["id"] == 2);
+  
+  auto stats = db.getStats();
+  assert(stats.databaseName == "testdb");
+  assert(stats.tableCount == 1);
+  assert(stats.totalMemory > 0);
+  assert(stats.tables.length == 1);
+  assert(stats.tables[0].tableName == "users");
+  assert(stats.tables[0].rowCount == 2);
+  assert(stats.tables[0].columnCount == 1);
 
+  db.dropTable("users");
+  assert(db.tableCount == 0); 
+
+}
 

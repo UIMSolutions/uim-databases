@@ -5,6 +5,10 @@
 *****************************************************************************************************************/
 module uim.databases.columndb.interfaces.column;
 
+import uim.databases.columndb;
+
+mixin(ShowModule!());
+
 @safe:
 
 /// Column interface - represents a single column of data
@@ -37,41 +41,7 @@ interface ICdbColumn {
   ulong memoryUsage();
 }
 
-/// Table interface - collection of columns
-interface IColumnTable {
-  /// Table name
-  string name();
-  
-  /// Add a column
-  void addColumn(IColumn column);
-  
-  /// Get column by name
-  IColumn getColumn(string name);
-  
-  /// Get all column names
-  string[] columnNames();
-  
-  /// Get number of rows
-  ulong rowCount();
-  
-  /// Get number of columns
-  ulong columnCount();
-  
-  /// Insert a row
-  void insertRow(Json[string] row);
-  
-  /// Get row as JSON object
-  Json[string] getRow(ulong index);
-  
-  /// Get all rows
-  Json[string][] getAllRows();
-  
-  /// Query by column values
-  ulong[] query(string columnName, Json value);
-  
-  /// Get column statistics
-  ColumnStats getColumnStats(string columnName);
-}
+
 
 /// Column statistics
 struct ColumnStats {

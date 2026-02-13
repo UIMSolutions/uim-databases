@@ -193,3 +193,54 @@ class CdbColumn : ICdbColumn {
     }
   }
 }
+///
+unittest {
+  import std.stdio;
+  import std.random;
+  
+  void testColumn() {
+    auto col = new CdbColumn("test", ColumnType.INTEGER);
+    col.append(Json(10));
+    col.append(Json(20));
+    col.append(Json(30));
+    
+    assert(col.rowCount == 3);
+    assert(col.get(0).get!long == 10);
+    assert(col.get(1).get!long == 20);
+    assert(col.get(2).get!long == 30);
+    
+    auto stats = col.getStats();
+    assert(stats.rowCount == 3);
+    assert(stats.type == ColumnType.INTEGER);
+    assert(stats.minValue.get!long == 10);
+    assert(stats.maxValue.get!long == 30);
+    assert(stats.avgValue.get!double == 20.0);
+    
+    writeln("CdbColumn tests passed.");
+
+    // Test type validation
+    bool exceptionThrown = false;
+    try {
+      col.append(Json("invalid"));
+    } catch (TypeMismatchException) {
+      exceptionThrown = true;   
+    }
+    assert(exceptionThrown);
+
+    // Test index out of bounds
+    exceptionThrown = false;
+    try {
+      col.get(10);
+    } catch (IndexOutOfBoundsException) {
+      exceptionThrown = true;
+    }
+    assert(exceptionThrown);    
+
+    exceptionThrown = false;
+    try {      col.set(10, Json(100));
+    } catch (IndexOutOfBoundsException) {
+      exceptionThrown = true;       
+    }
+    assert(exceptionThrown);
+  }
+}
