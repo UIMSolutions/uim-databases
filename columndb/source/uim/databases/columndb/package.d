@@ -6,8 +6,12 @@
 module uim.databases.columndb;
 
 public {
-  import uim.databases.columndb.classes;
-  import uim.databases.columndb.interfaces;
-  import uim.databases.columndb.errors;
+  import uim.oop;
+
   import uim.databases.columndb.api;
+  import uim.databases.columndb.classes;
+  import uim.databases.columndb.enumerations;
+  import uim.databases.columndb.errors;
+  import uim.databases.columndb.helpers;
+  import uim.databases.columndb.interfaces;
 }

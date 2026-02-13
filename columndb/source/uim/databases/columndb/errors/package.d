@@ -6,5 +6,11 @@
 module uim.databases.columndb.errors;
 
 public {
-  import uim.databases.columndb.errors.exceptions;
+  import uim.databases.columndb.errors.exception;
+
+  import uim.databases.columndb.errors.columnnotfound;
+  import uim.databases.columndb.errors.duplicatecolumn;
+  import uim.databases.columndb.errors.indexoutofbounds;
+  import uim.databases.columndb.errors.table;
+  import uim.databases.columndb.errors.typemismatch;
 }

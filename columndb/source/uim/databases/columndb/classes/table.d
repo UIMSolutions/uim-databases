@@ -6,7 +6,8 @@
 module uim.databases.columndb.classes.table;
 
 import uim.databases.columndb;
-import std.algorithm;
+
+mixin(ShowModule!());
 
 @safe:
 

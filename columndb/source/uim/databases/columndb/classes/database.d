@@ -7,6 +7,8 @@ module uim.databases.columndb.classes.database;
 
 import uim.databases.columndb;
 
+mixin(ShowModule!());
+
 @safe:
 
 /// Column database
