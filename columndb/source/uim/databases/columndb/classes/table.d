@@ -11,10 +11,10 @@ import std.algorithm;
 @safe:
 
 /// Column-based table implementation
-class ColumnTable : IColumnTable {
+class CdbTable : ICdbTable {
   private {
     string _name;
-    IColumn[string] _columns;
+    ICdbColumn[string] _columns;
     string[] _columnOrder;
   }
 
@@ -28,7 +28,7 @@ class ColumnTable : IColumnTable {
     return _name;
   }
 
-  override void addColumn(IColumn column) {
+  override void addColumn(ICdbColumn column) {
     if (column.name() in _columns) {
       throw new DuplicateColumnException(column.name());
     }
@@ -42,7 +42,7 @@ class ColumnTable : IColumnTable {
     _columnOrder ~= column.name();
   }
 
-  override IColumn getColumn(string name) {
+  override ICdbColumn getColumn(string name) {
     if (name !in _columns) {
       throw new ColumnNotFoundException(name);
     }
@@ -90,7 +90,7 @@ class ColumnTable : IColumnTable {
   }
 
   override ulong[] query(string columnName, Json value) {
-    IColumn col = getColumn(columnName);
+    ICdbColumn col = getColumn(columnName);
     ulong[] indices;
     
     for (ulong i = 0; i < col.rowCount(); i++) {
@@ -103,7 +103,7 @@ class ColumnTable : IColumnTable {
   }
 
   override ColumnStats getColumnStats(string columnName) {
-    auto col = cast(Column)getColumn(columnName);
+    auto col = cast(CdbColumn)getColumn(columnName);
     if (col is null) {
       throw new ColumnException("Column does not support statistics");
     }
@@ -139,10 +139,4 @@ class ColumnTable : IColumnTable {
   }
 }
 
-/// Table statistics
-struct TableStats {
-  string tableName;
-  ulong columnCount;
-  ulong rowCount;
-  ulong totalMemory;
-}
+

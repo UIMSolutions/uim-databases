@@ -10,7 +10,7 @@ import uim.databases.columndb;
 @safe:
 
 /// Column database
-class ColumnDatabase {
+class CdbDatabase : ICdbDatabase {
   private {
     string _name;
     IColumnTable[string] _tables;
@@ -24,13 +24,16 @@ class ColumnDatabase {
   string name() const {
     return _name;
   }
+  void rename(string newName) {
+    _name = newName;
+  }
 
   /// Create a new table
-  IColumnTable createTable(string tableName) {
+  ICdbTable createTable(string tableName) {
     if (tableName in _tables) {
       throw new TableException("Table already exists: " ~ tableName);
     }
-    
+
     auto table = new ColumnTable(tableName);
     _tables[tableName] = table;
     return table;
@@ -85,7 +88,7 @@ class ColumnDatabase {
     stats.databaseName = _name;
     stats.tableCount = tableCount();
     stats.totalMemory = getTotalMemory();
-    
+
     foreach (name, table; _tables) {
       auto ctable = cast(ColumnTable)table;
       if (ctable !is null) {
@@ -96,22 +99,9 @@ class ColumnDatabase {
         stats.tables ~= info;
       }
     }
-    
+
     return stats;
   }
 }
 
-/// Database statistics
-struct DatabaseStats {
-  string databaseName;
-  ulong tableCount;
-  ulong totalMemory;
-  TableStatsInfo[] tables;
-}
 
-/// Table info for stats
-struct TableStatsInfo {
-  string tableName;
-  ulong rowCount;
-  ulong columnCount;
-}

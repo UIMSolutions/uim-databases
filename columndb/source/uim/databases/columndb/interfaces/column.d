@@ -17,7 +17,7 @@ enum ColumnType {
 }
 
 /// Column interface - represents a single column of data
-interface IColumn {
+interface ICdbColumn {
   /// Column name
   string name();
   

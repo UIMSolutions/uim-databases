@@ -7,13 +7,6 @@ module uim.databases.columndb.errors.exceptions;
 
 @safe:
 
-/// Exception for invalid column operations
-class ColumnException : Exception {
-  this(string message, string file = __FILE__, size_t line = __LINE__) {
-    super("Column error: " ~ message, file, line);
-  }
-}
-
 /// Exception for index out of bounds
 class IndexOutOfBoundsException : Exception {
   this(ulong index, ulong maxIndex, string file = __FILE__, size_t line = __LINE__) {

@@ -13,7 +13,7 @@ import std.algorithm;
 @safe:
 
 /// Column implementation
-class Column : IColumn {
+class CdbColumn : ICdbColumn {
   private {
     string _name;
     ColumnType _type;
