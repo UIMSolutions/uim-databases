@@ -15,7 +15,7 @@ mixin(ShowModule!());
 class CdbDatabase : ICdbDatabase {
   private {
     string _name;
-    IColumnTable[string] _tables;
+    ICdbTable[string] _tables;
   }
 
   this(string name = "columndb") {
@@ -36,13 +36,13 @@ class CdbDatabase : ICdbDatabase {
       throw new TableException("Table already exists: " ~ tableName);
     }
 
-    auto table = new ColumnTable(tableName);
+    auto table = new CdbTable(tableName);
     _tables[tableName] = table;
     return table;
   }
 
   /// Get table
-  IColumnTable getTable(string tableName) {
+  ICdbTable getTable(string tableName) {
     if (tableName !in _tables) {
       throw new TableException("Table not found: " ~ tableName);
     }
@@ -76,7 +76,7 @@ class CdbDatabase : ICdbDatabase {
   ulong getTotalMemory() const {
     ulong total = 0;
     foreach (table; _tables) {
-      auto ctable = cast(ColumnTable)table;
+      auto ctable = cast(CdbTable)table;
       if (ctable !is null) {
         total += ctable.getStats().totalMemory;
       }
@@ -92,7 +92,7 @@ class CdbDatabase : ICdbDatabase {
     stats.totalMemory = getTotalMemory();
 
     foreach (name, table; _tables) {
-      auto ctable = cast(ColumnTable)table;
+      auto ctable = cast(CdbTable)table;
       if (ctable !is null) {
         TableStatsInfo info;
         info.tableName = name;

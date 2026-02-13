@@ -13,10 +13,10 @@ import std.stdio;
 
 shared static this() {
   // Create column database
-  auto db = new ColumnDatabase("analytics");
+  auto db = new CdbDatabase("analytics");
 
   // Create REST API handler
-  auto api = new ColumnDatabaseAPI(db);
+  auto api = new CdbDatabaseAPI(db);
 
   // Setup router
   auto router = new URLRouter;

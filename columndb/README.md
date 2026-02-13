@@ -272,7 +272,7 @@ import uim.databases.columndb;
 
 void main() {
   // Create database
-  auto db = new ColumnDatabase("mydb");
+  auto db = new CdbDatabase("mydb");
 
   // Create table
   auto table = db.createTable("products");
@@ -335,7 +335,7 @@ writeln("  Distinct: ", stats.distinctValues);
 ### Scan with Predicate
 
 ```d
-auto ctable = cast(ColumnTable)table;
+auto ctable = cast(CdbTable)table;
 auto expensiveItems = ctable.scan((Json[string] row) {
   if ("price" in row) {
     return row["price"].get!double > 100.0;
@@ -380,7 +380,7 @@ col.append(Json(100));        // ✗ Runtime error (integer != double)
 ```d
 import uim.databases.columndb;
 
-auto db = new ColumnDatabase("test");
+auto db = new CdbDatabase("test");
 
 try {
   auto table = db.getTable("nonexistent");
@@ -431,8 +431,8 @@ writeln("Total Memory: ", dbStats.totalMemory);
 import uim.databases.columndb;
 import vibe.d;
 
-auto db = new ColumnDatabase("analytics");
-auto api = new ColumnDatabaseAPI(db);
+auto db = new CdbDatabase("analytics");
+auto api = new CdbDatabaseAPI(db);
 
 auto router = new URLRouter;
 router.registerRestInterface(api);

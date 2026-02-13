@@ -308,8 +308,8 @@ curl -X POST http://localhost:8082/find-nearby \
 | Query Type | Direct | Analytical | Proximity |
 | Main Use Case | Caching | Analytics | Location Services |
 | REST Endpoints | 9 | 10 | 9 |
-| Interfaces | 1 (IKVStore) | 2 (IColumn, IColumnTable) | 3 (IGeoLocation, IGeoIndex, IGeoDatabase) |
-| Implementations | 2 (Memory, Persistent) | 1 (ColumnDatabase) | 1 (GeoDatabase) |
+| Interfaces | 1 (IKVStore) | 2 (IColumn, ICdbTable) | 3 (IGeoLocation, IGeoIndex, IGeoDatabase) |
+| Implementations | 2 (Memory, Persistent) | 1 (CdbDatabase) | 1 (GeoDatabase) |
 | Examples | 20 | 20 | 20 |
 
 ## Implementation Notes

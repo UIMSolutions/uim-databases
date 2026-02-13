@@ -119,7 +119,7 @@ import std.stdio;
 
 void main() {
   // Create database
-  auto db = new ColumnDatabase("mydb");
+  auto db = new CdbDatabase("mydb");
 
   // Create table
   auto table = db.createTable("products");
@@ -194,7 +194,7 @@ writeln("Distinct: ", stats.distinctValues);
 
 ```d
 // Use column table for advanced operations
-auto ctable = cast(ColumnTable)table;
+auto ctable = cast(CdbTable)table;
 
 // Scan with predicate
 auto expensiveIndices = ctable.scan((Json[string] row) {
@@ -325,7 +325,7 @@ Example: `DELETE /cdb/table/products`
 ### Sales Analytics
 
 ```d
-auto db = new ColumnDatabase("sales");
+auto db = new CdbDatabase("sales");
 auto transactions = db.createTable("transactions");
 
 // Add columns

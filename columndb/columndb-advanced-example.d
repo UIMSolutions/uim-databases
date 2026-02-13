@@ -14,7 +14,7 @@ void main() {
   writeln("=== Column-Based Database Advanced Examples ===\n");
 
   // Setup: Create analytics database with sales data
-  auto db = new ColumnDatabase("analytics");
+  auto db = new CdbDatabase("analytics");
   auto sales = db.createTable("sales");
 
   // Define schema
@@ -171,7 +171,7 @@ void main() {
   // Example 6: Column Scanning with Predicate
   writeln("Example 6: Filtered Column Scan");
   writeln("---------");
-  auto ctable = cast(ColumnTable)sales;
+  auto ctable = cast(CdbTable)sales;
   if (ctable !is null) {
     auto northRegionIndices = ctable.scan((Json[string] row) {
       if ("region" in row) {

@@ -11,10 +11,10 @@ interface ICdbDatabase {
   string name() const;
 
   /// Create a new table
-  IColumnTable createTable(string tableName) const;
+  ICdbTable createTable(string tableName) const;
 
   /// Get table
-  IColumnTable getTable(string tableName) const;
+  ICdbTable getTable(string tableName) const;
 
   /// Drop table
   void dropTable(string tableName) const;

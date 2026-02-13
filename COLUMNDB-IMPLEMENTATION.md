@@ -25,7 +25,7 @@ columndb/
 │       │   ├── database.d          # Database management
 │       │   └── package.d           # Export all classes
 │       ├── interfaces/
-│       │   ├── column.d            # IColumn & IColumnTable interfaces
+│       │   ├── column.d            # IColumn & ICdbTable interfaces
 │       │   └── package.d           # Export interfaces
 │       ├── api/
 │       │   ├── rest.d              # vibe.d REST endpoints
@@ -56,7 +56,7 @@ Methods for column-level operations:
 - `compress()` - Data compression
 - `memoryUsage()` - Memory footprint
 
-#### **IColumnTable Interface**
+#### **ICdbTable Interface**
 Methods for table operations:
 - `addColumn(column)` - Add column to table
 - `getColumn(name)` - Get column by name
@@ -85,7 +85,7 @@ auto stats = col.getStats();  // Min, Max, Avg, etc.
 
 ### 3. **Table Implementation** (`classes/table.d`)
 
-The `ColumnTable` class provides:
+The `CdbTable` class provides:
 - Multi-column storage
 - Row insertion and retrieval
 - Column-based queries
@@ -102,7 +102,7 @@ auto row = table.getRow(0);
 
 ### 4. **Database Implementation** (`classes/database.d`)
 
-The `ColumnDatabase` class manages:
+The `CdbDatabase` class manages:
 - Multiple tables
 - Table lifecycle (create, drop)
 - Database statistics
@@ -213,7 +213,7 @@ Server runs on `http://127.0.0.1:8081`
 
 ### Basic Table Creation
 ```d
-auto db = new ColumnDatabase("analytics");
+auto db = new CdbDatabase("analytics");
 auto sales = db.createTable("sales");
 
 sales.addColumn(new Column("id", ColumnType.INTEGER));
@@ -240,7 +240,7 @@ writeln("Average: ", stats.avgValue);
 
 ### Advanced Scanning
 ```d
-auto ctable = cast(ColumnTable)sales;
+auto ctable = cast(CdbTable)sales;
 auto highValueIndices = ctable.scan((Json[string] row) {
   return row["amount"].get!double > 100.0;
 });

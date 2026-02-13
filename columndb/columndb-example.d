@@ -15,7 +15,7 @@ void main() {
   // Example 1: Create Database and Table
   writeln("Example 1: Create Database and Table");
   writeln("---------");
-  auto db = new ColumnDatabase("retail");
+  auto db = new CdbDatabase("retail");
   auto products = db.createTable("products");
 
   // Add columns

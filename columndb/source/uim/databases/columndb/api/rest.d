@@ -13,10 +13,10 @@ import vibe.d;
 /// Request/Response structs for REST API
 struct CreateTableRequest {
   string tableName;
-  ColumnTableSchema[] columns;
+  CdbTableSchema[] columns;
 }
 
-struct ColumnTableSchema {
+struct CdbTableSchema {
   string name;
   string type;  // "INTEGER", "DOUBLE", "STRING", "BOOLEAN", "TIMESTAMP"
 }
@@ -80,10 +80,10 @@ struct DatabaseStatsResponse {
 }
 
 /// REST API for Column Database
-class ColumnDatabaseAPI {
-  private ColumnDatabase db;
+class CdbDatabaseAPI {
+  private ICdbDatabase db;
 
-  this(ColumnDatabase database) {
+  this(ICdbDatabase database) {
     this.db = database;
   }
 

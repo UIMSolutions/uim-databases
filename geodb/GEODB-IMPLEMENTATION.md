@@ -458,7 +458,7 @@ kvStore.set(location.id() ~ ":phone", "+1-555-0123");
 ### ColumnDB Integration
 ```d
 // Store location analytics in columns
-auto analytics = new ColumnDatabase("location_analytics");
+auto analytics = new CdbDatabase("location_analytics");
 
 // Add location visit counts
 // Add location ratings
