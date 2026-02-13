@@ -5,3 +5,6 @@
 *****************************************************************************************************************/
 module uim.databases.relational.helpers;
 
+public {
+  import uim.databases.relational.helpers.json;
+}

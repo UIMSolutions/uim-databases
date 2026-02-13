@@ -17,10 +17,7 @@ struct QueryResult {
 }
 
 /// Relational Database
-class RelationalDatabase {
-  string name;
-  IRDBTable[string] tables;
-
+class RDBDatabase : UIMObject, IRDBDatabase {
   this(string name = "default") {
     this.name = name;
   }
@@ -30,31 +27,57 @@ class RelationalDatabase {
     if (schema.tableName in tables) {
       throw new Exception("Table '" ~ schema.tableName ~ "' already exists");
     }
-    tables[schema.tableName] = new Table(schema.tableName, schema);
+    _tables[schema.tableName] = new RDBTable(schema.tableName, schema);
+  }
+
+  protected string _name;
+  string name() {
+    return _name;
+  }
+  IRDBDatabase name(string value) {
+    _name = value;
+    return this;
+  }
+
+  protected IRDBTable[string] _tables;
+  IRDBTable[string] tables() {
+    return _tables;
+  }
+  IRDBDatabase tables(IRDBTable[string] value) {
+    _tables = value;
+    return this;
   }
 
   /// Drop a table
-  void dropTable(string tableName) {
-    tables.remove(tableName);
+  IRDBDatabase dropTable(string tableName) {
+    _tables.remove(tableName);
+    return this;
   }
 
   /// Get a table
-  IRDBTable getTable(string tableName) {
-    auto ptr = tableName in tables;
-    if (ptr is null) {
+  IRDBTable table(string tableName) {
+    if (!(tableName in _tables)) {
       throw new Exception("Table '" ~ tableName ~ "' not found");
     }
-    return *ptr;
+    return _tables[tableName];
+  }
+
+  IRDBDatabase addTable(IRDBTable table) {
+    if (table.name in _tables) {
+      throw new Exception("Table '" ~ table.name ~ "' already exists");
+    }
+    _tables[table.name] = table;
+    return this;
   }
 
   /// Check if table exists
   bool hasTable(string tableName) {
-    return (tableName in tables) !is null;
+    return (tableName in _tables) ? true : false;
   }
 
   /// List all tables
   string[] listTables() {
-    return tables.keys.dup;
+    return _tables.keys.dup;
   }
 
   /// Perform an INNER JOIN between two tables
@@ -62,8 +85,8 @@ class RelationalDatabase {
     string leftColumn, string rightColumn,
     WhereCondition[] leftConditions = [],
     WhereCondition[] rightConditions = []) {
-    auto left = getTable(leftTable);
-    auto right = getTable(rightTable);
+    auto left = table(leftTable);
+    auto right = table(rightTable);
 
     Json[] results;
     foreach (leftRow; left.rows) {
@@ -103,14 +126,10 @@ class RelationalDatabase {
           Json joined = Json.emptyObject;
 
           // Add left table columns with prefix
-          foreach (string key, value; leftRow.data) {
-            joined[leftTable ~ "." ~ key] = value;
-          }
+          leftRow.data.byKeyValue.each!(kv => joined[leftTable ~ "." ~ kv.key] = kv.value);
 
           // Add right table columns with prefix
-          foreach (string key, value; rightRow.data) {
-            joined[rightTable ~ "." ~ key] = value;
-          }
+          rightRow.data.byKeyValue.each!(kv => joined[rightTable ~ "." ~ kv.key] = kv.value);
 
           results ~= joined;
         }
@@ -123,11 +142,11 @@ class RelationalDatabase {
   /// Get database statistics
   Json getStats() {
     auto stats = Json.emptyObject;
-    stats["name"] = name;
-    stats["tableCount"] = tables.length;
+    stats["name"] = _name;
+    stats["tableCount"] = _tables.length;
 
     Json[] tablesInfo;
-    foreach (tableName, table; tables) {
+    foreach (tableName, table; _tables) {
       auto tableInfo = Json.emptyObject;
       tableInfo["name"] = tableName;
       tableInfo["rowCount"] = table.rows.length;
@@ -149,6 +168,7 @@ class RelationalDatabase {
       return true;
     case Json.Type.bool_:
       return a.get!bool == b.get!bool;
+    case Json.Type.bigInt:
     case Json.Type.int_:
       return a.get!long == b.get!long;
     case Json.Type.float_:

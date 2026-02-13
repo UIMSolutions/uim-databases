@@ -100,7 +100,7 @@ class RDBSchema : UIMObject, IRDBSchema {
   }
 
   /// Validate a row against the schema
-  void validateRow(Json row) {
+  IRDBSchema validateRow(Json row) {
     foreach (col; columns) {
       if (col.name !in row) {
         if (!col.nullable && col.defaultValue.type == Json.Type.undefined) {
@@ -119,6 +119,7 @@ class RDBSchema : UIMObject, IRDBSchema {
         validateType(value, col.type, col.name);
       }
     }
+    return this;
   }
 
   private void validateType(Json value, ColumnType expectedType, string colName) {

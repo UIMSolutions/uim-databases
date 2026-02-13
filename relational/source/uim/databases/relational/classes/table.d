@@ -43,11 +43,11 @@ class RDBTable : UIMObject, IRDBTable {
     return this;
   }
 
-  protected long[Json] _primaryKeyIndex; // pk_value -> row_index
-  long[Json] primaryKeyIndex() {
+  protected size_t[JsonKey] _primaryKeyIndex; // pk_value -> row_index
+  size_t[JsonKey] primaryKeyIndex() {
     return _primaryKeyIndex;
   }
-  IRDBTable primaryKeyIndex(long[Json] value) {
+  IRDBTable primaryKeyIndex(size_t[JsonKey] value) {
     _primaryKeyIndex = value;
     return this;
   }
@@ -85,7 +85,7 @@ class RDBTable : UIMObject, IRDBTable {
     }
 
     auto row = IRDBRow(data);
-    long index = rows.length;
+    size_t index = rows.length;
     rows ~= row;
 
     // Update index
@@ -229,21 +229,20 @@ class RDBTable : UIMObject, IRDBTable {
 
   /// Get row by primary key
   Json getByPrimaryKey(Json pkValue) {
-    auto ptr = pkValue in primaryKeyIndex;
-    if (ptr is null) {
-      throw new Exception("Row with primary key not found");
-    }
-    return rows[*ptr].data.clone;
+    return JsonKey(pkValue) !in primaryKeyIndex
+      ? Json(null) 
+      : rows[primaryKeyIndex[JsonKey(pkValue)]].data.clone;
   }
 
   private void rebuildPrimaryKeyIndex() {
-    primaryKeyIndex.clear();
+    _primaryKeyIndex.clear();
     if (schema.primaryKeyColumn.length == 0)
       return;
 
     foreach (i, row; rows) {
       if (schema.primaryKeyColumn in row.data) {
-        primaryKeyIndex[row.data[schema.primaryKeyColumn]] = i;
+        auto jk = JsonKey(row.data[schema.primaryKeyColumn]);
+        _primaryKeyIndex[jk] = i;
       }
     }
   }
@@ -271,11 +270,11 @@ class RDBTable : UIMObject, IRDBTable {
   }
 
   private int compareJsonValues(Json a, Json b) {
-    if (a.type == Json.Type.undefined && b.type == Json.Type.undefined)
+    if (a.isUndefined && b.isUndefined)
       return 0;
-    if (a.type == Json.Type.undefined)
+    if (a.isUndefined)
       return 1;
-    if (b.type == Json.Type.undefined)
+    if (b.isUndefined)
       return -1;
 
     if (a.isInteger && b.isInteger) {

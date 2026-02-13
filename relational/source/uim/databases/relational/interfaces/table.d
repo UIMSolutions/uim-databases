@@ -16,8 +16,8 @@ interface IRDBTable {
   IRDBRow[] rows();
   IRDBTable rows(IRDBRow[] value);
 
-  long[Json] primaryKeyIndex();
-  IRDBTable primaryKeyIndex(long[Json] value);
+  size_t[JsonKey] primaryKeyIndex();
+  IRDBTable primaryKeyIndex(size_t[JsonKey] value);
 
   long insert(Json data);
 

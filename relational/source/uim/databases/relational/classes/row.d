@@ -13,8 +13,8 @@ import uim.databases.relational;
 class RDBRow : UIMObject, IRDBRow {
   this(Json data) {
     this.data = data;
-    this.createdAt = Clock.currTime();
-    this.updatedAt = Clock.currTime();
+    _createdAt = Clock.currTime();
+    _updatedAt = Clock.currTime();
   }
 
   protected Json _data;
@@ -24,7 +24,7 @@ class RDBRow : UIMObject, IRDBRow {
   
   IRDBRow data(Json value) {
     this._data = value;
-    this.updatedAt = Clock.currTime();
+    _updatedAt = Clock.currTime();
     return this;
   }
 

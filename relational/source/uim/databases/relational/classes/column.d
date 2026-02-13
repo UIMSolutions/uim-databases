@@ -30,8 +30,9 @@ class RDBColumn : UIMObject, IRDBColumn {
     return _name;
   }
 
-  @property void name(string value) {
+  @property IRDBColumn name(string value) {
     _name = value;
+    return this;
   }
   // #endregion name
 
@@ -42,8 +43,9 @@ class RDBColumn : UIMObject, IRDBColumn {
     return _type;
   }
 
-  @property void type(ColumnType value) {
+  @property IRDBColumn type(ColumnType value) {
     _type = value;
+    return this;
   }
   // #endregion type
 
