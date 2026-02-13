@@ -23,7 +23,7 @@ class RDBRow : UIMObject, IRDBRow {
   }
   
   IRDBRow data(Json value) {
-    this._data = value;
+    _data = value;
     _updatedAt = Clock.currTime();
     return this;
   }
@@ -49,7 +49,7 @@ class RDBRow : UIMObject, IRDBRow {
   }
 
   IRDBRow update(Json newData) {
-    this.data = newData;
+    _data = newData;
     _updatedAt = Clock.currTime();
     return this;
   }
