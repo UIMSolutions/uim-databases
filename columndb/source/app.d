@@ -14,13 +14,16 @@ import std.stdio;
 shared static this() {
   // Create column database
   auto db = new CdbDatabase("analytics");
+  auto hanaDb = new HanaLikeDatabase("hana-like-analytics");
 
   // Create REST API handler
   auto api = new CdbDatabaseAPI(db);
+  auto hanaApi = new HanaLikeDatabaseAPI(hanaDb);
 
   // Setup router
   auto router = new URLRouter;
   router.registerRestInterface(api);
+  router.registerRestInterface(hanaApi);
 
   // Add root endpoint
   router.get("/", (HTTPServerRequest req, HTTPServerResponse res) {
@@ -38,7 +41,23 @@ shared static this() {
         "GET /cdb/row/:table/:index - Get row by index",
         "POST /cdb/query - Query column for value",
         "GET /cdb/column/:table/:name/stats - Get column statistics",
-        "GET /cdb/stats - Database statistics"
+        "GET /cdb/stats - Database statistics",
+        "GET /hana/health - HANA-like engine health",
+        "POST /hana/security/token - Configure token",
+        "POST /hana/table - Create HANA-like table",
+        "POST /hana/row - Insert row",
+        "POST /hana/query - Query equals",
+        "POST /hana/analytics/aggregate - Real-time HTAP aggregate",
+        "POST /hana/text/search - Text search",
+        "POST /hana/graph/neighbors - Graph neighbor traversal",
+        "POST /hana/ml/linear/train - Train linear model",
+        "POST /hana/ml/linear/predict - Predict with model",
+        "POST /hana/integration/python - Run Python model",
+        "POST /hana/integration/r - Run R model",
+        "POST /hana/virtual/register - Register virtual source",
+        "POST /hana/virtual/query - Query virtual source",
+        "GET /hana/ha/snapshot - Export HA snapshot",
+        "POST /hana/ha/restore - Restore HA snapshot"
       ])
     ]);
   });

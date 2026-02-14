@@ -306,6 +306,14 @@ class CdbDatabaseAPI {
         return ColumnType.BOOLEAN;
       case "TIMESTAMP":
         return ColumnType.TIMESTAMP;
+      case "SPATIAL":
+        return ColumnType.SPATIAL;
+      case "TEXT":
+        return ColumnType.TEXT;
+      case "GRAPH":
+        return ColumnType.GRAPH;
+      case "JSON":
+        return ColumnType.JSON;
       default:
         throw new Exception("Unknown column type: " ~ typeName);
     }

@@ -9,4 +9,5 @@ public {
   import uim.databases.columndb.classes.column;
   import uim.databases.columndb.classes.table;
   import uim.databases.columndb.classes.database;
+  import uim.databases.columndb.classes.hana;
 }

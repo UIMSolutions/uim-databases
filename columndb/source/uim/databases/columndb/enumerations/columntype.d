@@ -13,5 +13,9 @@ enum ColumnType {
   DOUBLE,     // 64-bit floating point
   STRING,     // UTF-8 string
   BOOLEAN,    // Boolean value
-  TIMESTAMP   // System time
+  TIMESTAMP,  // System time
+  SPATIAL,    // Spatial data (GeoJSON/WKT-like)
+  TEXT,       // Full-text indexed content
+  GRAPH,      // Graph nodes/edges payload
+  JSON        // JSON documents
 }

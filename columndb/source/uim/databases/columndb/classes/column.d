@@ -116,6 +116,14 @@ class CdbColumn : ICdbColumn {
         return value.type == Json.Type.true_ || value.type == Json.Type.false_;
       case ColumnType.TIMESTAMP:
         return value.type == Json.Type.string;
+      case ColumnType.SPATIAL:
+        return value.type == Json.Type.object_ || value.type == Json.Type.string;
+      case ColumnType.TEXT:
+        return value.type == Json.Type.string;
+      case ColumnType.GRAPH:
+        return value.type == Json.Type.object_;
+      case ColumnType.JSON:
+        return value.type == Json.Type.object_ || value.type == Json.Type.array;
     }
   }
 
@@ -130,6 +138,10 @@ class CdbColumn : ICdbColumn {
       case ColumnType.STRING: return "STRING";
       case ColumnType.BOOLEAN: return "BOOLEAN";
       case ColumnType.TIMESTAMP: return "TIMESTAMP";
+      case ColumnType.SPATIAL: return "SPATIAL";
+      case ColumnType.TEXT: return "TEXT";
+      case ColumnType.GRAPH: return "GRAPH";
+      case ColumnType.JSON: return "JSON";
     }
   }
 

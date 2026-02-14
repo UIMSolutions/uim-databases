@@ -3,13 +3,13 @@
 * License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file. 
 * Authors: Ozan Nurettin Süel (aka UIManufaktur)
 *****************************************************************************************************************/
-module uim.databases.columndb.errors.indexoutofbounds;
+module uim.databases.columndb.exceptions.tables.table;
 
 @safe:
 
-/// Exception for index out of bounds
-class IndexOutOfBoundsException : CdbException {
-  this(ulong index, ulong maxIndex, string file = __FILE__, size_t line = __LINE__) {
-    super("Index out of bounds: " ~ index.to!string ~ " >= " ~ maxIndex.to!string, file, line);
+/// Exception for table operations
+class TableException : CdbException {
+  this(string message, string file = __FILE__, size_t line = __LINE__) {
+    super("Table error: " ~ message, file, line);
   }
 }

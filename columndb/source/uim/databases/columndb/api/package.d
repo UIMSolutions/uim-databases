@@ -7,4 +7,5 @@ module uim.databases.columndb.api;
 
 public {
   import uim.databases.columndb.api.rest;
+  import uim.databases.columndb.api.hana_rest;
 }
