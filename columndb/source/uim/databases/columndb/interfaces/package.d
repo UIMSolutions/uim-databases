@@ -7,4 +7,6 @@ module uim.databases.columndb.interfaces;
 
 public {
   import uim.databases.columndb.interfaces.column;
+  import uim.databases.columndb.interfaces.database;
+  import uim.databases.columndb.interfaces.table;
 }
