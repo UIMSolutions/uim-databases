@@ -1,51 +1,13 @@
 module app;
 
-import adapters.inbound.rest_api;
-import adapters.outbound.file_statement_log;
-import adapters.outbound.in_memory_repository;
+import uim.hdb.adapters.inbound.admin_web;
+import uim.hdb.adapters.inbound.rest_api;
+import uim.hdb.adapters.outbound.file_statement_log;
+import uim.hdb.adapters.outbound.in_memory_repository;
 import uim.hdb;
 import std.conv : to;
 import std.process : environment;
 import vibe.d;
-
-struct UserRow {
-    string id;
-    string name;
-    string email;
-    string role;
-    string status;
-}
-
-class AdminWebInterface {
-    // GET /admin/users
-    void getUsers(HTTPServerRequest req, HTTPServerResponse res) {
-        string pageTitle = "User Management";
-        string activeTable = "users";
-        ulong totalCount = 120;
-
-        // Sample data retrieved from database
-        UserRow[] records = [
-            UserRow("usr_101", "Alice Freeman", "alice@example.com", "Admin", "Active"),
-            UserRow("usr_102", "Bob Smith", "bob@example.com", "Editor", "Active"),
-            UserRow("usr_103", "Charlie Brown", "charlie@example.com", "User", "Inactive")
-        ];
-
-        // Render the view passing local variables to Diet
-        res.render!("table_view.dt", pageTitle, activeTable, totalCount, records);
-    }
-
-    // POST /admin/users/create
-    @path("/users/create")
-    void postUsersCreate(HTTPServerRequest req, HTTPServerResponse res) {
-        auto name = req.form.get("name");
-        auto email = req.form.get("email");
-        auto role = req.form.get("role");
-
-        // Insert into database logic here...
-
-        res.redirect("/admin/users");
-    }
-}
 
 /// Composition Root: einziger Ort, an dem Adapter und Kern verdrahtet werden.
 void main()
@@ -59,9 +21,9 @@ void main()
 
     auto router = new URLRouter;
     api.register(router);
-    auto webSettings = new WebInterfaceSettings;
-    webSettings.urlPrefix = "/admin";
-    router.registerWebInterface(new AdminWebInterface, webSettings);
+    
+    auto admin = new SqlAdminUi(service, environment.get("ADMIN_USER", "admin"), environment.get("ADMIN_PASSWORD", ""));
+    admin.register(router);
     
     // Serve static assets if needed
     router.get("/*", serveStaticFiles("public/"));

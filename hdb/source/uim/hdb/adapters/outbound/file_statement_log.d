@@ -1,4 +1,4 @@
-module adapters.outbound.file_statement_log;
+module uim.hdb.adapters.outbound.file_statement_log;
 
 import uim.hdb.application.ports;
 import std.file : exists, mkdirRecurse, rename;

@@ -1,4 +1,4 @@
-module adapters.outbound.in_memory_repository;
+module uim.hdb.adapters.outbound.in_memory_repository;
 
 import uim.hdb.application.ports;
 import uim.hdb.domain.table;

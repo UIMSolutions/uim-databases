@@ -1,96 +1,126 @@
 extends layout
 
 block content
-  // Action Bar & Filters
-  div.flex.flex-col.justify-between.items-start.gap-4.mb-6(class="sm:flex-row sm:items-center")
-    div.flex.items-center.gap-2.w-full(class="sm:w-auto")
-      div.join.w-full(class="sm:w-auto")
-        input.input.input-bordered.join-item.w-full(class="sm:w-80", type="text", placeholder="Filter records...")
-        button.btn.btn-square.join-item
-          i(data-lucide="search", class="w-4 h-4")
-      
-      div.dropdown
-        div.btn.btn-outline.gap-2(tabindex="0", role="button")
-          i(data-lucide="filter", class="w-4 h-4")
-          | Filter
-        ul.dropdown-content.menu.p-2.shadow.bg-base-100.rounded-box.w-52.z-10(tabindex="0")
-          li: a Active Only
-          li: a Pending Review
-          li: a Archived
+  div.flex.flex-wrap.items-center.justify-between.gap-3.mb-4
+    p.text-sm.opacity-70 #{view.live} live rows · #{view.deleted} deleted · #{view.columns.length} columns
+    div.flex.flex-wrap.gap-2
+      button.btn.btn-primary.btn-sm(type="button", data-row-insert="1")
+        i(data-lucide="plus", class="w-4 h-4")
+        | Add row
+      a.btn.btn-sm(href=view.consoleUrl)
+        i(data-lucide="terminal", class="w-4 h-4")
+        | Open in console
+      a.btn.btn-sm(href=view.exportUrl)
+        i(data-lucide="download", class="w-4 h-4")
+        | Export CSV
+      form(action="/admin/tables/#{view.name}/truncate", method="POST", data-confirm="Delete all rows in #{view.name}?")
+        button.btn.btn-sm.btn-outline.btn-warning(type="submit") Delete all rows
+      form(action="/admin/tables/#{view.name}/drop", method="POST", data-confirm-name=view.name)
+        button.btn.btn-sm.btn-outline.btn-error(type="submit") Drop table
 
-    button.btn.btn-primary.gap-2(onclick="create_modal.showModal()")
-      i(data-lucide="plus-circle", class="w-4 h-4")
-      | Add New Record
+  form.flex.flex-wrap.gap-2.mb-4(method="GET")
+    - if (view.sort.length)
+      input(type="hidden", name="sort", value=view.sort)
+      input(type="hidden", name="dir", value=view.desc ? "desc" : "asc")
+    input.input.input-sm.grow.font-mono.min-w-0(type="text", name="where", value=view.where, placeholder="WHERE condition, e.g. amount >= 10 AND name LIKE 'A%'", aria-label="WHERE condition")
+    select.select.select-sm.w-32(name="size", aria-label="Rows per page", data-autosubmit="1")
+      - foreach (n; [25, 50, 100, 250, 500])
+        option(value="#{n}", selected=view.pageSize == n) #{n} rows
+    button.btn.btn-sm(type="submit") Filter
+    - if (view.where.length)
+      a.btn.btn-sm.btn-ghost(href="/admin/tables/#{view.name}") Clear
 
-  // Data Table Container
-  div.card.bg-base-100.shadow-xl.border.border-base-300
+  - if (view.queryError.length)
+    div.alert.alert-error.mb-4(role="alert")
+      span.break-words.min-w-0 #{view.queryError}
+
+  div.card.bg-base-100.shadow.mb-6
     div.overflow-x-auto
-      table.table.table-zebra.w-full
+      table.table.table-zebra.table-sm
         thead
           tr
-            th: input.checkbox.checkbox-sm(type="checkbox")
-            th ID
-            th Name
-            th Email
-            th Role
-            th Status
+            - foreach (c; view.columns)
+              th
+                a.link.link-hover.font-mono(href=view.sortUrl(c.name)) #{c.name}#{view.sortMark(c.name)}
+                span.block.text-xs.font-normal.opacity-60 #{c.type}
             th.text-right Actions
         tbody
-          - foreach (row; records)
-            tr
-              td: input.checkbox.checkbox-sm(type="checkbox")
-              td.font-mono.text-xs #{row.id}
-              td.font-medium #{row.name}
-              td #{row.email}
-              td
-                div.badge.badge-outline #{row.role}
-              td
-                - if (row.status == "Active")
-                  div.badge.badge-success.gap-1.text-white
-                    span.w-1.h-1.rounded-full.bg-white
-                    | #{row.status}
+          - foreach (row; view.rows)
+            tr(data-values=row.match)
+              - foreach (c; row.cells)
+                - if (c.isNull)
+                  td
+                    span.badge.badge-ghost.badge-xs NULL
                 - else
-                  div.badge.badge-ghost.gap-1
-                    | #{row.status}
-              td.text-right
-                div.join
-                  button.btn.btn-square.btn-ghost.btn-xs.join-item(title="Edit", onclick="editRecord('#{row.id}')")
-                    i(data-lucide="edit-3", class="w-4 h-4")
-                  form(action="/admin/users/#{row.id}/delete", method="POST", class="inline")
-                    button.btn.btn-square.btn-ghost.btn-xs.text-error.join-item(type="submit", title="Delete", onclick="return confirm('Confirm deletion?')")
-                      i(data-lucide="trash-2", class="w-4 h-4")
+                  td.font-mono.max-w-xs.truncate(title=c.text) #{c.text}
+              td.text-right.whitespace-nowrap
+                button.btn.btn-square.btn-ghost.btn-xs(type="button", data-row-edit="1", title="Edit row", aria-label="Edit row")
+                  i(data-lucide="pencil", class="w-4 h-4")
+                form.inline(action="/admin/tables/#{view.name}/rows/delete", method="POST", data-confirm="Delete this row? Rows with identical values are deleted too.")
+                  input(type="hidden", name="match", value=row.match)
+                  input(type="hidden", name="back", value=view.backQuery)
+                  button.btn.btn-square.btn-ghost.btn-xs.text-error(type="submit", title="Delete row", aria-label="Delete row")
+                    i(data-lucide="trash-2", class="w-4 h-4")
+          - if (view.rows.length == 0 && view.queryError.length == 0)
+            tr
+              td.text-center.opacity-70.py-6(colspan="#{view.columns.length + 1}") No rows found
 
-    // Pagination Footer
     div.p-4.border-t.border-base-300.flex.flex-col.items-center.justify-between.gap-4(class="sm:flex-row")
-      span.text-sm.opacity-70 Showing 1 to #{records.length} of #{totalCount} records
+      span.text-sm.opacity-70 Showing #{view.firstRow} to #{view.lastRow} of #{view.matching} rows
       div.join
-        button.btn.btn-sm.join-item «
-        button.btn.btn-sm.join-item Page 1
-        button.btn.btn-sm.join-item »
+        a.btn.btn-sm.join-item(href=view.pageUrl(view.page - 1), class=view.page <= 1 ? "btn-disabled" : "") «
+        span.btn.btn-sm.join-item.no-animation Page #{view.page} of #{view.pageCount}
+        a.btn.btn-sm.join-item(href=view.pageUrl(view.page + 1), class=view.page >= view.pageCount ? "btn-disabled" : "") »
 
-  // Insert Record DaisyUI Modal
-  dialog#create_modal.modal
+  div.card.bg-base-100.shadow
+    div.card-body
+      h2.card-title Column storage
+      div.overflow-x-auto
+        table.table.table-sm
+          thead
+            tr
+              th Column
+              th Type
+              th.text-right Main rows
+              th.text-right Delta rows
+              th.text-right Main distinct
+              th.text-right Delta distinct
+              th.text-right Bits per value
+              th.text-right Main codes
+          tbody
+            - foreach (c; view.columns)
+              tr
+                td.font-mono #{c.name}
+                td #{c.type}
+                td.text-right #{c.stats.mainRows}
+                td.text-right #{c.stats.deltaRows}
+                td.text-right #{c.stats.mainDistinct}
+                td.text-right #{c.stats.deltaDistinct}
+                td.text-right #{c.stats.mainBits}
+                td.text-right #{c.codeSize}
+
+  dialog#row_modal.modal
     div.modal-box
-      h3.font-bold.text-lg.mb-4 Create New Entry
-      form(action="/admin/users/create", method="POST", class="space-y-4")
-        div.form-control
-          label.label
-            span.label-text Full Name
-          input.input.input-bordered(type="text", name="name", required=true)
-        
-        div.form-control
-          label.label
-            span.label-text Email Address
-          input.input.input-bordered(type="email", name="email", required=true)
-        
-        div.form-control
-          label.label
-            span.label-text User Role
-          select.select.select-bordered(name="role")
-            option(value="Admin") Admin
-            option(value="Editor") Editor
-            option(value="User", selected=true) User
-
+      h3#row-title.font-bold.text-lg.mb-4 Add row
+      p#row-duplicate-note.text-xs.opacity-70.mb-4.hidden Rows with identical values are updated too.
+      form#row-form(method="POST", data-insert="/admin/tables/#{view.name}/rows", data-update="/admin/tables/#{view.name}/rows/update")
+        input#row-match(type="hidden", name="match", value="")
+        input(type="hidden", name="back", value=view.backQuery)
+        - foreach (i, c; view.columns)
+          div.mb-3
+            label.block.text-sm.mb-1(for="row-v#{i}")
+              span.font-mono #{c.name}
+              span.opacity-60  #{c.type}
+            div.flex.items-center.gap-3
+              - if (c.type == "VARCHAR")
+                input.input.grow.min-w-0(id="row-v#{i}", type="text", name="v#{i}", data-field="#{i}", autocomplete="off")
+              - else if (c.type == "INTEGER")
+                input.input.grow.min-w-0(id="row-v#{i}", type="number", step="1", name="v#{i}", data-field="#{i}", autocomplete="off")
+              - else
+                input.input.grow.min-w-0(id="row-v#{i}", type="number", step="any", name="v#{i}", data-field="#{i}", autocomplete="off")
+              label.flex.items-center.gap-1.text-sm
+                input.checkbox.checkbox-sm(type="checkbox", name="n#{i}", value="1", data-null="#{i}")
+                | NULL
         div.modal-action
-          button.btn.btn-ghost(type="button", onclick="create_modal.close()") Cancel
-          button.btn.btn-primary(type="submit") Save Record
+          button.btn.btn-ghost(type="button", onclick="row_modal.close()") Cancel
+          button.btn.btn-primary(type="submit") Save

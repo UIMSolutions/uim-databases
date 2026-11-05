@@ -1,0 +1,4 @@
+extends layout
+
+block content
+  a.btn.btn-sm(href="/admin") Back to dashboard

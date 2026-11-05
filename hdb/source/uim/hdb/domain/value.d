@@ -2,6 +2,8 @@ module uim.hdb.domain.value;
 
 import std.conv : to;
 import std.exception : enforce;
+import std.format : format;
+import std.math : isFinite;
 import std.string : replace, strip, toUpper;
 import std.variant : Algebraic;
 
@@ -61,4 +63,79 @@ double toDouble(Value v) {
     if (auto l = v.peek!long)
         return *l;
     return *v.peek!double;
+}
+
+string typeName(ColumnType t) {
+    final switch (t) {
+    case ColumnType.integer:
+        return "INTEGER";
+    case ColumnType.decimal:
+        return "DECIMAL";
+    case ColumnType.text:
+        return "VARCHAR";
+    }
+}
+
+/// Kürzeste Dezimaldarstellung, die exakt denselben double ergibt (to!string behielte nur 6 Stellen).
+string exactText(double d) {
+    foreach (precision; 15 .. 17) {
+        auto text = format("%.*g", precision, d);
+        if (text.to!double == d)
+            return text;
+    }
+    return format("%.17g", d);
+}
+
+/// Anzeigetext eines Werts; NULL ergibt "NULL".
+string valueText(Value v) {
+    if (isNull(v))
+        return "NULL";
+    if (auto l = v.peek!long)
+        return (*l).to!string;
+    if (auto d = v.peek!double)
+        return exactText(*d);
+    return *v.peek!string;
+}
+
+/// SQL-Literal eines Werts; parseLiteral liest es verlustfrei zurück.
+string toSqlLiteral(Value v) {
+    if (auto s = v.peek!string)
+        return "'" ~ (*s).replace("'", "''") ~ "'";
+    return valueText(v);
+}
+
+/// Wandelt Formulartext (ohne SQL-Quoting) passend zum Spaltentyp in einen Value um.
+Value valueFromInput(ColumnType type, string input) {
+    final switch (type) {
+    case ColumnType.integer:
+        try
+            return Value(input.strip.to!long);
+        catch (Exception)
+            throw new Exception("Keine ganze Zahl: " ~ input);
+    case ColumnType.decimal:
+        double d;
+        try
+            d = input.strip.to!double;
+        catch (Exception)
+            throw new Exception("Keine Zahl: " ~ input);
+        enforce(isFinite(d), "Keine endliche Zahl: " ~ input);
+        return Value(d);
+    case ColumnType.text:
+        return Value(input);
+    }
+}
+
+unittest {
+    foreach (d; [1.23456789012, 0.1, 1234567.891, 1e20, 2.0, -0.000123456789])
+        assert(exactText(d).to!double == d);
+    assert(exactText(0.1) == "0.1");
+    assert(toSqlLiteral(Value("it's")) == "'it''s'");
+    assert(toSqlLiteral(nullValue) == "NULL");
+    assert(parseLiteral(ColumnType.decimal, toSqlLiteral(Value(1234567.891))) == Value(1234567.891));
+    assert(valueFromInput(ColumnType.integer, " 7 ") == Value(7L));
+    assert(valueFromInput(ColumnType.text, " 7 ") == Value(" 7 "));
+    import std.exception : assertThrown;
+
+    assertThrown(valueFromInput(ColumnType.integer, "1; DROP TABLE t"));
+    assertThrown(valueFromInput(ColumnType.decimal, "nan"));
 }

@@ -19,6 +19,7 @@ struct ColumnStats {
     size_t rows, mainRows, deltaRows, mainDistinct, deltaDistinct;
     uint mainBits;
     size_t mainCodeBytes;
+    ColumnType type;
 }
 
 struct TableStats {
@@ -244,7 +245,7 @@ final class ColumnTable {
             auto c = columns[i];
             s.columns ~= ColumnStats(d.name, c.length, c.mainRows, c.deltaRows,
                 c.mainDistinct, c.deltaDistinct,
-                c.mainBits, c.mainCodeBytes);
+                c.mainBits, c.mainCodeBytes, d.type);
         }
         return s;
     }

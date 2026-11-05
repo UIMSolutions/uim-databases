@@ -1,0 +1,98 @@
+extends layout
+
+block content
+  div.stats.stats-vertical.bg-base-100.shadow.w-full.mb-6(class="lg:stats-horizontal")
+    div.stat
+      div.stat-title Tables
+      div.stat-value #{view.tables.length}
+    div.stat
+      div.stat-title Live rows
+      div.stat-value #{view.totalRows}
+    div.stat
+      div.stat-title Rows in delta
+      div.stat-value #{view.totalDelta}
+      div.stat-desc Not yet merged into main
+    div.stat
+      div.stat-title Deleted rows
+      div.stat-value #{view.totalDeleted}
+      div.stat-desc Removed at the next merge
+    div.stat
+      div.stat-title Main store codes
+      div.stat-value #{view.totalSize}
+      div.stat-desc Bit-packed, without dictionaries
+
+  div.grid.gap-6.grid-cols-1(class="xl:grid-cols-3")
+    div.card.bg-base-100.shadow.min-w-0(class="xl:col-span-2")
+      div.card-body
+        div.flex.items-center.justify-between.gap-2
+          h2.card-title Tables
+          button.btn.btn-primary.btn-sm(type="button", onclick="create_table_modal.showModal()")
+            i(data-lucide="plus", class="w-4 h-4")
+            | New table
+        - if (view.tables.length)
+          div.overflow-x-auto
+            table.table
+              thead
+                tr
+                  th Name
+                  th.text-right Columns
+                  th.text-right Live rows
+                  th.text-right Delta
+                  th.text-right Deleted
+                  th.text-right Main codes
+              tbody
+                - foreach (t; view.tables)
+                  tr.hover
+                    td
+                      a.link.link-hover.font-mono(href="/admin/tables/#{t.name}") #{t.name}
+                    td.text-right #{t.columns}
+                    td.text-right #{t.rows}
+                    td.text-right #{t.deltaRows}
+                    td.text-right #{t.deletedRows}
+                    td.text-right #{t.codeSize}
+        - else
+          p.opacity-70.py-6 No tables yet. Create one here or in the SQL console.
+
+    div.card.bg-base-100.shadow
+      div.card-body
+        h2.card-title Maintenance
+        div.flex.items-center.gap-2
+          span.text-sm Delta merge
+          - if (view.merge.running)
+            span.badge.badge-info Running
+          - else
+            span.badge.badge-ghost Idle
+        p.text-sm.opacity-70 Completed in this session: #{view.merge.completed}
+        - if (view.merge.lastError.length)
+          p.text-sm.text-error Last error: #{view.merge.lastError}
+        form(action="/admin/merge", method="POST")
+          button.btn.btn-sm.w-full(type="submit")
+            i(data-lucide="git-merge", class="w-4 h-4")
+            | Run delta merge
+        p.text-xs.opacity-70 Moves delta rows into the compressed main store and removes deleted rows.
+        form.mt-2(action="/admin/checkpoint", method="POST")
+          button.btn.btn-sm.w-full(type="submit")
+            i(data-lucide="save", class="w-4 h-4")
+            | Write checkpoint
+        p.text-xs.opacity-70 Rewrites the statement log as a compact snapshot.
+
+  dialog#create_table_modal.modal
+    div.modal-box
+      h3.font-bold.text-lg.mb-4 New table
+      form(action="/admin/tables", method="POST")
+        label.block.mb-4
+          span.block.text-sm.mb-1 Table name
+          input.input.w-full.font-mono(type="text", name="table", required=true, pattern="\\w+", autocomplete="off")
+        p.text-sm.mb-1 Columns
+        div#column-list.flex.flex-col.gap-2
+          div.flex.gap-2(data-column-row="1")
+            input.input.grow.min-w-0.font-mono(type="text", name="col_name", placeholder="column_name", aria-label="Column name", required=true, pattern="\\w+", autocomplete="off")
+            select.select.w-36(name="col_type", aria-label="Column type")
+              option(value="INTEGER") INTEGER
+              option(value="DECIMAL") DECIMAL
+              option(value="VARCHAR") VARCHAR
+            button.btn.btn-square.btn-ghost(type="button", data-remove-column="1", aria-label="Remove column") ×
+        button.btn.btn-ghost.btn-sm.mt-2(type="button", data-add-column="1") + Add column
+        div.modal-action
+          button.btn.btn-ghost(type="button", onclick="create_table_modal.close()") Cancel
+          button.btn.btn-primary(type="submit") Create table

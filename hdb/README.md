@@ -18,10 +18,28 @@ Start: `dub run`
     curl -X POST localhost:8080/sql -H 'Content-Type: application/json' \
       -d '{"statement":"SELECT SUM(amount) FROM orders WHERE id >= 1"}'
 
+## Administrationsoberfläche
+
+`http://localhost:8080/admin` (Adapter `adapters/inbound/admin_web.d`, Templates in `views/`, Skript in `public/admin.js`).
+
+- Dashboard: Kennzahlen je Tabelle, Delta-Merge und Checkpoint auslösen, Tabellen anlegen.
+- Tabellenansicht: Filtern (WHERE), Sortieren, Blättern, Zeilen anlegen, bearbeiten und löschen, CSV-Export,
+  Tabelle leeren oder löschen, Speicherstatistik je Spalte.
+- SQL-Konsole: mehrere Anweisungen mit `;`, Abbruch beim ersten Fehler, `BEGIN` trägt über mehrere Ausführungen.
+
+Tabellen haben keinen Primärschlüssel. Bearbeiten und Löschen einer Zeile treffen deshalb alle Zeilen mit
+identischen Werten; die Oberfläche meldet die Anzahl.
+
+Zugriff: Mit `ADMIN_PASSWORD` (Benutzer `ADMIN_USER`, Standard `admin`) gilt HTTP Basic Auth, ohne Passwort ist
+`/admin` nur von localhost erreichbar. Basic Auth überträgt das Passwort unverschlüsselt, daher im Netz nur hinter
+TLS betreiben. Hinter einem Reverse-Proxy auf demselben Host erscheinen alle Clients als localhost: dort immer ein
+Passwort setzen. Schreibende Anfragen von fremden Origins werden abgewiesen. Die REST-Endpunkte (`/sql` usw.) sind
+davon nicht betroffen und bleiben ungeschützt.
+
 ## Persistenz
 
 Command-Log (Write-Ahead-Log) über den Port `IStatementLog`, Adapter `FileStatementLog`.
-Jedes erfolgreiche `CREATE`/`INSERT` wird angehängt, beim Start spielt `recover()` das Log ein.
+Jede erfolgreiche Änderung (`CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE`) wird angehängt, beim Start spielt `recover()` das Log ein.
 Nach 1000 Anweisungen oder per `POST /checkpoint` wird das Log kompakt neu geschrieben.
 Datei: Umgebungsvariable `DATA_FILE` (Standard `data/hana-lite.log`).
 
@@ -77,6 +95,12 @@ Die Main-Codes liegen in `domain/packed_vector.d`: jeder Code belegt nur `ceil(l
   Zeilen, wenn sie mehr als die Hälfte der Tabelle ausmachen. Beim Checkpoint werden sie nicht ins Log geschrieben.
 - Beide Anweisungen werden ins Log geschrieben und beim Start deterministisch wieder eingespielt.
 - `GET /stats` zeigt `rows` (lebende Zeilen) und `deletedRows`.
+
+## DROP TABLE
+
+    DROP TABLE orders
+
+Wird geloggt und beim Start wiederholt. In einer Transaktion stellt `ROLLBACK` die Tabelle samt Daten wieder her.
 
 ## JOIN
 

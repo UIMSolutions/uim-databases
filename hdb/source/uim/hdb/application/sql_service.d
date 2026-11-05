@@ -240,7 +240,7 @@ final class SqlService : ISqlUseCase {
                 enforce(txId.length == 0, "Unbekannte oder beendete Transaktion: " ~ txId);
 
             auto res = run(s);
-            if (verb == "CREATE" || verb == "INSERT" || verb == "UPDATE" || verb == "DELETE") {
+            if (verb == "CREATE" || verb == "DROP" || verb == "INSERT" || verb == "UPDATE" || verb == "DELETE") {
                 if (tx !is null)
                     tx.stmts ~= s;
                 else if (log !is null) {
@@ -319,6 +319,8 @@ final class SqlService : ISqlUseCase {
         switch (s.split()[0].toUpper) {
         case "CREATE":
             return createTable(s);
+        case "DROP":
+            return dropTable(s);
         case "INSERT":
             return insertInto(s);
         case "UPDATE":
@@ -348,6 +350,16 @@ final class SqlService : ISqlUseCase {
         return QueryResult(null, null, 0, "Tabelle " ~ m[1] ~ " angelegt");
     }
 
+    /// Entfernt die Tabelle; in einer Transaktion stellt der Snapshot sie beim Rollback wieder her.
+    private QueryResult dropTable(string s) {
+        auto m = matchFirst(s, ctRegex!(`^DROP\s+TABLE\s+(\w+)$`, "i"));
+        enforce(!m.empty, "Syntax: DROP TABLE name");
+        enforce(repo.exists(m[1]), "Tabelle nicht gefunden: " ~ m[1]);
+        touch(repo.get(m[1]));
+        repo.remove(m[1]);
+        return QueryResult(null, null, 0, "Tabelle " ~ m[1] ~ " gelöscht");
+    }
+
     private QueryResult insertInto(string s) {
         auto m = matchFirst(s, ctRegex!(`^INSERT\s+INTO\s+(\w+)\s+VALUES\s*\((.*)\)$`, "is"));
         enforce(!m.empty, "Syntax: INSERT INTO name VALUES (...)");
@@ -365,9 +377,10 @@ final class SqlService : ISqlUseCase {
 
     /// UPDATE = alte Version löschen + neue Version ans Ende (Delta) einfügen (insert-only wie in HANA).
     private QueryResult updateRows(string s) {
-        auto m = matchFirst(s, ctRegex!(
-                `^UPDATE\s+(\w+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$`, "is"));
-        enforce(!m.empty, "Syntax: UPDATE name SET spalte = wert [, ...] [WHERE bedingung (AND/OR, Klammern)]");
+        auto masked = maskLiterals(s);
+        auto m = originalCaptures(matchFirst(masked, ctRegex!(
+                `^UPDATE\s+(\w+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$`, "is")), masked, s);
+        enforce(m.length, "Syntax: UPDATE name SET spalte = wert [, ...] [WHERE bedingung (AND/OR, Klammern)]");
         auto t = repo.get(m[1]);
         touch(t);
 
@@ -567,9 +580,10 @@ final class SqlService : ISqlUseCase {
             distinct = true;
             s = "SELECT " ~ dm.post;
         }
-        auto m = matchFirst(s, ctRegex!(
-                `^SELECT\s+(.+?)\s+FROM\s+(.+?)(?:\s+WHERE\s+(.+?))?(?:\s+GROUP\s+BY\s+([\w.]+(?:\s*,\s*[\w.]+)*))?(?:\s+HAVING\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+)(?:\s+OFFSET\s+(\d+))?)?$`, "is"));
-        enforce(!m.empty,
+        auto masked = maskLiterals(s);
+        auto m = originalCaptures(matchFirst(masked, ctRegex!(
+                `^SELECT\s+(.+?)\s+FROM\s+(.+?)(?:\s+WHERE\s+(.+?))?(?:\s+GROUP\s+BY\s+([\w.]+(?:\s*,\s*[\w.]+)*))?(?:\s+HAVING\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+)(?:\s+OFFSET\s+(\d+))?)?$`, "is")), masked, s);
+        enforce(m.length,
             "Syntax: SELECT [DISTINCT] ... FROM name [alias] [[INNER|LEFT] JOIN name [alias] ON a = b ...] [WHERE bedingung (AND/OR, Klammern)] [GROUP BY spalte [, spalte ...]] [HAVING ausdruck op wert] "
                 ~ "[ORDER BY spalte [ASC|DESC], ...] [LIMIT n [OFFSET m]]");
         Cond residual;
@@ -960,6 +974,30 @@ private ColumnType parseType(string t) {
     throw new Exception("Unbekannter Typ: " ~ t);
 }
 
+/// Ersetzt den Inhalt von 'Textliteralen' Byte für Byte, damit darin stehende Schlüsselwörter wie WHERE
+/// nicht als Klauseln erkannt werden. Die Länge bleibt gleich, Treffer lassen sich aufs Original übertragen.
+private string maskLiterals(string s) {
+    auto masked = s.dup;
+    bool quoted;
+    foreach (ref c; masked) {
+        if (c == '\'')
+            quoted = !quoted;
+        else if (quoted)
+            c = '_';
+    }
+    return masked.idup;
+}
+
+/// Gruppen eines Treffers auf `masked` als Ausschnitte von `original`; leer, wenn nichts passte.
+private string[] originalCaptures(C)(C m, string masked, string original) {
+    string[] result;
+    foreach (i; 0 .. m.length) {
+        immutable start = m[i].ptr - masked.ptr;
+        result ~= m[i].length ? original[start .. start + m[i].length] : "";
+    }
+    return result;
+}
+
 /// Komma-Trennung, die Kommas in 'Textliteralen' ignoriert.
 private string[] splitList(string s) {
     string[] result;
@@ -978,17 +1016,6 @@ private string[] splitList(string s) {
     return result;
 }
 
-private string typeName(ColumnType t) {
-    final switch (t) {
-    case ColumnType.integer:
-        return "INTEGER";
-    case ColumnType.decimal:
-        return "DECIMAL";
-    case ColumnType.text:
-        return "VARCHAR";
-    }
-}
-
 private string dumpCreate(ColumnTable t) {
     string[] cols;
     foreach (d; t.defs)
@@ -999,18 +1026,8 @@ private string dumpCreate(ColumnTable t) {
 private string dumpRow(ColumnTable t, size_t row) {
     string[] lits;
     foreach (ci, d; t.defs)
-        lits ~= literal(t.value(ci, row));
+        lits ~= toSqlLiteral(t.value(ci, row));
     return "INSERT INTO " ~ t.name ~ " VALUES (" ~ lits.join(", ") ~ ")";
-}
-
-private string literal(Value v) {
-    if (isNull(v))
-        return "NULL";
-    if (auto l = v.peek!long)
-        return (*l).to!string;
-    if (auto d = v.peek!double)
-        return (*d).to!string;
-    return "'" ~ (*v.peek!string).replace("'", "''") ~ "'";
 }
 
 private enum AggKind {
@@ -2432,4 +2449,88 @@ unittest {
     assert(st.rows == 650 && st.deletedRows == 0 && st.columns[0].deltaRows == 0);
     assert(s.execute("SELECT SUM(k) FROM c").rows[0][0] == Value(8_643_425.0));
     assert(s.mergeStatus().lastError.length == 0);
+}
+
+unittest {
+    static class FakeRepo : ITableRepository {
+        ColumnTable[string] m;
+        bool exists(string n) {
+            return (n in m) !is null;
+        }
+
+        ColumnTable get(string n) {
+            enforce(n in m, "Tabelle nicht gefunden: " ~ n); // wie InMemoryTableRepository
+            return m[n];
+        }
+
+        void save(ColumnTable t) {
+            m[t.name] = t;
+        }
+
+        void remove(string n) {
+            m.remove(n);
+        }
+
+        string[] list() {
+            return m.keys;
+        }
+    }
+
+    static class MemLog : IStatementLog {
+        string[] lines;
+        void append(string st) {
+            lines ~= st;
+        }
+
+        void appendAll(string[] a) {
+            lines ~= a;
+        }
+
+        string[] readAll() {
+            return lines.dup;
+        }
+
+        void replaceAll(string[] a) {
+            lines = a.dup;
+        }
+    }
+
+    import std.exception : assertThrown;
+
+    auto log = new MemLog;
+    auto s = new SqlService(new FakeRepo, log);
+    s.execute("CREATE TABLE d (k INTEGER, w DECIMAL)");
+    s.execute("INSERT INTO d VALUES (1, 1234567.891)");
+    assert(s.stats()[0].columns[1].type == ColumnType.decimal);
+
+    // Checkpoint und Wiederanlauf erhalten double exakt
+    s.checkpoint();
+    auto restored = new SqlService(new FakeRepo, log);
+    restored.recover();
+    assert(restored.execute("SELECT w FROM d").rows[0][0] == Value(1234567.891));
+
+    // DROP in einer Transaktion: Rollback stellt die Tabelle samt Daten wieder her
+    auto tx = s.execute("BEGIN").transaction;
+    s.executeIn(tx, "DROP TABLE d");
+    assertThrown(s.executeIn(tx, "SELECT k FROM d"));
+    s.executeIn(tx, "ROLLBACK");
+    assert(s.execute("SELECT k FROM d").rows.length == 1);
+
+    // DROP wird geloggt und beim Einspielen wiederholt; die Tabelle lässt sich neu anlegen
+    s.execute("DROP TABLE d");
+    assertThrown(s.execute("DROP TABLE d"));
+    auto replayed = new SqlService(new FakeRepo, log);
+    replayed.recover();
+    assert(replayed.listTables().length == 0);
+    replayed.execute("CREATE TABLE d (x VARCHAR)");
+    assertThrown(s.execute("DROP d"));
+
+    // Schlüsselwörter in Textliteralen sind keine Klauseln
+    s.execute("CREATE TABLE q (k INTEGER, n VARCHAR)");
+    s.execute("INSERT INTO q VALUES (1, 'x WHERE y = 1')");
+    s.execute("INSERT INTO q VALUES (2, 'a ORDER BY b LIMIT 1')");
+    assert(s.execute("UPDATE q SET n = 'z WHERE k = 2 GROUP BY' WHERE k = 1").affected == 1);
+    assert(s.execute("SELECT k FROM q WHERE n = 'z WHERE k = 2 GROUP BY'").rows[0][0] == Value(1L));
+    assert(s.execute("SELECT k FROM q WHERE n = 'a ORDER BY b LIMIT 1' ORDER BY k DESC LIMIT 1").rows[0][0] == Value(2L));
+    assert(s.execute("SELECT k FROM q WHERE n = 'it''s FROM x'").rows.length == 0);
 }

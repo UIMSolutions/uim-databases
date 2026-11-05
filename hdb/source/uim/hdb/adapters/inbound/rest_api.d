@@ -1,4 +1,4 @@
-module adapters.inbound.rest_api;
+module uim.hdb.adapters.inbound.rest_api;
 
 import uim.hdb.application.ports;
 import uim.hdb.domain.value;
@@ -71,7 +71,12 @@ final class SqlRestApi
 
     private void stats(HTTPServerRequest req, HTTPServerResponse res)
     {
-        res.writeJsonBody(serializeToJson(sql.stats()));
+        auto all = sql.stats();
+        auto j = serializeToJson(all);
+        foreach (ti, t; all)
+            foreach (ci, c; t.columns)
+                j[ti]["columns"][ci]["type"] = typeName(c.type);
+        res.writeJsonBody(j);
     }
 
     private void execute(HTTPServerRequest req, HTTPServerResponse res)
