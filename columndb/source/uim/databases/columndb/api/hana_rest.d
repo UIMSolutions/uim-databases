@@ -183,13 +183,13 @@ class HanaLikeDatabaseAPI {
     requireAuth(req.token);
     auto rows = db.textSearch(req.tableName, req.columnName, req.term);
 
-    Json out = Json.emptyArray;
-    foreach (row; rows) out ~= row;
+    Json responseRows = Json.emptyArray;
+    foreach (row; rows) responseRows ~= row;
 
     return [
       "success": Json(true),
       "count": Json(rows.length),
-      "rows": out
+      "rows": responseRows
     ];
   }
 
@@ -276,12 +276,12 @@ class HanaLikeDatabaseAPI {
     requireAuth(req.token);
 
     auto rows = db.queryVirtualSource(req.sourceName, req.query);
-    Json out = Json.emptyArray;
-    foreach (r; rows) out ~= r;
+    Json responseRows = Json.emptyArray;
+    foreach (r; rows) responseRows ~= r;
 
     return [
       "success": Json(true),
-      "rows": out,
+      "rows": responseRows,
       "count": Json(rows.length)
     ];
   }

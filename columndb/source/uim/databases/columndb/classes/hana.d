@@ -192,7 +192,10 @@ class HanaLikeDatabase {
     Json[] result;
     foreach (row; rows) {
       if (!(columnName in row)) continue;
-      auto tokens = tokenize(row[columnName].type == Json.Type.string ? row[columnName].get!string : row[columnName].toString());
+      auto sourceText = row[columnName].type == Json.Type.string
+        ? row[columnName].get!string
+        : row[columnName].toString();
+      auto tokens = tokenize(sourceText);
 
       bool allPresent = true;
       foreach (word; wanted) {

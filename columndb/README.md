@@ -14,6 +14,11 @@ A high-performance, column-oriented database implementation in D with vibe.d RES
 - **Query Capabilities**: Query by value and range scans
 - **In-Memory**: Fast in-memory columnar storage
 - **Metadata**: Track column types, sizes, and access patterns
+- **HANA-like HTAP Layer**: Unified transactional inserts + analytical aggregates in real time
+- **Extended Types**: SPATIAL, TEXT, GRAPH, JSON
+- **PAL-like ML**: Built-in linear regression training + prediction endpoints
+- **R/Python Integration**: Execute external model scripts on live JSON payloads
+- **Virtualization/HA/Security**: Virtual data sources, snapshot/restore, token-based access control
 
 ## Architecture
 
@@ -38,6 +43,31 @@ uim/databases/columndb/
 - `STRING` - UTF-8 strings
 - `BOOLEAN` - True/false values
 - `TIMESTAMP` - Date/time values
+- `SPATIAL` - Geospatial structures (GeoJSON-like objects or WKT-like strings)
+- `TEXT` - Full-text searchable strings
+- `GRAPH` - Graph node/edge payloads
+- `JSON` - JSON documents/arrays
+
+## HANA-Like Endpoints
+
+The executable now exposes additional endpoints for HANA-like behavior:
+
+- `GET /hana/health`
+- `POST /hana/security/token`
+- `POST /hana/table`
+- `POST /hana/row`
+- `POST /hana/query`
+- `POST /hana/analytics/aggregate`
+- `POST /hana/text/search`
+- `POST /hana/graph/neighbors`
+- `POST /hana/ml/linear/train`
+- `POST /hana/ml/linear/predict`
+- `POST /hana/integration/python`
+- `POST /hana/integration/r`
+- `POST /hana/virtual/register`
+- `POST /hana/virtual/query`
+- `GET /hana/ha/snapshot`
+- `POST /hana/ha/restore`
 
 ## Building
 
