@@ -18,3 +18,6 @@ hdb/hana-lite
 hdb/hdb
 hdb/hdb-test-application
 hdb/.yamlink/history-backfill.done
+hdb/data/hdb-users.json
+hdb/data/hdb-users.json.tmp
+hdb/data/tables/

@@ -1,7 +1,9 @@
 module uim.hdb.domain.table;
 
-import uim.hdb.domain.column;
-import uim.hdb.domain.packed_vector : PackedVector;
+import uim.hdb;
+import uim.hdb.domain.types.packed_vector : PackedVector;
+import uim.hdb.domain.types.tablestats : ColumnStats, TableStats;
+import uim.hdb.domain.types.tablestorage : TableStorage;
 import uim.hdb.domain.value;
 import std.algorithm : sort, uniq;
 import std.array : array;
@@ -14,19 +16,7 @@ struct ColumnDef {
     ColumnType type;
 }
 
-struct ColumnStats {
-    string name;
-    size_t rows, mainRows, deltaRows, mainDistinct, deltaDistinct;
-    uint mainBits;
-    size_t mainCodeBytes;
-    ColumnType type;
-}
 
-struct TableStats {
-    string table;
-    size_t rows, deletedRows;
-    ColumnStats[] columns;
-}
 
 /// Spaltenorientierte Tabelle mit Main/Delta-Spalten.
 final class ColumnTable {
@@ -35,14 +25,16 @@ final class ColumnTable {
     string name;
     ColumnDef[] defs;
     Column[] columns;
+    TableStorage storage;
     private bool[] deleted; // Löschvektor: eine Zeile je physischer Zeile
     private size_t deletedCount;
     private bool compacting; // eine Kompaktierung ist eingefroren und läuft gerade
     private size_t[] compactLog; // seit dem Einfrieren gelöschte Zeilen (alte Zeilennummern)
 
-    this(string name, ColumnDef[] defs) {
+    this(string name, ColumnDef[] defs, TableStorage storage = TableStorage.memory) {
         this.name = name;
         this.defs = defs;
+        this.storage = storage;
         this.columns = new Column[defs.length];
         foreach (ref c; columns)
             c = new Column;
@@ -50,7 +42,7 @@ final class ColumnTable {
 
     /// Tiefe Kopie inklusive Löschvektor (für Rollback-Snapshots).
     ColumnTable clone() {
-        auto t = new ColumnTable(name, defs.dup);
+        auto t = new ColumnTable(name, defs.dup, storage);
         foreach (i, c; columns)
             t.columns[i] = c.clone();
         t.deleted = deleted.dup;
@@ -241,6 +233,7 @@ final class ColumnTable {
         s.table = name;
         s.rows = liveCount;
         s.deletedRows = deletedCount;
+        s.storage = storage;
         foreach (i, d; defs) {
             auto c = columns[i];
             s.columns ~= ColumnStats(d.name, c.length, c.mainRows, c.deltaRows,

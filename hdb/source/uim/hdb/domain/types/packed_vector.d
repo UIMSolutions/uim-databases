@@ -1,18 +1,24 @@
-module uim.hdb.domain.packed_vector;
+module uim.hdb.domain.types.packed_vector;
 
 /// Bitgepackter Vektor: jeder Code belegt nur so viele Bits, wie das Dictionary braucht.
-struct PackedVector
-{
+struct PackedVector {
     private ulong[] words;
     private uint bits;
     private size_t len;
 
-    size_t length() const { return len; }
-    uint bitsPerValue() const { return bits; }
-    size_t bytes() const { return words.length * ulong.sizeof; }
+    size_t length() const {
+        return len;
+    }
 
-    PackedVector dup() const
-    {
+    uint bitsPerValue() const {
+        return bits;
+    }
+
+    size_t bytes() const {
+        return words.length * ulong.sizeof;
+    }
+
+    PackedVector dup() const {
         PackedVector p;
         p.words = words.dup;
         p.bits = bits;
@@ -20,16 +26,14 @@ struct PackedVector
         return p;
     }
 
-    static uint bitsFor(size_t distinct)
-    {
+    static uint bitsFor(size_t distinct) {
         uint b = 1;
         while ((1UL << b) < distinct)
             ++b;
         return b;
     }
 
-    static PackedVector pack(const(uint)[] codes, size_t distinct)
-    {
+    static PackedVector pack(const(uint)[] codes, size_t distinct) {
         PackedVector p;
         p.bits = bitsFor(distinct);
         p.len = codes.length;
@@ -39,18 +43,16 @@ struct PackedVector
         return p;
     }
 
-    private void set(size_t i, uint v)
-    {
+    private void set(size_t i, uint v) {
         immutable bitPos = i * bits;
         immutable w = bitPos / 64;
         immutable off = cast(uint)(bitPos % 64);
-        words[w] |= cast(ulong) v << off;
+        words[w] |= cast(ulong)v << off;
         if (off + bits > 64)
-            words[w + 1] |= cast(ulong) v >> (64 - off);
+            words[w + 1] |= cast(ulong)v >> (64 - off);
     }
 
-    uint opIndex(size_t i) const
-    {
+    uint opIndex(size_t i) const {
         immutable bitPos = i * bits;
         immutable w = bitPos / 64;
         immutable off = cast(uint)(bitPos % 64);
@@ -61,8 +63,7 @@ struct PackedVector
     }
 }
 
-unittest
-{
+unittest {
     uint[] codes;
     foreach (i; 0 .. 200)
         codes ~= i % 37;

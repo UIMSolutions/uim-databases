@@ -1,0 +1,28 @@
+doctype html
+html(lang="en", data-theme="dark")
+  head
+    meta(charset="utf-8")
+    meta(name="viewport", content="width=device-width, initial-scale=1")
+    title Sign in - hdb Admin
+    link(rel="icon", href="data:,")
+    link(href="https://cdn.jsdelivr.net/npm/daisyui@5.7.50/daisyui.css", rel="stylesheet", type="text/css")
+    script(src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4")
+
+  body.bg-base-200.min-h-screen.flex.items-center.justify-center.p-4
+    div.card.bg-base-100.shadow.w-full.max-w-sm
+      div.card-body
+        h1.card-title.text-2xl.mb-2 hdb Admin
+        - if (loginNotice.length)
+          div.alert.alert-success(role="status")
+            span #{loginNotice}
+        - if (loginError.length)
+          div.alert.alert-error(role="alert")
+            span #{loginError}
+        form(action="/admin/login", method="POST")
+          label.block.mb-3
+            span.block.text-sm.mb-1 User name
+            input.input.w-full(type="text", name="user", required=true, autofocus=true, autocomplete="username")
+          label.block.mb-4
+            span.block.text-sm.mb-1 Password
+            input.input.w-full(type="password", name="password", required=true, autocomplete="current-password")
+          button.btn.btn-primary.w-full(type="submit") Sign in

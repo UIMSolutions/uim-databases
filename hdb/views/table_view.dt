@@ -2,21 +2,26 @@ extends layout
 
 block content
   div.flex.flex-wrap.items-center.justify-between.gap-3.mb-4
-    p.text-sm.opacity-70 #{view.live} live rows · #{view.deleted} deleted · #{view.columns.length} columns
+    p.text-sm.opacity-70
+      span.badge.badge-ghost.badge-sm.mr-2 #{view.storage}
+      | #{view.live} live rows · #{view.deleted} deleted · #{view.columns.length} columns
     div.flex.flex-wrap.gap-2
-      button.btn.btn-primary.btn-sm(type="button", data-row-insert="1")
-        i(data-lucide="plus", class="w-4 h-4")
-        | Add row
+      - if (page.canWrite)
+        button.btn.btn-primary.btn-sm(type="button", data-row-insert="1")
+          i(data-lucide="plus", class="w-4 h-4")
+          | Add row
       a.btn.btn-sm(href=view.consoleUrl)
         i(data-lucide="terminal", class="w-4 h-4")
         | Open in console
       a.btn.btn-sm(href=view.exportUrl)
         i(data-lucide="download", class="w-4 h-4")
         | Export CSV
-      form(action="/admin/tables/#{view.name}/truncate", method="POST", data-confirm="Delete all rows in #{view.name}?")
-        button.btn.btn-sm.btn-outline.btn-warning(type="submit") Delete all rows
-      form(action="/admin/tables/#{view.name}/drop", method="POST", data-confirm-name=view.name)
-        button.btn.btn-sm.btn-outline.btn-error(type="submit") Drop table
+      - if (page.canWrite)
+        form(action="/admin/tables/#{view.name}/truncate", method="POST", data-confirm="Delete all rows in #{view.name}?")
+          button.btn.btn-sm.btn-outline.btn-warning(type="submit") Delete all rows
+      - if (page.isAdmin)
+        form(action="/admin/tables/#{view.name}/drop", method="POST", data-confirm-name=view.name)
+          button.btn.btn-sm.btn-outline.btn-error(type="submit") Drop table
 
   form.flex.flex-wrap.gap-2.mb-4(method="GET")
     - if (view.sort.length)
@@ -43,7 +48,8 @@ block content
               th
                 a.link.link-hover.font-mono(href=view.sortUrl(c.name)) #{c.name}#{view.sortMark(c.name)}
                 span.block.text-xs.font-normal.opacity-60 #{c.type}
-            th.text-right Actions
+            - if (page.canWrite)
+              th.text-right Actions
         tbody
           - foreach (row; view.rows)
             tr(data-values=row.match)
@@ -53,14 +59,15 @@ block content
                     span.badge.badge-ghost.badge-xs NULL
                 - else
                   td.font-mono.max-w-xs.truncate(title=c.text) #{c.text}
-              td.text-right.whitespace-nowrap
-                button.btn.btn-square.btn-ghost.btn-xs(type="button", data-row-edit="1", title="Edit row", aria-label="Edit row")
-                  i(data-lucide="pencil", class="w-4 h-4")
-                form.inline(action="/admin/tables/#{view.name}/rows/delete", method="POST", data-confirm="Delete this row? Rows with identical values are deleted too.")
-                  input(type="hidden", name="match", value=row.match)
-                  input(type="hidden", name="back", value=view.backQuery)
-                  button.btn.btn-square.btn-ghost.btn-xs.text-error(type="submit", title="Delete row", aria-label="Delete row")
-                    i(data-lucide="trash-2", class="w-4 h-4")
+              - if (page.canWrite)
+                td.text-right.whitespace-nowrap
+                  button.btn.btn-square.btn-ghost.btn-xs(type="button", data-row-edit="1", title="Edit row", aria-label="Edit row")
+                    i(data-lucide="pencil", class="w-4 h-4")
+                  form.inline(action="/admin/tables/#{view.name}/rows/delete", method="POST", data-confirm="Delete this row? Rows with identical values are deleted too.")
+                    input(type="hidden", name="match", value=row.match)
+                    input(type="hidden", name="back", value=view.backQuery)
+                    button.btn.btn-square.btn-ghost.btn-xs.text-error(type="submit", title="Delete row", aria-label="Delete row")
+                      i(data-lucide="trash-2", class="w-4 h-4")
           - if (view.rows.length == 0 && view.queryError.length == 0)
             tr
               td.text-center.opacity-70.py-6(colspan="#{view.columns.length + 1}") No rows found
@@ -99,28 +106,29 @@ block content
                 td.text-right #{c.stats.mainBits}
                 td.text-right #{c.codeSize}
 
-  dialog#row_modal.modal
-    div.modal-box
-      h3#row-title.font-bold.text-lg.mb-4 Add row
-      p#row-duplicate-note.text-xs.opacity-70.mb-4.hidden Rows with identical values are updated too.
-      form#row-form(method="POST", data-insert="/admin/tables/#{view.name}/rows", data-update="/admin/tables/#{view.name}/rows/update")
-        input#row-match(type="hidden", name="match", value="")
-        input(type="hidden", name="back", value=view.backQuery)
-        - foreach (i, c; view.columns)
-          div.mb-3
-            label.block.text-sm.mb-1(for="row-v#{i}")
-              span.font-mono #{c.name}
-              span.opacity-60  #{c.type}
-            div.flex.items-center.gap-3
-              - if (c.type == "VARCHAR")
-                input.input.grow.min-w-0(id="row-v#{i}", type="text", name="v#{i}", data-field="#{i}", autocomplete="off")
-              - else if (c.type == "INTEGER")
-                input.input.grow.min-w-0(id="row-v#{i}", type="number", step="1", name="v#{i}", data-field="#{i}", autocomplete="off")
-              - else
-                input.input.grow.min-w-0(id="row-v#{i}", type="number", step="any", name="v#{i}", data-field="#{i}", autocomplete="off")
-              label.flex.items-center.gap-1.text-sm
-                input.checkbox.checkbox-sm(type="checkbox", name="n#{i}", value="1", data-null="#{i}")
-                | NULL
-        div.modal-action
-          button.btn.btn-ghost(type="button", onclick="row_modal.close()") Cancel
-          button.btn.btn-primary(type="submit") Save
+  - if (page.canWrite)
+    dialog#row_modal.modal
+      div.modal-box
+        h3#row-title.font-bold.text-lg.mb-4 Add row
+        p#row-duplicate-note.text-xs.opacity-70.mb-4.hidden Rows with identical values are updated too.
+        form#row-form(method="POST", data-insert="/admin/tables/#{view.name}/rows", data-update="/admin/tables/#{view.name}/rows/update")
+          input#row-match(type="hidden", name="match", value="")
+          input(type="hidden", name="back", value=view.backQuery)
+          - foreach (i, c; view.columns)
+            div.mb-3
+              label.block.text-sm.mb-1(for="row-v#{i}")
+                span.font-mono #{c.name}
+                span.opacity-60  #{c.type}
+              div.flex.items-center.gap-3
+                - if (c.type == "VARCHAR")
+                  input.input.grow.min-w-0(id="row-v#{i}", type="text", name="v#{i}", data-field="#{i}", autocomplete="off")
+                - else if (c.type == "INTEGER")
+                  input.input.grow.min-w-0(id="row-v#{i}", type="number", step="1", name="v#{i}", data-field="#{i}", autocomplete="off")
+                - else
+                  input.input.grow.min-w-0(id="row-v#{i}", type="number", step="any", name="v#{i}", data-field="#{i}", autocomplete="off")
+                label.flex.items-center.gap-1.text-sm
+                  input.checkbox.checkbox-sm(type="checkbox", name="n#{i}", value="1", data-null="#{i}")
+                  | NULL
+          div.modal-action
+            button.btn.btn-ghost(type="button", onclick="row_modal.close()") Cancel
+            button.btn.btn-primary(type="submit") Save

@@ -18,6 +18,58 @@ Start: `dub run`
     curl -X POST localhost:8080/sql -H 'Content-Type: application/json' \
       -d '{"statement":"SELECT SUM(amount) FROM orders WHERE id >= 1"}'
 
+## REST-API v1
+
+Typisierte vibe.d-Schnittstellen in `presentation/rest` (`interfaces.d`, `models.d`, `services.d`), registriert von
+`registerHdbRestApi`. Aus den Schnittstellen lassen sich Clients erzeugen: `new RestInterfaceClient!ITableRestApi(url)`.
+
+| Methode und Pfad | Zweck |
+|---|---|
+| `GET /api/v1/health` | Zustand |
+| `GET /api/v1/stats` | Statistik aller Tabellen |
+| `POST /api/v1/checkpoint` | Checkpoint schreiben |
+| `GET /api/v1/merge` | Zustand des Delta-Merges |
+| `POST /api/v1/merge` | Delta-Merge starten (202) |
+| `POST /api/v1/sql` | `{"statement": "...", "transaction": "<id>"}`, Id auch im Header `X-Transaction-Id` |
+| `GET /api/v1/tables` | Tabellennamen |
+| `POST /api/v1/tables` | `{"name": "t", "columns": [{"name": "id", "type": "INTEGER"}]}` |
+| `GET /api/v1/tables/:name` | Spalten und Statistik |
+| `DELETE /api/v1/tables/:name` | Tabelle löschen |
+| `GET /api/v1/tables/:name/rows` | Zeilen; Parameter `where`, `sort`, `desc`, `limit` (1 bis 1000, Standard 100), `offset` |
+| `POST /api/v1/tables/:name/rows` | `{"values": [1, "a", null]}`, ein Wert je Spalte |
+
+Fehler: `{"statusMessage": "..."}` mit 400 (ungültiges SQL, gesperrte Datenbank) oder 404 (Tabelle unbekannt).
+Dazu `POST /api/v1/auth/login|logout|password`, `GET /api/v1/auth/me` und `GET|POST /api/v1/users`,
+`PUT|DELETE /api/v1/users/:name`, `POST /api/v1/users/:name/password`. Fehlende Anmeldung ergibt 401, fehlende Rechte 403.
+Die Endpunkte ohne `/api/v1` (`adapters/inbound/rest_api.d`) bestehen weiter und verlangen ebenfalls ein Bearer-Token.
+
+## OData v4
+
+OData 4.0 unter `/odata/v4` (`presentation/odata`), Tabellen sind Entity Sets. Anmeldung per Bearer-Token und Rollen gelten
+wie bei allen anderen Schnittstellen.
+
+    curl localhost:8080/odata/v4/\$metadata -H "Authorization: Bearer $TOKEN"
+    curl "localhost:8080/odata/v4/orders?\$filter=amount%20gt%2010&\$orderby=id%20desc&\$top=5&\$count=true" -H "Authorization: Bearer $TOKEN"
+    curl -X PATCH "localhost:8080/odata/v4/orders(1)" -H "Authorization: Bearer $TOKEN" \
+      -H 'Content-Type: application/json' -d '{"amount": 12.5}'
+
+- Lesen: Service-Dokument, `$metadata` (CSDL/XML), `/orders`, `/orders/$count`, `/orders(1)`, `/orders(1)/name`, `/orders(1)/name/$value`.
+- Schreiben: `POST`, `PATCH`, `PUT` (fehlende Eigenschaften werden NULL), `DELETE`; `Prefer: return=minimal|representation`.
+- Optionen: `$filter`, `$select`, `$orderby`, `$top`, `$skip`, `$count`, `$format=json`. Höchstens 1000 Zeilen je Antwort,
+  danach `@odata.nextLink`.
+- `$filter`: `eq ne gt ge lt le`, `and or not`, Klammern, `null`, `contains`, `startswith`, `endswith`. Verglichen wird eine
+  Eigenschaft mit einem Literal. NULL verhält sich wie in OData 4.0: `a ne 1` trifft auch Zeilen, in denen `a` NULL ist.
+- Nicht umgesetzt, Antwort 501: `$expand`, `$search`, `$apply`, `$compute`, `$batch`, weitere Funktionen und Arithmetik in
+  `$filter`. Es gibt keine ETags und keine Beziehungen zwischen Tabellen.
+
+Typen: `INTEGER` ist `Edm.Int64`, `DECIMAL` ist `Edm.Double`, `VARCHAR` ist `Edm.String`.
+
+Schlüssel: Tabellen haben keinen Primärschlüssel, deshalb gilt eine Spalte `id` (`INTEGER` oder `VARCHAR`) als Schlüssel.
+Der Kern erzwingt keine Eindeutigkeit: `POST` lehnt vorhandene Schlüssel ab, kommt ein Schlüssel trotzdem mehrfach vor
+(etwa nach SQL-Änderungen), antworten Zugriffe darauf mit 409 statt mehrere Zeilen zu ändern. Tabellen ohne `id` zeigen die
+berechnete Eigenschaft `__rowid`. Das ist nur die Position im Ergebnis, einzelne Zeilen sind dort nicht adressierbar (501).
+Tabellen oder Spalten, deren Name kein gültiger OData-Bezeichner ist (etwa `1a`), erscheinen nicht im Dienst.
+
 ## Administrationsoberfläche
 
 `http://localhost:8080/admin` (Adapter `adapters/inbound/admin_web.d`, Templates in `views/`, Skript in `public/admin.js`).
@@ -30,16 +82,73 @@ Start: `dub run`
 Tabellen haben keinen Primärschlüssel. Bearbeiten und Löschen einer Zeile treffen deshalb alle Zeilen mit
 identischen Werten; die Oberfläche meldet die Anzahl.
 
-Zugriff: Mit `ADMIN_PASSWORD` (Benutzer `ADMIN_USER`, Standard `admin`) gilt HTTP Basic Auth, ohne Passwort ist
-`/admin` nur von localhost erreichbar. Basic Auth überträgt das Passwort unverschlüsselt, daher im Netz nur hinter
-TLS betreiben. Hinter einem Reverse-Proxy auf demselben Host erscheinen alle Clients als localhost: dort immer ein
-Passwort setzen. Schreibende Anfragen von fremden Origins werden abgewiesen. Die REST-Endpunkte (`/sql` usw.) sind
-davon nicht betroffen und bleiben ungeschützt.
+Die Oberfläche blendet aus, was die Rolle nicht darf; entschieden wird aber immer auf dem Server.
+
+## Benutzer und Rechte
+
+Außer `GET /health`, `GET /api/v1/health` und den Anmeldeseiten verlangt jede Route eine Anmeldung.
+
+| Rolle | Rechte |
+|---|---|
+| `viewer` | `SELECT`, Tabellen und Statistik lesen |
+| `editor` | zusätzlich `INSERT`, `UPDATE`, `DELETE`, Transaktionen |
+| `admin` | zusätzlich `CREATE`, `DROP`, Merge, Checkpoint, Benutzerverwaltung (`/admin/users`) |
+
+Rechte gelten für die ganze Datenbank, nicht je Tabelle. Rollenänderungen wirken sofort, auch in laufenden Sitzungen.
+Eine offene Transaktion kann nur ihr Besitzer verwenden. Der letzte aktive Administrator lässt sich nicht entfernen.
+
+Erster Start: Gibt es keine Benutzer, wird `ADMIN_USER` (Standard `admin`) mit `ADMIN_PASSWORD` angelegt. Ohne
+Passwort wird eines erzeugt und einmalig ins Log geschrieben; bitte unter `/admin/account` ändern. Danach werden beide
+Variablen ignoriert. Administrator-Passwort verloren: `USERS_FILE` löschen und neu starten (alle Benutzer sind dann weg).
+
+    TOKEN=$(curl -s localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+      -d '{"user":"admin","password":"..."}' | jq -r .token)
+    curl localhost:8080/sql -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"statement":"SELECT * FROM orders"}'
+
+- Anmeldung: `/admin` nutzt ein Cookie (HttpOnly, SameSite=Strict), alle REST-Routen nur Bearer-Tokens. Tokens gelten
+  12 Stunden, liegen nur als Hash im Speicher und enden bei Neustart, Passwortwechsel, Deaktivieren oder Löschen.
+- Passwörter: mindestens 12 Zeichen, PBKDF2-HMAC-SHA256 mit 600 000 Runden. Nach 5 Fehlversuchen ist der Name 1 Minute
+  gesperrt, auch wenn er nicht existiert. Dadurch kann ein Angreifer die Anmeldung eines Namens zeitweise blockieren.
+- Benutzer liegen in `USERS_FILE` (Standard `data/hdb-users.json`, Rechte 0600), nicht im Anweisungsprotokoll.
+  Eine beschädigte Datei bricht den Start ab. Sicherungen müssen die Datei einschließen.
+- Das Log enthält weiterhin alle Daten im Klartext; die Rechte gelten nur für den Zugriff über HTTP.
+- Tokens, Cookies und Passwörter gehen im Klartext über HTTP: im Netz nur hinter TLS betreiben. Das Cookie erhält
+  `Secure`, wenn der Proxy `X-Forwarded-Proto: https` setzt.
+
+Durchgesetzt wird an einer Stelle: `SecuredSqlUseCase` umschließt den Kern, alle eingehenden Adapter sehen nur ihn.
+`SecurityGate` setzt je Anfrage die Identität und lässt nur die öffentlichen Pfade ohne Anmeldung durch.
+
+## Tabellenspeicher
+
+    CREATE TABLE klein (id INTEGER, name VARCHAR) USING JSON
+
+Beim Anlegen wählt man im Admin-Formular, per `USING` oder im Feld `storage` von `POST /api/v1/tables`, wo eine Tabelle
+liegt. Ohne Angabe gilt `MEMORY`. Abfragen laufen immer im Hauptspeicher, der Unterschied betrifft nur die Dauerhaftigkeit.
+Der Speicher lässt sich später nicht ändern; dafür Tabelle neu anlegen und Daten kopieren.
+
+| Speicher | Repository | Dauerhaft durch | Schreiben kostet |
+|---|---|---|---|
+| `MEMORY` | `MemoryTableRepository` | Anweisungsprotokoll (siehe Persistenz) | eine Zeile im Log |
+| `FILE` | `FileTableRepository` | `TABLES_DIR/file/<name>.tbl` (Text, tabulatorgetrennt) | ganze Datei neu |
+| `JSON` | `JsonTableRepository` | `TABLES_DIR/json/<name>.json` | ganze Datei neu |
+
+`TABLES_DIR` ist standardmäßig `data/tables`. `RoutingTableRepository` verteilt die Tabellen, Namen sind über alle Speicher
+eindeutig. `GET /stats` und `GET /api/v1/stats` zeigen `storage`.
+
+- `FILE`- und `JSON`-Tabellen stehen nie im Anweisungsprotokoll: jede Tabelle hat genau eine dauerhafte Quelle.
+- Geschrieben wird am Commit-Punkt, also nach jeder Anweisung oder beim `COMMIT`; `ROLLBACK` erreicht die Datei nie.
+  Dateien werden per temporärer Datei, `fsync` und `rename` ersetzt, es liegt also der alte oder der neue Stand vor.
+- Bei jeder Änderung wird die ganze Datei neu geschrieben. Für große oder oft geänderte Tabellen ist `MEMORY` die bessere Wahl.
+- Eine Transaktion über mehrere Dateien oder über Datei und Log ist bei einem Absturz mitten im `COMMIT` nicht atomar:
+  Dateien werden nacheinander geschrieben, das Log zuletzt.
+- Eine beschädigte Datei, oder derselbe Tabellenname in zwei Speichern, bricht den Start ab.
+- Die Dateien sind Klartext. Sicherungen müssen `TABLES_DIR` einschließen.
 
 ## Persistenz
 
 Command-Log (Write-Ahead-Log) über den Port `IStatementLog`, Adapter `FileStatementLog`.
-Jede erfolgreiche Änderung (`CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE`) wird angehängt, beim Start spielt `recover()` das Log ein.
+Jede erfolgreiche Änderung an `MEMORY`-Tabellen (`CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE`) wird angehängt, beim Start spielt `recover()` das Log ein.
 Nach 1000 Anweisungen oder per `POST /checkpoint` wird das Log kompakt neu geschrieben.
 Datei: Umgebungsvariable `DATA_FILE` (Standard `data/hana-lite.log`).
 

@@ -1,7 +1,7 @@
 module uim.hdb.application.sql_service;
 
 import uim.hdb.application.ports;
-import uim.hdb.domain.column : Column, MergeJob;
+import uim.hdb;
 import uim.hdb.domain.table;
 import uim.hdb.domain.value;
 import std.algorithm : all, canFind, map, sort, startsWith, endsWith, SwapStrategy;
@@ -19,6 +19,7 @@ import core.time : MonoTime, msecs, seconds;
 /// Mini-SQL: CREATE TABLE, INSERT, SELECT (Spalten, *, COUNT(*), SUM(x)) mit einfachem WHERE.
 final class SqlService : ISqlUseCase {
     private ITableRepository repo;
+    private IDurableTableRepository durable; // null, wenn das Repository nur im Speicher arbeitet
     private IStatementLog log;
     private size_t pending;
     private enum checkpointEvery = 1000;
@@ -32,6 +33,7 @@ final class SqlService : ISqlUseCase {
 
     this(ITableRepository repo, IStatementLog log = null) {
         this.repo = repo;
+        this.durable = cast(IDurableTableRepository) repo;
         this.log = log;
     }
 
@@ -44,6 +46,17 @@ final class SqlService : ISqlUseCase {
             recovering = true;
             scope (exit)
                 recovering = false;
+            // Tabellen aus eigenen Dateien sind schon geladen. Ihr Name kann im Log noch aus der Zeit
+            // stehen, in der eine gleichnamige Speicher-Tabelle existierte: diese Zeilen gelten nicht mehr.
+            bool[string] loaded;
+            foreach (name; repo.list())
+                if (repo.get(name).storage != TableStorage.memory)
+                    loaded[name.toLower] = true;
+            void replay(string stmt) {
+                if ((targetTable(stmt).toLower in loaded) is null)
+                    run(stmt);
+            }
+
             bool inTx, dirty;
             string[] buf;
             foreach (stmt; log.readAll()) {
@@ -54,13 +67,13 @@ final class SqlService : ISqlUseCase {
                     buf = null;
                 } else if (u == "COMMIT") {
                     foreach (b; buf)
-                        run(b);
+                        replay(b);
                     inTx = false;
                     buf = null;
                 } else if (inTx)
                     buf ~= stmt;
                 else
-                    run(stmt);
+                    replay(stmt);
             }
             if (inTx || dirty)
                 checkpoint();
@@ -199,6 +212,8 @@ final class SqlService : ISqlUseCase {
             string[] stmts;
             foreach (name; repo.list()) {
                 auto t = repo.get(name);
+                if (t.storage != TableStorage.memory)
+                    continue; // liegt in einer eigenen Datei
                 stmts ~= dumpCreate(t);
                 foreach (r; t.liveRows())
                     stmts ~= dumpRow(t, r);
@@ -239,9 +254,20 @@ final class SqlService : ISqlUseCase {
             else
                 enforce(txId.length == 0, "Unbekannte oder beendete Transaktion: " ~ txId);
 
+            immutable writes = verb == "CREATE" || verb == "DROP" || verb == "INSERT" || verb == "UPDATE" || verb == "DELETE";
+            auto target = writes ? targetTable(s) : "";
+            immutable storageBefore = storageOf(target); // nach DROP ist die Tabelle weg
             auto res = run(s);
-            if (verb == "CREATE" || verb == "DROP" || verb == "INSERT" || verb == "UPDATE" || verb == "DELETE") {
-                if (tx !is null)
+            if (writes) {
+                immutable storage = verb == "CREATE" ? storageOf(target) : storageBefore;
+                if (storage != TableStorage.memory) {
+                    // eigene Datei, kein Log: jede Tabelle hat genau eine dauerhafte Quelle
+                    if (tx !is null) {
+                        tx.flushes[target.toLower] = target;
+                        ++tx.fileWrites;
+                    } else
+                        durable.flush(target);
+                } else if (tx !is null)
                     tx.stmts ~= s;
                 else if (log !is null) {
                     log.append(s);
@@ -265,16 +291,24 @@ final class SqlService : ISqlUseCase {
 
     /// Schreibt alle Anweisungen als eine BEGIN..COMMIT-Gruppe ins Log; schlägt das fehl, wird zurückgerollt.
     private QueryResult commitTx() {
-        auto n = tx.stmts.length;
-        if (log !is null && n > 0) {
-            try
+        auto logged = tx.stmts.length;
+        auto n = logged + tx.fileWrites;
+        try {
+            foreach (name; tx.flushes)
+                durable.flush(name);
+            if (log !is null && logged > 0)
                 log.appendAll(["BEGIN"] ~ tx.stmts ~ ["COMMIT"]);
-            catch (Exception e) {
-                undo();
-                throw e;
-            }
-            pending += n;
+        } catch (Exception e) {
+            auto names = tx.flushes.values;
+            undo();
+            foreach (name; names) // schon geschriebene Dateien auf den alten Stand zurückbringen
+                try
+                    durable.flush(name);
+                catch (Exception) {
+                }
+            throw e;
         }
+        pending += logged;
         tx = null;
         if (log !is null && pending >= checkpointEvery)
             checkpoint();
@@ -315,6 +349,10 @@ final class SqlService : ISqlUseCase {
         tx.before[key] = t.clone();
     }
 
+    private TableStorage storageOf(string name) {
+        return name.length && repo.exists(name) ? repo.get(name).storage : TableStorage.memory;
+    }
+
     private QueryResult run(string s) {
         switch (s.split()[0].toUpper) {
         case "CREATE":
@@ -335,8 +373,10 @@ final class SqlService : ISqlUseCase {
     }
 
     private QueryResult createTable(string s) {
-        auto m = matchFirst(s, ctRegex!(`^CREATE\s+TABLE\s+(\w+)\s*\((.*)\)$`, "is"));
-        enforce(!m.empty, "Syntax: CREATE TABLE name (spalte TYP, ...)");
+        auto m = matchFirst(s, ctRegex!(`^CREATE\s+TABLE\s+(\w+)\s*\((.*)\)(?:\s+USING\s+(\w+))?$`, "is"));
+        enforce(!m.empty, "Syntax: CREATE TABLE name (spalte TYP, ...) [USING MEMORY|FILE|JSON]");
+        immutable storage = m[3].length ? parseStorage(m[3]) : TableStorage.memory;
+        enforce(storage == TableStorage.memory || durable !is null, "Dieses Repository unterstützt nur MEMORY");
         enforce(!repo.exists(m[1]), "Tabelle existiert bereits");
         ColumnDef[] defs;
         foreach (part; splitList(m[2])) {
@@ -344,7 +384,7 @@ final class SqlService : ISqlUseCase {
             enforce(p.length == 2, "Ungültige Spaltendefinition: " ~ part);
             defs ~= ColumnDef(p[0], parseType(p[1]));
         }
-        repo.save(new ColumnTable(m[1], defs));
+        repo.save(new ColumnTable(m[1], defs, storage));
         if (tx !is null)
             tx.created[m[1].toLower] = m[1];
         return QueryResult(null, null, 0, "Tabelle " ~ m[1] ~ " angelegt");
@@ -947,11 +987,13 @@ final class SqlService : ISqlUseCase {
             if (isNull(pat))
                 pred = (Value v) => false;
             else {
-                auto p = (*pat.peek!string).to!dstring;
+                dstring p;
+                bool[] literal;
+                compileLike((*pat.peek!string).to!dstring, args.length > 1 ? likeEscape(args[1]) : dchar.max, p, literal);
                 pred = (Value v) {
                     if (isNull(v))
                         return false;
-                    immutable m = likeMatch((*v.peek!string).to!dstring, p);
+                    immutable m = likeMatch((*v.peek!string).to!dstring, p, literal);
                     return negate ? !m : m;
                 };
             }
@@ -996,6 +1038,12 @@ private string[] originalCaptures(C)(C m, string masked, string original) {
         result ~= m[i].length ? original[start .. start + m[i].length] : "";
     }
     return result;
+}
+
+/// Tabelle, die eine schreibende Anweisung ändert; leer bei allem anderen.
+private string targetTable(string s) {
+    auto m = matchFirst(s, ctRegex!(`^\s*(?:CREATE\s+TABLE|DROP\s+TABLE|INSERT\s+INTO|DELETE\s+FROM|UPDATE)\s+(\w+)`, "i"));
+    return m.empty ? "" : m[1];
 }
 
 /// Komma-Trennung, die Kommas in 'Textliteralen' ignoriert.
@@ -1520,6 +1568,8 @@ private final class Transaction {
     ColumnTable[string] before; // Snapshots geänderter Tabellen (Schlüssel: kleingeschriebener Name)
     string[string] created; // in der Transaktion angelegte Tabellen
     string[] stmts; // schreibende Anweisungen für das Log
+    string[string] flushes; // Tabellen mit eigener Datei, die beim COMMIT geschrieben werden
+    size_t fileWrites; // Anweisungen auf diesen Tabellen
 }
 
 unittest {
@@ -1926,8 +1976,14 @@ private Cond parsePrimary(Token[] toks, ref size_t pos) {
             auto hi = parseValue(toks, pos, col);
             return Cond.leaf(col, prefix ~ "BETWEEN", [lo, hi]);
         }
-    case "LIKE":
-        return Cond.leaf(col, prefix ~ "LIKE", [parseValue(toks, pos, col)]);
+    case "LIKE": {
+            string[] likeArgs = [parseValue(toks, pos, col)];
+            if (pos < toks.length && isWord(toks[pos], "ESCAPE")) {
+                ++pos;
+                likeArgs ~= parseValue(toks, pos, col);
+            }
+            return Cond.leaf(col, prefix ~ "LIKE", likeArgs);
+        }
     default:
         throw new Exception("WHERE: Operator erwartet statt " ~ kw);
     }
@@ -1939,15 +1995,43 @@ private string parseValue(Token[] toks, ref size_t pos, string col) {
     return toks[pos++].text;
 }
 
+/// Das Zeichen aus ESCAPE 'x'.
+private dchar likeEscape(string literal) {
+    auto text = parseLiteral(ColumnType.text, literal);
+    enforce(!isNull(text), "ESCAPE braucht genau ein Zeichen");
+    auto chars = (*text.peek!string).to!dstring;
+    enforce(chars.length == 1, "ESCAPE braucht genau ein Zeichen");
+    return chars[0];
+}
+
+/// Löst das Escape-Zeichen auf: literal[i] sagt, ob p[i] kein Platzhalter ist.
+private void compileLike(dstring pattern, dchar escape, out dstring p, out bool[] literal) {
+    dchar[] chars;
+    for (size_t i = 0; i < pattern.length; ++i) {
+        immutable escaped = pattern[i] == escape;
+        if (escaped) {
+            enforce(i + 1 < pattern.length, "LIKE: Muster endet mit dem Escape-Zeichen");
+            ++i;
+        }
+        chars ~= pattern[i];
+        literal ~= escaped;
+    }
+    p = chars.idup;
+}
+
 /// SQL-LIKE: % = beliebig viele Zeichen, _ = genau ein Zeichen (Groß-/Kleinschreibung zählt).
-private bool likeMatch(const(dchar)[] s, const(dchar)[] p) {
+private bool likeMatch(const(dchar)[] s, const(dchar)[] p, const(bool)[] literal) {
+    bool isWildcard(size_t j, dchar c) {
+        return p[j] == c && !literal[j];
+    }
+
     size_t si, pj, mark;
     size_t star = size_t.max;
     while (si < s.length) {
-        if (pj < p.length && (p[pj] == '_' || (p[pj] != '%' && p[pj] == s[si]))) {
+        if (pj < p.length && (isWildcard(pj, '_') || (!isWildcard(pj, '%') && p[pj] == s[si]))) {
             ++si;
             ++pj;
-        } else if (pj < p.length && p[pj] == '%') {
+        } else if (pj < p.length && isWildcard(pj, '%')) {
             star = pj++;
             mark = si;
         } else if (star != size_t.max) {
@@ -1956,7 +2040,7 @@ private bool likeMatch(const(dchar)[] s, const(dchar)[] p) {
         } else
             return false;
     }
-    while (pj < p.length && p[pj] == '%')
+    while (pj < p.length && isWildcard(pj, '%'))
         ++pj;
     return pj == p.length;
 }
@@ -2126,6 +2210,13 @@ unittest {
     assert(keys("n LIKE 'a__le'") == [1L]);
     assert(keys("n LIKE '_pple'") == [1L]);
     assert(keys("n LIKE '100%'") == [7L]);
+    assert(keys("n LIKE '100\\%' ESCAPE '\\'") == [7L]); // Inhalt von Zeile 7 ist genau '100%'
+    assert(keys("n LIKE '1\\%' ESCAPE '\\'") == []);
+    assert(keys("n LIKE '%\\%' ESCAPE '\\'") == [7L]);
+    assert(keys("n LIKE 'a\\_ple' ESCAPE '\\'") == []);
+    assert(keys("n NOT LIKE '%\\%' ESCAPE '\\'") == [1L, 2, 3, 4, 6]);
+    assertThrown(keys("n LIKE 'a\\' ESCAPE '\\'"));
+    assertThrown(keys("n LIKE 'a' ESCAPE 'xy'"));
     assert(keys("n NOT LIKE 'a%'") == [2L, 3, 7]); // NULL-Zeile (k = 5) ist nie ein Treffer
 
     // IN
@@ -2459,7 +2550,7 @@ unittest {
         }
 
         ColumnTable get(string n) {
-            enforce(n in m, "Tabelle nicht gefunden: " ~ n); // wie InMemoryTableRepository
+            enforce(n in m, "Tabelle nicht gefunden: " ~ n); // wie MemoryTableRepository
             return m[n];
         }
 
@@ -2533,4 +2624,15 @@ unittest {
     assert(s.execute("SELECT k FROM q WHERE n = 'z WHERE k = 2 GROUP BY'").rows[0][0] == Value(1L));
     assert(s.execute("SELECT k FROM q WHERE n = 'a ORDER BY b LIMIT 1' ORDER BY k DESC LIMIT 1").rows[0][0] == Value(2L));
     assert(s.execute("SELECT k FROM q WHERE n = 'it''s FROM x'").rows.length == 0);
+
+    // NaN würde beim Merge auch andere Zeilen verfälschen
+    s.execute("CREATE TABLE f (k INTEGER, w DECIMAL)");
+    s.execute("INSERT INTO f VALUES (1, 5)");
+    assertThrown(s.execute("INSERT INTO f VALUES (2, nan)"));
+    assertThrown(s.execute("INSERT INTO f VALUES (2, inf)"));
+    assertThrown(s.execute("UPDATE f SET w = nan WHERE k = 1"));
+    s.execute("INSERT INTO f VALUES (3, 7)");
+    s.mergeDelta();
+    auto w = s.execute("SELECT k, w FROM f ORDER BY k").rows;
+    assert(w.length == 2 && w[0][1] == Value(5.0) && w[1][1] == Value(7.0));
 }

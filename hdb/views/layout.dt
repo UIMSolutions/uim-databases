@@ -62,4 +62,20 @@ html(lang="en", data-theme="dark")
             - if (page.tables.length == 0)
               li.px-3.py-1.text-sm.opacity-60 No tables yet
 
+            - if (page.isAdmin)
+              li.menu-title.mt-4 Access
+              li
+                a(href="/admin/users", class=page.active == "users" ? "menu-active" : "")
+                  i(data-lucide="users", class="w-4 h-4")
+                  | Users
+
+          div.p-4.border-t.border-base-300
+            div.flex.items-center.justify-between.gap-2.mb-2
+              a.link.link-hover.font-medium.truncate(href="/admin/account") #{page.userName}
+              span.badge.badge-ghost.badge-sm #{page.roleLabel}
+            form(action="/admin/logout", method="POST")
+              button.btn.btn-sm.btn-ghost.w-full(type="submit")
+                i(data-lucide="log-out", class="w-4 h-4")
+                | Sign out
+
     script(src="/admin.js")

@@ -1,0 +1,84 @@
+extends layout
+
+block content
+  div.card.bg-base-100.shadow
+    div.card-body
+      div.flex.items-center.justify-between.gap-2
+        h2.card-title Users
+        button.btn.btn-primary.btn-sm(type="button", onclick="user_modal.showModal()")
+          i(data-lucide="user-plus", class="w-4 h-4")
+          | New user
+      p.text-sm.opacity-70 Viewers read data. Editors also change rows. Admins also change tables and manage users.
+      div.overflow-x-auto
+        table.table
+          thead
+            tr
+              th Name
+              th Role
+              th Status
+              th.text-right Actions
+          tbody
+            - foreach (u; view.users)
+              tr
+                td
+                  span.font-mono #{u.name}
+                  - if (u.self)
+                    span.badge.badge-ghost.badge-sm.ml-2 You
+                td
+                  form(action="/admin/users/#{u.name}/update", method="POST")
+                    - if (u.active)
+                      input(type="hidden", name="active", value="1")
+                    select.select.select-sm.w-32(name="role", aria-label="Role of #{u.name}", data-autosubmit="1")
+                      - foreach (r; view.roles)
+                        option(value=r, selected=r == u.role) #{r}
+                td
+                  - if (u.active)
+                    span.badge.badge-success.badge-sm Active
+                  - else
+                    span.badge.badge-ghost.badge-sm Disabled
+                td.text-right.whitespace-nowrap
+                  form.inline(action="/admin/users/#{u.name}/update", method="POST")
+                    input(type="hidden", name="role", value=u.role)
+                    - if (!u.active)
+                      input(type="hidden", name="active", value="1")
+                    button.btn.btn-ghost.btn-xs(type="submit") #{u.active ? "Disable" : "Enable"}
+                  button.btn.btn-ghost.btn-xs(type="button", data-reset-user=u.name) Reset password
+                  form.inline(action="/admin/users/#{u.name}/delete", method="POST", data-confirm="Delete user #{u.name}?")
+                    button.btn.btn-ghost.btn-xs.text-error(type="submit") Delete
+
+  dialog#user_modal.modal
+    div.modal-box
+      h3.font-bold.text-lg.mb-4 New user
+      form(action="/admin/users", method="POST")
+        label.block.mb-3
+          span.block.text-sm.mb-1 User name
+          input.input.w-full.font-mono(type="text", name="user", required=true, autocomplete="off")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Role
+          select.select.w-full(name="role")
+            - foreach (r; view.roles)
+              option(value=r) #{r}
+        label.block.mb-3
+          span.block.text-sm.mb-1 Password (at least 12 characters)
+          input.input.w-full(type="password", name="password", required=true, minlength="12", autocomplete="new-password")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Repeat password
+          input.input.w-full(type="password", name="confirm", required=true, minlength="12", autocomplete="new-password")
+        div.modal-action
+          button.btn.btn-ghost(type="button", onclick="user_modal.close()") Cancel
+          button.btn.btn-primary(type="submit") Create user
+
+  dialog#reset_modal.modal
+    div.modal-box
+      h3#reset-title.font-bold.text-lg.mb-4 Reset password
+      p.text-sm.opacity-70.mb-4 This signs the user out everywhere.
+      form#reset-form(method="POST")
+        label.block.mb-3
+          span.block.text-sm.mb-1 New password (at least 12 characters)
+          input.input.w-full(type="password", name="password", required=true, minlength="12", autocomplete="new-password")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Repeat password
+          input.input.w-full(type="password", name="confirm", required=true, minlength="12", autocomplete="new-password")
+        div.modal-action
+          button.btn.btn-ghost(type="button", onclick="reset_modal.close()") Cancel
+          button.btn.btn-primary(type="submit") Reset password

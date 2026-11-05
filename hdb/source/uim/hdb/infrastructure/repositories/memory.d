@@ -1,4 +1,4 @@
-module uim.hdb.adapters.outbound.in_memory_repository;
+module uim.hdb.infrastructure.repositories.memory;
 
 import uim.hdb.application.ports;
 import uim.hdb.domain.table;
@@ -8,7 +8,7 @@ import std.exception : enforce;
 import std.string : toLower;
 
 /// Ausgehender Adapter: hält alle Tabellen im Hauptspeicher.
-final class InMemoryTableRepository : ITableRepository {
+final class MemoryTableRepository : ITableRepository {
     private ColumnTable[string] store;
 
     bool exists(string name) {

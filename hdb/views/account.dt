@@ -1,0 +1,18 @@
+extends layout
+
+block content
+  div.card.bg-base-100.shadow.max-w-md
+    div.card-body
+      h2.card-title Change password
+      p.text-sm.opacity-70 At least 12 characters. All your sessions end, so you sign in again afterwards.
+      form(action="/admin/account/password", method="POST")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Current password
+          input.input.w-full(type="password", name="current", required=true, autocomplete="current-password")
+        label.block.mb-3
+          span.block.text-sm.mb-1 New password
+          input.input.w-full(type="password", name="password", required=true, minlength="12", autocomplete="new-password")
+        label.block.mb-4
+          span.block.text-sm.mb-1 Repeat new password
+          input.input.w-full(type="password", name="confirm", required=true, minlength="12", autocomplete="new-password")
+        button.btn.btn-primary(type="submit") Change password

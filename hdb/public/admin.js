@@ -28,6 +28,12 @@
   document.addEventListener('click', (event) => {
     const target = event.target.closest('button');
     if (!target) return;
+    if (target.dataset.resetUser) {
+      const name = target.dataset.resetUser;
+      document.getElementById('reset-form').action = `/admin/users/${encodeURIComponent(name)}/password`;
+      document.getElementById('reset-title').textContent = `Reset password for ${name}`;
+      document.getElementById('reset_modal').showModal();
+    }
     if (target.dataset.rowInsert) openRowDialog(null, '');
     if (target.dataset.rowEdit) {
       const json = target.closest('tr').dataset.values;

@@ -1,7 +1,9 @@
 module uim.hdb.adapters.inbound.admin_web;
 
 import uim.hdb.application.ports;
-import uim.hdb.domain.table : ColumnStats, TableStats;
+import uim.hdb;
+import uim.hdb.adapters.inbound.security : currentPrincipal, sessionCookie;
+import uim.hdb.domain.entities.user;
 import uim.hdb.domain.value;
 import core.time : MonoTime;
 import std.algorithm : all, any, canFind, map, max, min, startsWith;
@@ -11,10 +13,8 @@ import std.exception : enforce;
 import std.format : format;
 import std.string : icmp, indexOf, strip, toLower, toUpper;
 import std.uni : isAlphaNum;
-import vibe.core.log : logWarn;
 import vibe.data.json : Json, parseJsonString;
-import vibe.http.auth.basic_auth : performBasicAuth;
-import vibe.http.common : HTTPMethod, HTTPStatusException;
+import vibe.http.common : Cookie, HTTPStatusException;
 import vibe.http.router : URLRouter;
 import vibe.http.server : HTTPServerRequest, HTTPServerResponse, render;
 import vibe.http.status : HTTPStatus;
@@ -26,6 +26,8 @@ struct AdminPage {
     string active; // "dashboard", "sql" oder der Tabellenname
     string[] tables;
     bool locked; // eine offene Transaktion sperrt die Datenbank
+    string userName, roleLabel;
+    bool canWrite, isAdmin;
     string ok;
     string err;
 }
@@ -50,6 +52,7 @@ struct ColumnInfo {
 
 struct TableSummary {
     string name;
+    string storage;
     size_t rows, deletedRows, deltaRows, columns;
     string codeSize;
 }
@@ -63,6 +66,7 @@ struct DashboardView {
 
 struct TableView {
     string name;
+    string storage;
     ColumnInfo[] columns;
     RowView[] rows;
     size_t live, deleted, matching;
@@ -115,6 +119,16 @@ struct TableView {
     }
 }
 
+struct UsersView {
+    UserRow[] users;
+    string[] roles;
+}
+
+struct UserRow {
+    string name, role;
+    bool active, self;
+}
+
 struct ConsoleStatement {
     string sql;
     string[] columns;
@@ -143,24 +157,28 @@ private enum size_t maxPageSize = 500;
 private enum size_t maxConsoleRows = 500;
 
 /// Eingehender Adapter: Administrationsoberfläche (HTML) -> ISqlUseCase.
-/// Ohne Passwort ist sie nur von localhost erreichbar, siehe guard().
+/// Anmeldung und Rechte prüfen SecurityGate und der ISqlUseCase-Dekorator; hier wird nur noch dargestellt.
 final class SqlAdminUi {
     private ISqlUseCase sql;
-    private string user, password;
+    private IAccessUseCase access;
 
-    this(ISqlUseCase sql, string user, string password) {
+    this(ISqlUseCase sql, IAccessUseCase access) {
         this.sql = sql;
-        this.user = user;
-        this.password = password;
-        if (password.length == 0)
-            logWarn("ADMIN_PASSWORD ist nicht gesetzt: /admin ist nur von localhost erreichbar.");
+        this.access = access;
     }
 
     void register(URLRouter router) {
-        router.any("/admin", &guard);
-        router.any("/admin/*", &guard);
-
         router.get("/", &home);
+        router.get("/admin/login", &loginPage);
+        router.post("/admin/login", &login);
+        router.post("/admin/logout", &logout);
+        router.get("/admin/account", &account);
+        router.post("/admin/account/password", &changePassword);
+        router.get("/admin/users", &users);
+        router.post("/admin/users", &createUser);
+        router.post("/admin/users/:user/update", &updateUser);
+        router.post("/admin/users/:user/password", &resetPassword);
+        router.post("/admin/users/:user/delete", &deleteUser);
         router.get("/admin", &dashboard);
         router.post("/admin/merge", &merge);
         router.post("/admin/checkpoint", &checkpoint);
@@ -176,18 +194,6 @@ final class SqlAdminUi {
         router.post("/admin/tables/:name/drop", &dropTable);
     }
 
-    /// Läuft vor jeder Admin-Route. Schreibt sie keine Antwort, geht es zur eigentlichen Route weiter.
-    private void guard(HTTPServerRequest req, HTTPServerResponse res) {
-        if (password.length)
-            performBasicAuth(req, res, "hdb admin", (u, p) @safe => sameSecret(u, user) & sameSecret(p, password));
-        else if (!isLoopback(req.clientAddress.toAddressString))
-            throw new HTTPStatusException(HTTPStatus.forbidden,
-                "Set ADMIN_PASSWORD to use the admin interface from another host");
-        if (req.method != HTTPMethod.GET && req.method != HTTPMethod.HEAD
-            && !isSameOrigin(req.headers.get("Origin", ""), req.host, req.headers.get("Sec-Fetch-Site", "")))
-            throw new HTTPStatusException(HTTPStatus.forbidden, "Cross-site request rejected");
-    }
-
     private void home(HTTPServerRequest req, HTTPServerResponse res) {
         res.redirect("/admin");
     }
@@ -198,6 +204,11 @@ final class SqlAdminUi {
         p.active = active;
         p.ok = req.query.get("ok", "");
         p.err = req.query.get("err", "");
+        auto me = currentPrincipal();
+        p.userName = me.name;
+        p.roleLabel = roleName(me.role);
+        p.canWrite = me.role >= Role.editor;
+        p.isAdmin = me.role == Role.admin;
         try
             p.tables = sql.listTables();
         catch (Exception)
@@ -227,6 +238,97 @@ final class SqlAdminUi {
         catch (Exception e)
             query ~= "err=" ~ urlEncode(e.msg);
         res.redirect(target ~ "?" ~ query);
+    }
+
+    private void loginPage(HTTPServerRequest req, HTTPServerResponse res) {
+        if (currentPrincipal().authenticated)
+            return res.redirect("/admin");
+        // feste Texte statt Query-Inhalt: die Seite ist öffentlich und soll keine fremden Nachrichten anzeigen
+        string loginError;
+        string loginNotice = "changed" in req.query ? "Password changed. Please sign in again." : "";
+        res.render!("login.dt", loginError, loginNotice);
+    }
+
+    private void login(HTTPServerRequest req, HTTPServerResponse res) {
+        LoginResult session;
+        try
+            session = access.login(req.form.get("user", ""), req.form.get("password", ""));
+        catch (AuthenticationRequired e) {
+            string loginError = e.msg;
+            string loginNotice;
+            res.statusCode = HTTPStatus.unauthorized;
+            return res.render!("login.dt", loginError, loginNotice);
+        }
+        auto cookie = res.setCookie(sessionCookie, session.token, "/admin", Cookie.Encoding.none);
+        cookie.httpOnly = true;
+        cookie.sameSite = Cookie.SameSite.strict;
+        cookie.maxAge = session.expiresInSeconds;
+        cookie.secure = req.tls || req.headers.get("X-Forwarded-Proto", "") == "https";
+        res.redirect("/admin");
+    }
+
+    private void logout(HTTPServerRequest req, HTTPServerResponse res) {
+        access.logout(req.cookies.get(sessionCookie, ""));
+        res.setCookie(sessionCookie, null, "/admin");
+        res.redirect("/admin/login");
+    }
+
+    private void account(HTTPServerRequest req, HTTPServerResponse res) {
+        auto page = pageFor(req, "My account", "account");
+        res.render!("account.dt", page);
+    }
+
+    /// Ein neues Passwort beendet alle Sitzungen, auch diese.
+    private void changePassword(HTTPServerRequest req, HTTPServerResponse res) {
+        try
+            access.changeOwnPassword(currentPrincipal(), req.form.get("current", ""), matchingPasswords(req));
+        catch (Exception e)
+            return res.redirect("/admin/account?err=" ~ urlEncode(e.msg));
+        res.setCookie(sessionCookie, null, "/admin");
+        res.redirect("/admin/login?changed=1");
+    }
+
+    private void users(HTTPServerRequest req, HTTPServerResponse res) {
+        auto me = currentPrincipal();
+        UsersView view;
+        try {
+            foreach (u; access.listUsers(me))
+                view.users ~= UserRow(u.name, roleName(u.role), u.active, u.name == me.name);
+        } catch (AccessDenied e)
+            return renderError(req, res, HTTPStatus.forbidden, e.msg);
+        view.roles = [roleName(Role.viewer), roleName(Role.editor), roleName(Role.admin)];
+        auto page = pageFor(req, "Users", "users");
+        res.render!("users.dt", page, view);
+    }
+
+    private void createUser(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/users", {
+            auto u = access.createUser(currentPrincipal(), req.form.get("user", ""), matchingPasswords(req),
+                parseRole(req.form.get("role", "")));
+            return "User " ~ u.name ~ " created";
+        });
+    }
+
+    private void updateUser(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/users", {
+            auto u = access.updateUser(currentPrincipal(), req.params["user"], parseRole(req.form.get("role", "")),
+                req.form.get("active", "") == "1");
+            return "User " ~ u.name ~ " updated";
+        });
+    }
+
+    private void resetPassword(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/users", {
+            access.resetPassword(currentPrincipal(), req.params["user"], matchingPasswords(req));
+            return "Password reset for " ~ req.params["user"];
+        });
+    }
+
+    private void deleteUser(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/users", {
+            access.deleteUser(currentPrincipal(), req.params["user"]);
+            return "User " ~ req.params["user"] ~ " deleted";
+        });
     }
 
     private void dashboard(HTTPServerRequest req, HTTPServerResponse res) {
@@ -265,7 +367,8 @@ final class SqlAdminUi {
         string target = "/admin";
         act(req, res, target, {
             auto name = req.form.get("table", "").strip;
-            auto stmt = createTableSql(name, req.form.getAll("col_name"), req.form.getAll("col_type"));
+            auto stmt = createTableSql(name, req.form.getAll("col_name"), req.form.getAll("col_type"),
+                req.form.get("storage", ""));
             sql.execute(stmt);
             target = "/admin/tables/" ~ name.toLower;
             return "Table " ~ name ~ " created";
@@ -285,6 +388,7 @@ final class SqlAdminUi {
         auto page = pageFor(req, stats.table, stats.table.toLower);
         TableView view;
         view.name = stats.table.toLower;
+        view.storage = storageName(stats.storage);
         view.live = stats.rows;
         view.deleted = stats.deletedRows;
         view.columns = stats.columns.map!(columnInfo).array;
@@ -421,6 +525,12 @@ final class SqlAdminUi {
     }
 }
 
+private string matchingPasswords(HTTPServerRequest req) {
+    auto password = req.form.get("password", "");
+    enforce(password == req.form.get("confirm", ""), "Passwords do not match");
+    return password;
+}
+
 private string tablePath(string name) {
     return "/admin/tables/" ~ name;
 }
@@ -457,6 +567,7 @@ private string rowCount(long n) {
 private TableSummary summarize(TableStats t) {
     TableSummary s;
     s.name = t.table.toLower;
+    s.storage = storageName(t.storage);
     s.rows = t.rows;
     s.deletedRows = t.deletedRows;
     s.columns = t.columns.length;
@@ -508,7 +619,7 @@ string selectSql(string table, string where, string sort, bool desc, size_t limi
     return s;
 }
 
-string createTableSql(string name, const(string)[] columns, const(string)[] types) {
+string createTableSql(string name, const(string)[] columns, const(string)[] types, string storage = "") {
     enforce(isIdentifier(name), "Invalid table name: " ~ name);
     enforce(columns.length == types.length, "Column names and types do not match");
     string[] seen, defs;
@@ -523,7 +634,9 @@ string createTableSql(string name, const(string)[] columns, const(string)[] type
         defs ~= column ~ " " ~ types[i];
     }
     enforce(defs.length, "A table needs at least one column");
-    return "CREATE TABLE " ~ name ~ " (" ~ defs.join(", ") ~ ")";
+    immutable target = storage.length ? parseStorage(storage) : TableStorage.memory;
+    return "CREATE TABLE " ~ name ~ " (" ~ defs.join(", ") ~ ")"
+        ~ (target == TableStorage.memory ? "" : " USING " ~ storageName(target));
 }
 
 /// WHERE-Bedingung aus dem JSON-Array der Originalwerte. Tabellen haben keinen Primärschlüssel,
@@ -572,29 +685,6 @@ string toCsv(string[] columns, Value[][] rows) {
     return csv;
 }
 
-/// Vergleich ohne frühen Abbruch, damit die Laufzeit das Passwort nicht verrät.
-bool sameSecret(string a, string b) @safe {
-    uint diff = a.length != b.length;
-    foreach (i; 0 .. min(a.length, b.length))
-        diff |= a[i] ^ b[i];
-    return diff == 0;
-}
-
-bool isLoopback(string address) @safe {
-    return address.startsWith("127.") || address == "::1";
-}
-
-/// Schutz vor CSRF: Browser senden bei POST Origin und/oder Sec-Fetch-Site.
-/// Fehlen beide, kommt die Anfrage nicht aus einem Browser (curl, Skripte).
-bool isSameOrigin(string origin, string host, string fetchSite) @safe {
-    if (fetchSite.length && fetchSite != "same-origin" && fetchSite != "none")
-        return false;
-    if (origin.length == 0)
-        return true;
-    auto scheme = origin.indexOf("://");
-    return scheme >= 0 && icmp(origin[scheme + 3 .. $], host) == 0;
-}
-
 unittest {
     import std.exception : assertThrown;
 
@@ -609,6 +699,10 @@ unittest {
     assertThrown(createTableSql("t", ["a"], ["INTEGER); DROP"]));
     assertThrown(createTableSql("t", ["a", "A"], ["INTEGER", "INTEGER"]));
     assertThrown(createTableSql("t", [""], ["INTEGER"]));
+    assert(createTableSql("t", ["a"], ["INTEGER"], "memory") == "CREATE TABLE t (a INTEGER)");
+    assert(createTableSql("t", ["a"], ["INTEGER"], "File") == "CREATE TABLE t (a INTEGER) USING FILE");
+    assert(createTableSql("t", ["a"], ["INTEGER"], "JSON") == "CREATE TABLE t (a INTEGER) USING JSON");
+    assertThrown(createTableSql("t", ["a"], ["INTEGER"], "FILE; DROP"));
 
     ColumnStats id, text;
     id.name = "id";
@@ -626,13 +720,5 @@ unittest {
     assert(selectSql("t", "a = 1", "b", true, 10, 20) == "SELECT * FROM t WHERE a = 1 ORDER BY b DESC LIMIT 10 OFFSET 20");
     assert(selectSql("t", "", "", false, 0, 0) == "SELECT * FROM t");
 
-    assert(isSameOrigin("", "h:1", ""));
-    assert(isSameOrigin("http://h:1", "h:1", "same-origin"));
-    assert(!isSameOrigin("https://evil.example", "h:1", ""));
-    assert(!isSameOrigin("", "h:1", "cross-site"));
-    assert(!isSameOrigin("null", "h:1", ""));
-
-    assert(sameSecret("abc", "abc") && !sameSecret("abc", "abd") && !sameSecret("abc", "abcd"));
-    assert(isLoopback("127.0.0.1") && isLoopback("::1") && !isLoopback("10.0.0.1"));
     assert(humanSize(512) == "512 B" && humanSize(2048) == "2.0 KB");
 }

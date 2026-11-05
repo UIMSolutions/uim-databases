@@ -51,7 +51,10 @@ Value parseLiteral(ColumnType type, string literal) {
     case ColumnType.integer:
         return Value(literal.to!long);
     case ColumnType.decimal:
-        return Value(literal.to!double);
+        // NaN hat keine Ordnung: das sortierte Dictionary des Merges würde dadurch auch andere Zeilen verfälschen
+        auto d = literal.to!double;
+        enforce(isFinite(d), "Keine endliche Zahl: " ~ literal);
+        return Value(d);
     case ColumnType.text:
         enforce(literal.length >= 2 && literal[0] == '\'' && literal[$ - 1] == '\'',
             "Textliterale müssen in Hochkommata stehen: " ~ literal);
@@ -73,6 +76,19 @@ string typeName(ColumnType t) {
         return "DECIMAL";
     case ColumnType.text:
         return "VARCHAR";
+    }
+}
+
+ColumnType parseTypeName(string name) {
+    switch (name) {
+    case "INTEGER":
+        return ColumnType.integer;
+    case "DECIMAL":
+        return ColumnType.decimal;
+    case "VARCHAR":
+        return ColumnType.text;
+    default:
+        throw new Exception("Unbekannter Typ: " ~ name);
     }
 }
 
@@ -138,4 +154,6 @@ unittest {
 
     assertThrown(valueFromInput(ColumnType.integer, "1; DROP TABLE t"));
     assertThrown(valueFromInput(ColumnType.decimal, "nan"));
+    foreach (bad; ["nan", "NaN", "inf", "-inf", "infinity", "1e999"])
+        assertThrown(parseLiteral(ColumnType.decimal, bad));
 }
