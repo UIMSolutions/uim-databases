@@ -1,0 +1,20 @@
+<mvc:View controllerName="hdb.client.controller.Tables" height="100%" xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f">
+	<f:DynamicPage toggleHeaderOnTitleClick="false" showFooter="false">
+		<f:title>
+			<f:DynamicPageTitle>
+				<f:heading><Title text="{i18n>tables}"/></f:heading>
+				<f:actions>
+					<Button icon="sap-icon://refresh" tooltip="{i18n>refresh}" type="Transparent" press=".onRefresh"/>
+				</f:actions>
+			</f:DynamicPageTitle>
+		</f:title>
+		<f:content>
+			<VBox>
+				<SearchField id="filter" placeholder="{i18n>searchTables}" liveChange=".onFilter" class="sapUiSmallMarginBottom"/>
+				<List id="list" items="{app>/sets}" mode="SingleSelectMaster" selectionChange=".onSelect" noDataText="{i18n>noTables}">
+					<StandardListItem title="{app>name}" icon="sap-icon://table-view" type="Navigation"/>
+				</List>
+			</VBox>
+		</f:content>
+	</f:DynamicPage>
+</mvc:View>

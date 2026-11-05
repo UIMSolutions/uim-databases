@@ -19,7 +19,7 @@ import vibe.http.server : HTTPServerRequest, HTTPServerResponse;
 import vibe.stream.operations : readAllUTF8;
 import vibe.textfilter.urlencode : urlEncode;
 
-private enum jsonType = "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=false";
+private enum jsonBase = "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=";
 private enum size_t maxPageSize = 1000;
 
 /// Zerlegter Ressourcenpfad: Set, Set(key), Set(key)/prop, Set/$count, ...
@@ -78,9 +78,12 @@ string keyLiteral(ColumnStats column, string key) {
         throw badRequest("Key must be an integer");
 }
 
-string propertyJson(Value v) {
+/// Mit IEEE754Compatible=true sind Int64-Werte Text, weil JavaScript sie als Zahl nicht exakt darstellen kann.
+string propertyJson(Value v, bool ieee754 = false) {
     if (isNull(v))
         return "null";
+    if (ieee754 && v.peek!long)
+        return `"` ~ valueText(v) ~ `"`;
     if (auto s = v.peek!string)
         return Json(*s).toString;
     return valueText(v); // nicht Json: dessen Ausgabe hat nur 16 Stellen
@@ -202,14 +205,14 @@ final class ODataController {
         if (raw)
             return res.writeBody(valueText(value), "text/plain");
         res.writeBody(`{"@odata.context":` ~ Json(contextBase(req) ~ "#" ~ table.table ~ "/" ~ name).toString
-                ~ `,"value":` ~ propertyJson(value) ~ "}", jsonType);
+                ~ `,"value":` ~ propertyJson(value, ieee754(req)) ~ "}", jsonTypeOf(req));
     }
 
     private void serviceDocument(HTTPServerRequest req, HTTPServerResponse res) {
         onlyGet(req);
         auto sets = tables().map!(t => `{"name":` ~ Json(t.table).toString ~ `,"kind":"EntitySet","url":`
                 ~ Json(t.table).toString ~ "}").join(",");
-        res.writeBody(`{"@odata.context":` ~ Json(contextBase(req)).toString ~ `,"value":[` ~ sets ~ "]}", jsonType);
+        res.writeBody(`{"@odata.context":` ~ Json(contextBase(req)).toString ~ `,"value":[` ~ sets ~ "]}", jsonTypeOf(req));
     }
 
     private void collection(HTTPServerRequest req, HTTPServerResponse res, TableStats table) {
@@ -232,12 +235,12 @@ final class ODataController {
         auto body_ = appender!string;
         body_ ~= `{"@odata.context":` ~ Json(contextOf(req, table, selected)).toString;
         if (req.query.get("$count", "") == "true")
-            body_ ~= `,"@odata.count":` ~ total.to!string;
+            body_ ~= `,"@odata.count":` ~ (ieee754(req) ? `"` ~ total.to!string ~ `"` : total.to!string);
         body_ ~= `,"value":[`;
         foreach (i, row; rows) {
             if (i)
                 body_ ~= ",";
-            body_ ~= entityJson(table, row, selected, skip + i + 1);
+            body_ ~= entityJson(table, row, selected, skip + i + 1, ieee754(req));
         }
         body_ ~= "]";
         immutable served = skip + rows.length;
@@ -245,7 +248,7 @@ final class ODataController {
         if (rows.length && served < wanted)
             body_ ~= `,"@odata.nextLink":` ~ Json(nextLink(req, table, served, top == size_t.max ? top : top - rows.length)).toString;
         body_ ~= "}";
-        res.writeBody(body_[], jsonType);
+        res.writeBody(body_[], jsonTypeOf(req));
     }
 
     private void create(HTTPServerRequest req, HTTPServerResponse res, TableStats table) {
@@ -266,9 +269,10 @@ final class ODataController {
         }
         sql.execute("INSERT INTO " ~ table.table ~ " VALUES (" ~ literals.join(", ") ~ ")");
         res.statusCode = 201;
-        if (key.length == 0) { // ohne Schlüssel gibt es keine Adresse und nichts zurückzulesen
-            res.writeBody(`{"@odata.context":` ~ Json(contextBase(req) ~ "#" ~ table.table ~ "/$entity").toString ~ "}", jsonType);
-            return;
+        if (key.length == 0) { // keine Adresse, aber Clients erwarten die Entität: sie ist die letzte Zeile
+            immutable position = matching(table, "");
+            auto last = sql.execute("SELECT * FROM " ~ table.table ~ " LIMIT 1 OFFSET " ~ (position - 1).to!string).rows[0];
+            return writeEntity(req, res, table, last, 201, position);
         }
         auto location = entityUrl(req, table, predicate[key.length + 3 .. $]);
         res.headers["Location"] = location;
@@ -331,11 +335,12 @@ final class ODataController {
         throw notFound("Unknown entity set: " ~ name);
     }
 
-    private void writeEntity(HTTPServerRequest req, HTTPServerResponse res, TableStats table, Value[] row, int status) {
+    private void writeEntity(HTTPServerRequest req, HTTPServerResponse res, TableStats table, Value[] row, int status,
+        size_t position = 1) {
         auto selected = selection(req, table);
-        auto body_ = entityJson(table, row, selected, 1);
+        auto body_ = entityJson(table, row, selected, position, ieee754(req));
         res.statusCode = status;
-        res.writeBody(`{"@odata.context":` ~ Json(contextOf(req, table, selected) ~ "/$entity").toString ~ "," ~ body_[1 .. $], jsonType);
+        res.writeBody(`{"@odata.context":` ~ Json(contextOf(req, table, selected) ~ "/$entity").toString ~ "," ~ body_[1 .. $], jsonTypeOf(req));
     }
 }
 
@@ -415,13 +420,13 @@ private string[] selection(HTTPServerRequest req, TableStats table) {
     return names;
 }
 
-private string entityJson(TableStats table, Value[] row, string[] selected, size_t position) {
+private string entityJson(TableStats table, Value[] row, string[] selected, size_t position, bool ieee) {
     string[] fields;
     if (keyColumn(table).length == 0 && selected.length == 0)
-        fields ~= `"` ~ rowIdProperty ~ `":` ~ position.to!string;
+        fields ~= `"` ~ rowIdProperty ~ `":` ~ propertyJson(Value(cast(long) position), ieee);
     foreach (i, c; table.columns)
         if (selected.length == 0 || selected.canFind(c.name))
-            fields ~= Json(c.name).toString ~ ":" ~ propertyJson(row[i]);
+            fields ~= Json(c.name).toString ~ ":" ~ propertyJson(row[i], ieee);
     return "{" ~ fields.join(",") ~ "}";
 }
 
@@ -438,11 +443,27 @@ private Json[string] readEntity(HTTPServerRequest req, TableStats table) {
     foreach (string name, value; document) {
         if (name.indexOf('@') >= 0 || name == rowIdProperty)
             continue;
-        if (!table.columns.any!(c => c.name == name))
+        auto column = table.columns.filter!(c => c.name == name);
+        if (column.empty)
             throw badRequest("Unknown property: " ~ name);
+        if (ieee754(req) && column.front.type == ColumnType.integer && value.type == Json.Type.string) {
+            try
+                value = Json(value.get!string.to!long);
+            catch (Exception)
+                throw badRequest("Property " ~ name ~ " expects an integer");
+        }
         entity[name] = value;
     }
     return entity;
+}
+
+private bool ieee754(HTTPServerRequest req) {
+    return [req.headers.get("Accept", ""), req.headers.get("Content-Type", ""), req.query.get("$format", "")]
+        .any!(h => h.toLower.indexOf("ieee754compatible=true") >= 0);
+}
+
+private string jsonTypeOf(HTTPServerRequest req) {
+    return jsonBase ~ (ieee754(req) ? "true" : "false");
 }
 
 private bool prefersMinimal(HTTPServerRequest req) {
@@ -507,4 +528,7 @@ unittest {
 
     assert(propertyJson(Value(123456789012345678.0)) == "1.2345678901234568e+17");
     assert(propertyJson(nullValue) == "null" && propertyJson(Value("a\"b")) == `"a\"b"`);
+    assert(propertyJson(Value(long.max)) == "9223372036854775807");
+    assert(propertyJson(Value(long.max), true) == `"9223372036854775807"`);
+    assert(propertyJson(Value(1.5), true) == "1.5"); // Edm.Double bleibt eine Zahl
 }

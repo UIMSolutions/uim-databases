@@ -62,6 +62,12 @@ html(lang="en", data-theme="dark")
             - if (page.tables.length == 0)
               li.px-3.py-1.text-sm.opacity-60 No tables yet
 
+            li.menu-title.mt-4 Apps
+            li
+              a(href="/ui5/")
+                i(data-lucide="app-window", class="w-4 h-4")
+                | Fiori client
+
             - if (page.isAdmin)
               li.menu-title.mt-4 Access
               li

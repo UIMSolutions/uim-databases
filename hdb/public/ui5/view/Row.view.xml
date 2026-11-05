@@ -1,0 +1,31 @@
+<mvc:View controllerName="hdb.client.controller.Row" height="100%" xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f"
+	xmlns:form="sap.ui.layout.form">
+	<f:DynamicPage id="page" toggleHeaderOnTitleClick="false" showFooter="{view>/editing}">
+		<f:title>
+			<f:DynamicPageTitle>
+				<f:heading><Title text="{view>/title}" wrapping="true"/></f:heading>
+				<f:actions>
+					<Button id="edit" text="{i18n>edit}" type="Emphasized" visible="{= ${app>/canWrite} &amp;&amp; !${view>/editing} }" press=".onEdit"/>
+					<Button id="delete" text="{i18n>delete}" visible="{= ${app>/canWrite} &amp;&amp; !${view>/editing} }" press=".onDelete"/>
+				</f:actions>
+				<f:navigationActions>
+					<Button icon="sap-icon://decline" tooltip="{i18n>close}" type="Transparent" press=".onClose"/>
+				</f:navigationActions>
+			</f:DynamicPageTitle>
+		</f:title>
+		<f:content>
+			<VBox>
+				<MessageStrip id="error" type="Error" visible="false" showCloseButton="true" class="sapUiSmallMarginBottom"/>
+				<Text text="{i18n>emptyIsNull}" visible="{view>/editing}" class="sapUiSmallMarginBottom"/>
+				<form:SimpleForm id="form" editable="{view>/editing}" layout="ColumnLayout" columnsM="1" columnsL="1" columnsXL="1"/>
+			</VBox>
+		</f:content>
+		<f:footer>
+			<OverflowToolbar>
+				<ToolbarSpacer/>
+				<Button id="save" text="{i18n>save}" type="Emphasized" press=".onSave"/>
+				<Button text="{i18n>cancel}" press=".onCancel"/>
+			</OverflowToolbar>
+		</f:footer>
+	</f:DynamicPage>
+</mvc:View>

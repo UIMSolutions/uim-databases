@@ -63,7 +63,11 @@ bool isAdminPath(string path) @safe {
 }
 
 bool isPublicPath(string path) @safe {
-    return ["/", "/health", "/api/v1/health", "/api/v1/auth/login", "/admin/login", "/admin.js"].canFind(path);
+    if (["/", "/health", "/api/v1/health", "/api/v1/auth/login", "/admin/login", "/admin.js", "/ui5"].canFind(path))
+        return true;
+    // Das Fiori-Frontend muss vor der Anmeldung laden. Die Datenablage liegt neben public/: dieser Bereich
+    // darf deshalb nie aus sich herausführen, egal wie sich der Dateiserver verhält.
+    return path.startsWith("/ui5/") && !path.canFind("..") && !path.canFind('\\') && !path.canFind('\0');
 }
 
 /// Token aus einem Authorization-Header; leer, wenn es kein Bearer-Schema ist.
@@ -98,4 +102,6 @@ unittest {
     assert(isAdminPath("/admin") && isAdminPath("/admin/users"));
     assert(!isAdminPath("/administrator") && !isAdminPath("/sql"));
     assert(isPublicPath("/health") && !isPublicPath("/sql") && !isPublicPath("/admin") && !isPublicPath("/health/"));
+    assert(isPublicPath("/ui5") && isPublicPath("/ui5/") && isPublicPath("/ui5/view/App.view.xml"));
+    assert(!isPublicPath("/ui5/../../data/hdb-users.json") && !isPublicPath("/ui5x") && !isPublicPath("/ui5/a\\b"));
 }

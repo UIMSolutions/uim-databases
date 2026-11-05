@@ -1,0 +1,30 @@
+<mvc:View controllerName="hdb.client.controller.App" displayBlock="true" height="100%"
+	xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f" xmlns:core="sap.ui.core">
+	<App id="shell">
+		<Page showHeader="false" enableScrolling="false" busy="{app>/busy}">
+			<VBox height="100%" renderType="Bare" visible="{= !${app>/authenticated} }" alignItems="Center" justifyContent="Center">
+				<mvc:XMLView id="login" viewName="hdb.client.view.Login" async="true"/>
+			</VBox>
+			<VBox height="100%" renderType="Bare" visible="{app>/authenticated}">
+				<f:ShellBar title="{i18n>appTitle}" homeIcon="sap-icon://database" showNavButton="false"
+					homeIconPressed=".onHome" avatarPressed=".onProfile">
+					<f:profile>
+						<Avatar id="profile" initials="{path: 'app>/user', formatter: '.initials'}"/>
+					</f:profile>
+				</f:ShellBar>
+				<f:FlexibleColumnLayout id="fcl" layout="{app>/layout}" backgroundDesign="Solid">
+					<f:layoutData><FlexItemData growFactor="1" baseSize="0"/></f:layoutData>
+					<f:beginColumnPages>
+						<mvc:XMLView id="tables" viewName="hdb.client.view.Tables" async="true"/>
+					</f:beginColumnPages>
+					<f:midColumnPages>
+						<mvc:XMLView id="rows" viewName="hdb.client.view.Rows" async="true"/>
+					</f:midColumnPages>
+					<f:endColumnPages>
+						<mvc:XMLView id="row" viewName="hdb.client.view.Row" async="true"/>
+					</f:endColumnPages>
+				</f:FlexibleColumnLayout>
+			</VBox>
+		</Page>
+	</App>
+</mvc:View>

@@ -41,6 +41,10 @@ void main()
     new ODataController(secured).register(router);
     new SqlAdminUi(secured, access).register(router);
     
+    // Fiori-Frontend: OData-Client, der nur /odata/v4 und die Anmeldung nutzt
+    router.get("/ui5", staticRedirect("/ui5/"));
+    router.get("/ui5/", serveStaticFile("public/ui5/index.html"));
+
     // Serve static assets if needed
     router.get("/*", serveStaticFiles("public/"));
 

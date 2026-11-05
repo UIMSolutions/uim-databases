@@ -1,0 +1,13 @@
+<mvc:View controllerName="hdb.client.controller.Login" xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:core="sap.ui.core">
+	<Panel width="22rem" class="sapUiResponsiveMargin" backgroundDesign="Solid">
+		<VBox class="sapUiSmallMargin">
+			<Title text="{i18n>loginTitle}" titleStyle="H3" class="sapUiSmallMarginBottom"/>
+			<MessageStrip text="{app>/loginError}" type="Error" visible="{= !!${app>/loginError} }" class="sapUiSmallMarginBottom"/>
+			<Label text="{i18n>loginUser}" labelFor="user"/>
+			<Input id="user" submit=".onLogin"/>
+			<Label text="{i18n>loginPassword}" labelFor="password" class="sapUiTinyMarginTop"/>
+			<Input id="password" type="Password" submit=".onLogin"/>
+			<Button id="signIn" text="{i18n>loginTitle}" type="Emphasized" width="100%" press=".onLogin" class="sapUiSmallMarginTop"/>
+		</VBox>
+	</Panel>
+</mvc:View>

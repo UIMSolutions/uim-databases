@@ -1,0 +1,36 @@
+{
+  "_version": "1.60.0",
+  "sap.app": {
+    "id": "hdb.client",
+    "type": "application",
+    "title": "{{appTitle}}",
+    "applicationVersion": { "version": "1.0.0" },
+    "i18n": { "bundleUrl": "i18n/i18n.properties", "supportedLocales": [""], "fallbackLocale": "" }
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "deviceTypes": { "desktop": true, "tablet": true, "phone": true }
+  },
+  "sap.ui5": {
+    "rootView": { "viewName": "hdb.client.view.App", "type": "XML", "id": "app", "async": true },
+    "dependencies": {
+      "minUI5Version": "1.148.0",
+      "libs": { "sap.m": {}, "sap.f": {}, "sap.ui.core": {}, "sap.ui.layout": {} }
+    },
+    "contentDensities": { "compact": true, "cozy": true },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": { "bundleName": "hdb.client.i18n.i18n", "supportedLocales": [""], "fallbackLocale": "" }
+      }
+    },
+    "routing": {
+      "config": { "routerClass": "sap.m.routing.Router", "async": true },
+      "routes": [
+        { "name": "home", "pattern": "" },
+        { "name": "table", "pattern": "tables/{set}" },
+        { "name": "row", "pattern": "tables/{set}/rows/{key}" }
+      ]
+    }
+  }
+}

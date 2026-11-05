@@ -1,0 +1,30 @@
+<mvc:View controllerName="hdb.client.controller.Rows" height="100%" xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f">
+	<f:DynamicPage id="page" toggleHeaderOnTitleClick="false" showFooter="false">
+		<f:title>
+			<f:DynamicPageTitle>
+				<f:heading><Title id="title" wrapping="true"/></f:heading>
+				<f:navigationActions>
+					<Button icon="sap-icon://decline" tooltip="{i18n>close}" type="Transparent" press=".onClose"/>
+				</f:navigationActions>
+			</f:DynamicPageTitle>
+		</f:title>
+		<f:content>
+			<VBox>
+				<MessageStrip id="hint" text="{i18n>notAddressable}" type="Information" visible="false" class="sapUiSmallMarginBottom"/>
+				<MessageStrip id="error" type="Error" visible="false" showCloseButton="true" class="sapUiSmallMarginBottom"/>
+				<Table id="table" growing="true" growingThreshold="50" growingScrollToLoad="true" sticky="ColumnHeaders,HeaderToolbar"
+					noDataText="{i18n>noRows}" updateFinished=".onUpdateFinished" itemPress=".onRowPress">
+					<headerToolbar>
+						<OverflowToolbar>
+							<SearchField id="search" placeholder="{i18n>search}" width="16rem" search=".onSearch"/>
+							<ToolbarSpacer/>
+							<Button id="add" text="{i18n>add}" icon="sap-icon://add" type="Transparent" visible="{app>/canWrite}" press=".onAdd"/>
+							<Button icon="sap-icon://sort" tooltip="{i18n>sort}" type="Transparent" press=".onSort"/>
+							<Button icon="sap-icon://refresh" tooltip="{i18n>refresh}" type="Transparent" press=".onRefresh"/>
+						</OverflowToolbar>
+					</headerToolbar>
+				</Table>
+			</VBox>
+		</f:content>
+	</f:DynamicPage>
+</mvc:View>
