@@ -1,0 +1,96 @@
+extends layout
+
+block content
+  // Action Bar & Filters
+  div.flex.flex-col.justify-between.items-start.gap-4.mb-6(class="sm:flex-row sm:items-center")
+    div.flex.items-center.gap-2.w-full(class="sm:w-auto")
+      div.join.w-full(class="sm:w-auto")
+        input.input.input-bordered.join-item.w-full(class="sm:w-80", type="text", placeholder="Filter records...")
+        button.btn.btn-square.join-item
+          i(data-lucide="search", class="w-4 h-4")
+      
+      div.dropdown
+        div.btn.btn-outline.gap-2(tabindex="0", role="button")
+          i(data-lucide="filter", class="w-4 h-4")
+          | Filter
+        ul.dropdown-content.menu.p-2.shadow.bg-base-100.rounded-box.w-52.z-10(tabindex="0")
+          li: a Active Only
+          li: a Pending Review
+          li: a Archived
+
+    button.btn.btn-primary.gap-2(onclick="create_modal.showModal()")
+      i(data-lucide="plus-circle", class="w-4 h-4")
+      | Add New Record
+
+  // Data Table Container
+  div.card.bg-base-100.shadow-xl.border.border-base-300
+    div.overflow-x-auto
+      table.table.table-zebra.w-full
+        thead
+          tr
+            th: input.checkbox.checkbox-sm(type="checkbox")
+            th ID
+            th Name
+            th Email
+            th Role
+            th Status
+            th.text-right Actions
+        tbody
+          - foreach (row; records)
+            tr
+              td: input.checkbox.checkbox-sm(type="checkbox")
+              td.font-mono.text-xs #{row.id}
+              td.font-medium #{row.name}
+              td #{row.email}
+              td
+                div.badge.badge-outline #{row.role}
+              td
+                - if (row.status == "Active")
+                  div.badge.badge-success.gap-1.text-white
+                    span.w-1.h-1.rounded-full.bg-white
+                    | #{row.status}
+                - else
+                  div.badge.badge-ghost.gap-1
+                    | #{row.status}
+              td.text-right
+                div.join
+                  button.btn.btn-square.btn-ghost.btn-xs.join-item(title="Edit", onclick="editRecord('#{row.id}')")
+                    i(data-lucide="edit-3", class="w-4 h-4")
+                  form(action="/admin/users/#{row.id}/delete", method="POST", class="inline")
+                    button.btn.btn-square.btn-ghost.btn-xs.text-error.join-item(type="submit", title="Delete", onclick="return confirm('Confirm deletion?')")
+                      i(data-lucide="trash-2", class="w-4 h-4")
+
+    // Pagination Footer
+    div.p-4.border-t.border-base-300.flex.flex-col.items-center.justify-between.gap-4(class="sm:flex-row")
+      span.text-sm.opacity-70 Showing 1 to #{records.length} of #{totalCount} records
+      div.join
+        button.btn.btn-sm.join-item «
+        button.btn.btn-sm.join-item Page 1
+        button.btn.btn-sm.join-item »
+
+  // Insert Record DaisyUI Modal
+  dialog#create_modal.modal
+    div.modal-box
+      h3.font-bold.text-lg.mb-4 Create New Entry
+      form(action="/admin/users/create", method="POST", class="space-y-4")
+        div.form-control
+          label.label
+            span.label-text Full Name
+          input.input.input-bordered(type="text", name="name", required=true)
+        
+        div.form-control
+          label.label
+            span.label-text Email Address
+          input.input.input-bordered(type="email", name="email", required=true)
+        
+        div.form-control
+          label.label
+            span.label-text User Role
+          select.select.select-bordered(name="role")
+            option(value="Admin") Admin
+            option(value="Editor") Editor
+            option(value="User", selected=true) User
+
+        div.modal-action
+          button.btn.btn-ghost(type="button", onclick="create_modal.close()") Cancel
+          button.btn.btn-primary(type="submit") Save Record
