@@ -15,9 +15,10 @@ sap.ui.define([
 	"sap/ui/model/Filter",
 	"sap/ui/model/FilterOperator",
 	"sap/ui/model/Sorter",
+	"sap/ui/model/odata/type/Int64",
 	"hdb/client/controller/values"
 ], function (Controller, ColumnListItem, Column, Text, Label, Input, Dialog, Button, MessageToast, ViewSettingsDialog,
-	ViewSettingsItem, Messaging, SimpleForm, Filter, FilterOperator, Sorter, values) {
+	ViewSettingsItem, Messaging, SimpleForm, Filter, FilterOperator, Sorter, Int64, values) {
 	"use strict";
 
 	return Controller.extend("hdb.client.controller.Rows", {
@@ -28,11 +29,22 @@ sap.ui.define([
 			}.bind(this);
 			component.getRouter().getRoute("table").attachPatternMatched(select);
 			component.getRouter().getRoute("row").attachPatternMatched(select);
-			sap.ui.getCore().getEventBus().subscribe("hdb", "rowsChanged", this._refresh, this);
+			component.getRouter().getRoute("home").attachPatternMatched(this._reset, this);
+			const bus = sap.ui.getCore().getEventBus();
+			bus.subscribe("hdb", "rowsChanged", this._refresh, this);
+			bus.subscribe("hdb", "sessionEnded", this._reset, this);
 		},
 
 		onExit: function () {
-			sap.ui.getCore().getEventBus().unsubscribe("hdb", "rowsChanged", this._refresh, this);
+			const bus = sap.ui.getCore().getEventBus();
+			bus.unsubscribe("hdb", "rowsChanged", this._refresh, this);
+			bus.unsubscribe("hdb", "sessionEnded", this._reset, this);
+		},
+
+		/** Das nächste Öffnen bindet neu, auch dieselbe Tabelle: nach einer Abmeldung gibt es ein neues Modell. */
+		_reset: function () {
+			this._set = null;
+			this.byId("table").unbindItems();
 		},
 
 		_text: function (key, args) {
@@ -44,11 +56,6 @@ sap.ui.define([
 				return;
 			}
 			const component = this.getOwnerComponent();
-			// Nach einem Neuladen läuft das Routing vor der Anmeldung: das Modell fehlt dann noch
-			if (!component.getModel()) {
-				window.setTimeout(this._show.bind(this, set), 200);
-				return;
-			}
 			this._set = set;
 			this.byId("search").setValue("");
 			this.byId("error").setVisible(false);
@@ -68,7 +75,7 @@ sap.ui.define([
 			info.columns.forEach(function (column) {
 				table.addColumn(new Column({
 					header: new Label({ text: column.name, design: column.key ? "Bold" : "Standard" }),
-					hAlign: column.type === "Edm.String" ? "Begin" : "End"
+					hAlign: values.isNumber(column) ? "End" : "Begin"
 				}));
 			});
 			table.bindItems({
@@ -79,7 +86,14 @@ sap.ui.define([
 				template: new ColumnListItem({
 					type: info.addressable ? "Navigation" : "Inactive",
 					cells: info.columns.map(function (column) {
-						return new Text({ text: "{" + column.name + "}", wrapping: false });
+						// Kennungen sind keine Mengen: keine Tausendertrennzeichen im Schlüssel
+						let text = "{" + column.name + "}";
+						if (column.key && column.type === "Edm.Int64") {
+							text = { path: column.name, type: new Int64({ groupingEnabled: false }) };
+						} else if (values.needsFormatter(column)) {
+							text = { path: column.name, targetType: "any", formatter: values.text };
+						}
+						return new Text({ text: text, wrapping: false });
 					})
 				}),
 				events: { dataReceived: this._onDataReceived.bind(this) }
@@ -139,15 +153,26 @@ sap.ui.define([
 				this._info.columns.forEach(function (column) {
 					if (column.type === "Edm.String") {
 						filters.push(new Filter(column.name, FilterOperator.Contains, query));
-					} else if (column.type === "Edm.Int64" ? /^-?\d+$/.test(query) : Number.isFinite(Number(query))) {
+					} else if (column.type === "Edm.Boolean" && (query === "true" || query === "false")) {
+						filters.push(new Filter(column.name, FilterOperator.EQ, query === "true"));
+					} else if (values.isNumber(column) && this._searchable(column, query)) {
 						filters.push(new Filter(column.name, FilterOperator.EQ, query));
 					}
-				});
+				}, this);
 			}
 			if (query && filters.length === 0) {
 				filters.push(new Filter(this._info.columns[0].name, FilterOperator.EQ, null));
 			}
 			this.byId("table").getBinding("items").filter(filters.length ? new Filter({ filters: filters, and: false }) : []);
+		},
+
+		/** Eine Suche darf nie am Typ scheitern, sonst fällt sie für alle Spalten aus. */
+		_searchable: function (column, query) {
+			try {
+				return values.parse(column, query) !== null;
+			} catch (e) {
+				return false;
+			}
 		},
 
 		onSort: function () {
@@ -174,7 +199,7 @@ sap.ui.define([
 			const content = [];
 			this._info.columns.forEach(function (column) {
 				inputs[column.name] = new Input({
-					type: column.type === "Edm.String" ? "Text" : "Number",
+					type: values.isNumber(column) ? "Number" : "Text",
 					required: column.key,
 					placeholder: column.key ? this._text("required") : ""
 				});
@@ -208,7 +233,7 @@ sap.ui.define([
 				const input = inputs[column.name];
 				input.setValueState("None");
 				try {
-					const value = values.parse(column, input.getValue());
+					const value = values.parseNew(column, input.getValue());
 					if (value !== null) {
 						data[column.name] = value;
 					} else if (column.key) {

@@ -1,17 +1,6 @@
 module app;
 
-import uim.hdb.adapters.inbound.admin_web;
-import uim.hdb.adapters.inbound.rest_api;
-import uim.hdb.adapters.inbound.security;
-import uim.hdb.adapters.outbound.file_user_store;
-import uim.hdb.adapters.outbound.file_statement_log;
-import uim.hdb.adapters.outbound.openssl_credential_crypto;
 import uim.hdb;
-import std.conv : to;
-import std.functional : toDelegate;
-import std.path : buildPath;
-import std.process : environment;
-import vibe.d;
 
 /// Composition Root: einziger Ort, an dem Adapter und Kern verdrahtet werden.
 void main()
@@ -34,12 +23,28 @@ void main()
     // Alle eingehenden Adapter sehen nur die abgesicherte Sicht auf den Kern.
     auto secured = new SecuredSqlUseCase(service, toDelegate(&currentPrincipal));
 
+    auto backups = new BackupService(service, new FileBackupStore(environment.get("BACKUP_DIR", "data/backups")),
+        toDelegate(&currentPrincipal));
+
+    // Fällige Sicherungen anlegen; der Takt legt nur fest, wie schnell eine fällige Sicherung bemerkt wird
+    setTimer(environment.get("BACKUP_TICK_SECONDS", "60").to!long.seconds, () nothrow {
+        try {
+            if (auto error = backups.tick())
+                logWarn("Geplante Sicherung fehlgeschlagen: %s", error);
+        } catch (Exception e) {
+            try
+                logWarn("Geplante Sicherung fehlgeschlagen: %s", e.msg);
+            catch (Exception) {
+            }
+        }
+    }, true);
+
     auto router = new URLRouter;
     new SecurityGate(access).register(router); // muss vor allen anderen Routen stehen
     new SqlRestApi(secured).register(router);
-    registerHdbRestApi(router, secured, access, toDelegate(&currentPrincipal));
+    registerHdbRestApi(router, secured, access, backups, toDelegate(&currentPrincipal));
     new ODataController(secured).register(router);
-    new SqlAdminUi(secured, access).register(router);
+    new SqlAdminUi(secured, access, backups).register(router);
     
     // Fiori-Frontend: OData-Client, der nur /odata/v4 und die Anmeldung nutzt
     router.get("/ui5", staticRedirect("/ui5/"));
@@ -51,7 +56,19 @@ void main()
     auto settings = new HTTPServerSettings;
     settings.port = environment.get("PORT", "8080").to!ushort;
     settings.bindAddresses = ["0.0.0.0"];
+    settings.maxRequestSize = environment.get("MAX_REQUEST_MB", "256").to!ulong * 1024 * 1024; // hochgeladene Sicherungen
     listenHTTP(settings, router);
 
+    // Optional: lokale Clients ohne TCP. Anmeldung und Rollen gelten wie über HTTP
+    UnixServer unixServer;
+    auto socketPath = environment.get("UNIX_SOCKET", "");
+    if (socketPath.length) {
+        unixServer = new UnixServer(socketPath, [new UnixController(secured, access)]);
+        unixServer.start();
+    }
+
     runApplication();
+
+    if (unixServer !is null)
+        unixServer.stop();
 }

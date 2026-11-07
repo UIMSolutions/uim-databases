@@ -1,9 +1,6 @@
 module uim.hdb.adapters.inbound.rest_api;
 
-import uim.hdb.application.ports;
-import uim.hdb.domain.entities.user : AccessDenied, AuthenticationRequired;
-import uim.hdb.domain.types.tablestorage : storageName;
-import uim.hdb.domain.value;
+import uim.hdb;
 import std.algorithm : map;
 import std.array : array;
 import vibe.d;
@@ -125,5 +122,9 @@ private Json toJson(Value v) {
         return Json(*d);
     if (auto s = v.peek!string)
         return Json(*s);
+    if (auto b = v.peek!bool)
+        return Json(*b);
+    if (auto e = v.peek!Exact)
+        return Json(e.text); // als Text, weil eine JSON-Zahl hier ein double würde
     return Json(null);
 }

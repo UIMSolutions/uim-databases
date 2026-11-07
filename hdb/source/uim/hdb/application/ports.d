@@ -1,23 +1,7 @@
 module uim.hdb.application.ports;
 
 import uim.hdb;
-import uim.hdb.domain.entities.user;
-import uim.hdb.domain.value;
 
-struct QueryResult {
-    string[] columns;
-    Value[][] rows;
-    long affected;
-    string message;
-    string transaction; // gesetzt von BEGIN
-}
-
-/// Zustand des Delta-Merges im Hintergrund.
-struct MergeStatus {
-    bool running;
-    size_t completed;
-    string lastError;
-}
 
 /// Eingehender Port: was die Anwendung anbietet.
 interface ISqlUseCase {
@@ -34,12 +18,7 @@ interface ISqlUseCase {
     TableStats[] stats();
 }
 
-/// Benutzer ohne Passwort-Hash: das, was Adapter sehen dürfen.
-struct UserInfo {
-    string name;
-    Role role;
-    bool active;
-}
+
 
 struct LoginResult {
     string token;
@@ -56,16 +35,91 @@ interface IAccessUseCase {
     void changeOwnPassword(Principal actor, string current, string replacement);
 
     UserInfo[] listUsers(Principal actor);
-    UserInfo createUser(Principal actor, string name, string password, Role role);
-    UserInfo updateUser(Principal actor, string name, Role role, bool active);
+    UserInfo createUser(Principal actor, string name, string password, HdbRole role);
+    UserInfo updateUser(Principal actor, string name, HdbRole role, bool active);
     void resetPassword(Principal actor, string name, string replacement);
     void deleteUser(Principal actor, string name);
 }
 
+/// Stand einer Tabelle: alles, was eine Sicherung braucht.
+struct TableSnapshot {
+    string name;
+    TableStorage storage;
+    ColumnDef[] columns;
+    Value[][] rows;
+}
+
+struct BackupInfo {
+    string name, label, created;
+    ulong size;
+    long tables, rows;
+    bool readable = true;
+    string kind = "manual"; // manual, scheduled, safety oder uploaded
+}
+
+/// Zeitplan und Aufbewahrung. Nur Sicherungen der Arten scheduled und safety werden automatisch gelöscht.
+struct BackupSchedule {
+    bool enabled = true;
+    int intervalHours = 24;
+    int keepScheduled = 7;
+    int keepSafety = 5;
+    string lastRun, lastError; // ISO-Zeit in UTC; leer, wenn es das noch nicht gab
+    string nextRun; // berechnet, wird nicht gespeichert
+}
+
+/// Die angeforderte Sicherung gibt es nicht (HTTP 404).
+class BackupNotFound : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) {
+        super(msg, file, line);
+    }
+}
+
+/// Eingehender Port: Sichern und Wiederherstellen, nur für die Rolle admin.
+interface IBackupUseCase {
+    BackupInfo[] list();
+    BackupInfo create(string label);
+    /// Ersetzt alle Tabellen durch die Sicherung; gibt die vorher angelegte Sicherheitskopie zurück.
+    BackupInfo restore(string name);
+    void remove(string name);
+    /// Inhalt der Sicherungsdatei.
+    string download(string name);
+    /// Prüft eine hochgeladene Sicherung vollständig und legt sie ab.
+    BackupInfo upload(string content);
+    BackupSchedule schedule();
+    BackupSchedule updateSchedule(bool enabled, int intervalHours, int keepScheduled, int keepSafety);
+}
+
+/// Für den Zeitgeber der Anwendung. Läuft ohne Anfrage und damit ohne Identität, deshalb getrennt von IBackupUseCase:
+/// kein eingehender Adapter bekommt diesen Weg an der Rollenprüfung vorbei zu sehen.
+interface IBackupScheduler {
+    /// Legt eine fällige Sicherung an; gibt eine Fehlermeldung zurück oder null.
+    string tick();
+}
+
+/// Ausgehender Port: Ablage der Sicherungen.
+interface IBackupStore {
+    BackupInfo[] list();
+    BackupInfo save(string label, TableSnapshot[] tables);
+    /// Liest und prüft eine Sicherung; wirft bei beschädigtem Inhalt.
+    TableSnapshot[] load(string name);
+    string read(string name);
+    BackupInfo store(string content);
+    void remove(string name);
+    BackupSchedule loadSchedule();
+    void saveSchedule(BackupSchedule schedule);
+}
+
+/// Was die Sicherung vom Kern braucht. Nur BackupService sieht das: die Rechte prüft er selbst.
+interface IDatabaseSnapshots {
+    TableSnapshot[] snapshot();
+    /// Ersetzt alle Tabellen. Prüft erst alles und ändert dann; bei offener Transaktion wird abgelehnt.
+    void restore(TableSnapshot[] tables);
+}
+
 /// Ausgehender Port: dauerhafte Ablage der Benutzer.
 interface IUserStore {
-    User[] load();
-    void save(User[] users);
+    HdbUser[] load();
+    void save(HdbUser[] users);
 }
 
 /// Ausgehender Port: Kryptografie für Passwörter und Tokens.

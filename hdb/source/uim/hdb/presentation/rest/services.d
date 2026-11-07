@@ -2,9 +2,9 @@ module uim.hdb.presentation.rest.services;
 
 import uim.hdb.adapters.inbound.admin_web : createTableSql, isIdentifier, selectSql;
 import uim.hdb.adapters.inbound.security : bearerToken;
-import uim.hdb.application.ports : IAccessUseCase, ISqlUseCase;
+import uim.hdb.application.ports : BackupNotFound, IAccessUseCase, IBackupUseCase, ISqlUseCase;
 import uim.hdb.domain.entities.user;
-import uim.hdb.domain.types.tablestats : ColumnStats, TableStats;
+import uim.hdb;
 import uim.hdb.domain.value;
 import uim.hdb.presentation.rest.interfaces;
 import uim.hdb.presentation.rest.models;
@@ -13,11 +13,12 @@ import std.array : array, join;
 import std.conv : to;
 import std.exception : enforce;
 import std.string : icmp, toUpper;
-import vibe.data.json : Json;
+import vibe.data.json : Json, serializeToJson;
 import vibe.http.common : HTTPStatusException;
 import vibe.http.router : URLRouter;
 import vibe.http.server : HTTPServerRequest, HTTPServerResponse;
 import vibe.http.status : HTTPStatus;
+import vibe.stream.operations : readAllUTF8;
 import vibe.web.rest : registerRestInterface, RestErrorInformation, RestInterfaceSettings;
 
 private enum long maxRowLimit = 1000;
@@ -149,7 +150,7 @@ final class AuthRestApi : IAuthRestApi {
 
     RestUser me() {
         auto p = current();
-        requireRole(p, Role.viewer);
+        requireRole(p, HdbRole.viewer);
         return RestUser(p.name, roleName(p.role), true);
     }
 
@@ -192,72 +193,180 @@ final class UserRestApi : IUserRestApi {
     }
 }
 
+final class BackupRestApi : IBackupRestApi {
+    private IBackupUseCase backups;
+
+    this(IBackupUseCase backups) {
+        this.backups = backups;
+    }
+
+@trusted:
+    RestBackup[] list() {
+        return backups.list().map!(b => toRest(b)).array;
+    }
+
+    RestBackup create(string label) {
+        return toRest(backups.create(label));
+    }
+
+    RestBackupSchedule schedule() {
+        return toRest(backups.schedule());
+    }
+
+    RestBackupSchedule updateSchedule(bool enabled, int intervalHours, int keepScheduled, int keepSafety) {
+        return toRest(backups.updateSchedule(enabled, intervalHours, keepScheduled, keepSafety));
+    }
+
+    RestRestore restore(string _name) {
+        return RestRestore("RESTORED", toRest(backups.restore(_name)));
+    }
+
+    RestStatus remove(string _name) {
+        backups.remove(_name);
+        return RestStatus("DELETED");
+    }
+}
+
+unittest {
+    import std.exception : assertThrown;
+
+    ColumnStats column;
+    column.name = "c";
+    column.type = ColumnType.blob;
+    assert(jsonLiteral(column, Json("00ff")) == "'00FF'");
+    assert(jsonLiteral(column, Json(null)) == "NULL");
+    assertThrown(jsonLiteral(column, Json("xyz")));
+    assertThrown(jsonLiteral(column, Json(12)));
+    assertThrown(jsonLiteral(column, Json(1.5)));
+    column.type = ColumnType.geo;
+    assert(jsonLiteral(column, Json("point(1 2)")) == "'POINT(1 2)'");
+    assertThrown(jsonLiteral(column, Json("nowhere")));
+    assertThrown(jsonLiteral(column, Json(1)));
+    column.type = ColumnType.link;
+    assert(jsonLiteral(column, Json("https://a.org/it's")) == "'https://a.org/it''s'");
+    assertThrown(jsonLiteral(column, Json("javascript:alert(1)")));
+    assertThrown(jsonLiteral(column, Json(true)));
+
+    column.type = ColumnType.boolean;
+    assert(jsonLiteral(column, Json(true)) == "true" && jsonLiteral(column, Json(false)) == "false");
+    assertThrown(jsonLiteral(column, Json(1)));
+    column.type = ColumnType.byte_;
+    assert(jsonLiteral(column, Json(255)) == "255");
+    assertThrown(jsonLiteral(column, Json(256)));
+    assertThrown(jsonLiteral(column, Json(1.5)));
+    assertThrown(jsonLiteral(column, Json("1")));
+    column.type = ColumnType.exact;
+    assert(jsonLiteral(column, Json("12345678901234567890.10")) == "12345678901234567890.1");
+    assert(jsonLiteral(column, Json(1.5)) == "1.5" && jsonLiteral(column, Json(2)) == "2");
+    column.type = ColumnType.duration;
+    assert(jsonLiteral(column, Json("PT36H")) == "'P1DT12H'");
+    column.type = ColumnType.dateTime;
+    assert(jsonLiteral(column, Json("2026-11-06T12:00:00+01:00")) == "'2026-11-06T11:00:00.0000000Z'");
+}
+
 /// SQL-Literal eines JSON-Werts, geprüft gegen den Spaltentyp; Eingaben gelangen nie ungequotet in die Anweisung.
 string jsonLiteral(ColumnStats column, Json value) {
     final switch (value.type) with (Json.Type) {
     case null_:
         return "NULL";
     case string:
-        enforce(column.type == ColumnType.text, "Column " ~ column.name ~ " expects a number");
-        return toSqlLiteral(Value(value.get!(.string)));
+        enforce(!isNumeric(column.type) || column.type == ColumnType.exact, "Column " ~ column.name ~ " expects a number");
+        return toSqlLiteral(valueFromInput(column.type, value.get!(.string)));
     case int_:
     case bigInt:
+        enforce(isNumeric(column.type) || column.type == ColumnType.text, "Column " ~ column.name ~ " does not take a number");
         return toSqlLiteral(valueFromInput(column.type, value.to!(.string)));
     case float_:
-        enforce(column.type != ColumnType.integer, "Column " ~ column.name ~ " expects an integer");
+        enforce(!isIntegerType(column.type), "Column " ~ column.name ~ " expects an integer");
+        enforce(isNumeric(column.type) || column.type == ColumnType.text, "Column " ~ column.name ~ " does not take a number");
         return toSqlLiteral(valueFromInput(column.type, exactText(value.get!double)));
-    case undefined:
     case bool_:
+        enforce(column.type == ColumnType.boolean, "Column " ~ column.name ~ " does not take a boolean");
+        return value.get!bool ? "true" : "false";
+    case undefined:
     case array:
     case object:
         throw new Exception("Unsupported value for column " ~ column.name);
     }
 }
 
+private void writeRestError(HTTPServerResponse res, Exception e) @trusted {
+    if (cast(AuthenticationRequired) e)
+        res.statusCode = HTTPStatus.unauthorized;
+    else if (cast(AccessDenied) e)
+        res.statusCode = HTTPStatus.forbidden;
+    else if (cast(BackupNotFound) e)
+        res.statusCode = HTTPStatus.notFound;
+    else if (auto status = cast(HTTPStatusException) e)
+        res.statusCode = status.status;
+    else
+        res.statusCode = HTTPStatus.badRequest;
+    res.writeJsonBody(["statusMessage": e.msg]);
+}
+
 /// Registriert alle REST-Schnittstellen. Fehler der Eingabe (ungültiges SQL, gesperrte Datenbank) ergeben 400
 /// wie bei POST /sql; HTTPStatusException behält ihren Status. Stacktraces gelangen nicht in die Antwort.
-void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access, Principal delegate() current) {
+void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups,
+    Principal delegate() current) {
     auto settings = new RestInterfaceSettings;
     settings.errorHandler = (HTTPServerRequest req, HTTPServerResponse res, RestErrorInformation error) @trusted {
-        if (cast(AuthenticationRequired) error.exception)
-            res.statusCode = HTTPStatus.unauthorized;
-        else if (cast(AccessDenied) error.exception)
-            res.statusCode = HTTPStatus.forbidden;
-        else
-            res.statusCode = cast(HTTPStatusException) error.exception ? error.statusCode : HTTPStatus.badRequest;
-        res.writeJsonBody(["statusMessage": error.exception.msg]);
+        writeRestError(res, error.exception);
     };
     router.registerRestInterface!ISystemRestApi(new SystemRestApi(sql), settings);
     router.registerRestInterface!ISqlRestApi(new SqlExecutionRestApi(sql), settings);
     router.registerRestInterface!ITableRestApi(new TableRestApi(sql), settings);
     router.registerRestInterface!IAuthRestApi(new AuthRestApi(access, current), settings);
     router.registerRestInterface!IUserRestApi(new UserRestApi(access, current), settings);
+    // Das Label ist optional, die REST-Schnittstelle verlangt aber immer einen JSON-Rumpf
+    router.post("/api/v1/backups", (HTTPServerRequest req, HTTPServerResponse res) {
+        if (req.headers.get("Content-Length", "0") != "0" || "Transfer-Encoding" in req.headers)
+            return;
+        try
+            res.writeJsonBody(serializeToJson(toRest(backups.create(""))));
+        catch (Exception e)
+            writeRestError(res, e);
+    });
+    router.registerRestInterface!IBackupRestApi(new BackupRestApi(backups), settings);
+
+    router.get("/api/v1/backups/:name/content", (HTTPServerRequest req, HTTPServerResponse res) {
+        try {
+            auto content = backups.download(req.params["name"]);
+            res.headers["Content-Disposition"] = `attachment; filename="` ~ req.params["name"] ~ `"`;
+            res.writeBody(content, "application/octet-stream");
+        } catch (Exception e)
+            writeRestError(res, e);
+    });
+    router.post("/api/v1/backups/import", (HTTPServerRequest req, HTTPServerResponse res) {
+        try {
+            requireRole(current(), HdbRole.admin); // vor dem Lesen des Rumpfs
+            res.statusCode = HTTPStatus.created;
+            res.writeJsonBody(serializeToJson(toRest(backups.upload(req.bodyReader.readAllUTF8()))));
+        } catch (Exception e)
+            writeRestError(res, e);
+    });
 }
 
 /// Echter Durchlauf über HTTP mit den aus den Schnittstellen generierten Clients, inklusive Gate und Rollen.
 unittest {
-    import uim.hdb.adapters.inbound.security : currentPrincipal, SecurityGate;
-    import uim.hdb.infrastructure.repositories.memory : MemoryTableRepository;
-    import uim.hdb.adapters.outbound.openssl_credential_crypto : OpensslCredentialCrypto;
-    import uim.hdb.application.access_service : AccessService;
-    import uim.hdb.application.ports : IUserStore;
-    import uim.hdb.application.secured_sql : SecuredSqlUseCase;
-    import uim.hdb.application.sql_service : SqlService;
+    import uim.hdb;
     import std.exception : collectException;
+    import std.file : exists, rmdirRecurse, tempDir;
     import std.functional : toDelegate;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
     import vibe.core.core : exitEventLoop, runEventLoop, runTask;
     import vibe.http.client : HTTPClientRequest;
     import vibe.http.server : HTTPServerSettings, listenHTTP;
     import vibe.web.rest : RestException, RestInterfaceClient;
 
     static class MemStore : IUserStore {
-        User[] saved;
-        User[] load() {
+        HdbUser[] saved;
+        HdbUser[] load() {
             return saved;
         }
 
-        void save(User[] users) {
-            saved = users.dup;
+        void save(HdbUser[] users) {
+            saved = users.map!"a".array;
         }
     }
 
@@ -266,7 +375,13 @@ unittest {
     auto principal = toDelegate(&currentPrincipal);
     auto router = new URLRouter;
     new SecurityGate(access).register(router);
-    registerHdbRestApi(router, new SecuredSqlUseCase(new SqlService(new MemoryTableRepository), principal), access, principal);
+    auto core = new SqlService(new MemoryTableRepository);
+    auto backupDir = buildPath(tempDir, "hdb-rest-backups-" ~ randomUUID().toString);
+    scope (exit)
+        if (exists(backupDir))
+            rmdirRecurse(backupDir);
+    registerHdbRestApi(router, new SecuredSqlUseCase(core, principal), access,
+        new BackupService(core, new FileBackupStore(backupDir), principal), principal);
     auto http = new HTTPServerSettings;
     http.port = 0;
     http.bindAddresses = ["127.0.0.1"];
@@ -352,6 +467,18 @@ unittest {
             users.remove("vera");
             assert(statusOf({ viewerTables.list(); }) == 401);
             assert(statusOf({ users.remove("root"); }) == 400); // letzter Administrator
+
+            // Sicherung über dieselbe Schnittstelle, nur für Administratoren
+            auto backups = client!IBackupRestApi(token);
+            assert(statusOf({ client!IBackupRestApi(viewerToken).list(); }) == 401); // vera ist gelöscht
+            auto saved = backups.create("rest");
+            assert(saved.tables == 1 && backups.list().length == 1);
+            tables.insert("t", [Json(99), Json("später"), Json(1)]);
+            assert(backups.restore(saved.name).safetyBackup.label == "before-restore");
+            assert(tables.rows("t", "id = 99", "", false, 10, 0).total == 0);
+            assert(statusOf({ backups.restore("missing.hdbbak"); }) == 404);
+            assert(statusOf({ backups.remove("../x.hdbbak"); }) == 404);
+            assert(backups.remove(saved.name).status == "DELETED");
 
             assert(tables.drop("t").status == "DROPPED");
             client!IAuthRestApi(token).logout("Bearer " ~ token);

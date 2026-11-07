@@ -5,3 +5,5 @@ public:
     import uim.hdb.domain.types;
     import uim.hdb.domain.table;
     import uim.hdb.domain.value;
+    import uim.hdb.domain.enumerations;
+    import uim.hdb.domain.exceptions;

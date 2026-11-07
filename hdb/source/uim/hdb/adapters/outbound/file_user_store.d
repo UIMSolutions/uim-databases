@@ -1,7 +1,6 @@
 module uim.hdb.adapters.outbound.file_user_store;
 
-import uim.hdb.application.ports;
-import uim.hdb.domain.entities.user;
+import uim.hdb;
 import std.conv : octal;
 import std.file : exists, mkdirRecurse, readText, rename, setAttributes;
 import std.path : dirName;
@@ -21,17 +20,17 @@ final class FileUserStore : IUserStore {
             mkdirRecurse(dir);
     }
 
-    User[] load() {
-        User[] users;
+    HdbUser[] load() {
+        HdbUser[] users;
         if (!exists(path))
             return users;
         foreach (j; parseJsonString(readText(path))["users"])
-            users ~= User(j["name"].get!string, j["passwordHash"].get!string,
+            users ~= HdbUser(j["name"].get!string, j["passwordHash"].get!string,
                 parseRole(j["role"].get!string), j["active"].get!bool);
         return users;
     }
 
-    void save(User[] users) {
+    void save(HdbUser[] users) {
         auto list = Json.emptyArray;
         foreach (u; users) {
             auto j = Json.emptyObject;
@@ -67,8 +66,8 @@ unittest {
 
     auto store = new FileUserStore(path);
     assert(store.load().length == 0);
-    store.save([User("a", "hash", Role.editor, false)]);
-    assert(store.load() == [User("a", "hash", Role.editor, false)]);
+    store.save([HdbUser("a", "hash", HdbRole.editor, false)]);
+    assert(store.load() == [HdbUser("a", "hash", HdbRole.editor, false)]);
     assert((getAttributes(path) & octal!777) == octal!600);
 
     write(path, "{broken");

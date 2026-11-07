@@ -1,22 +1,45 @@
 module uim.hdb.domain.entities.mergejob;
 
 import uim.hdb;
-import uim.hdb.domain.value;
 import std.algorithm : sort, uniq;
 import std.array : array;
 import std.exception : enforce;
 import std.range : assumeSorted;
 
-/// Eingefrorener Teil einer Spalte für Phase 2 des Merges: enthält nur lesbare Daten und das Ergebnis.
+/// Frozen portion of a column for Phase 2 of the merge: contains only read-only data and the result.
 final class MergeJob {
-    /* private */  Value[] mainDict;
-    /* private */  PackedVector mainCodes;
-    /* private */  Value[] frozenDict;
-    /* private */  uint[] frozenCodes;
-    /* private */  Value[] newDict;
-    /* private */  PackedVector newCodes;
-    /* private */  bool done;
-    /* private */  bool released;
+    protected Value[] _mainDict;
+    @property Value[] mainDict() { return _mainDict; }
+    @property MergeJob mainDict(Value[] newValues) { _mainDict = newValues; return this; }
+
+    protected PackedVector _mainCodes;
+    @property PackedVector mainCodes() { return _mainCodes; }
+    @property MergeJob mainCodes(PackedVector newCodes) { _mainCodes = newCodes; return this; }
+
+    protected Value[] _frozenDict;
+    @property Value[] frozenDict() { return _frozenDict; }
+    @property MergeJob frozenDict(Value[] newValues) { _frozenDict = newValues; return this; }
+
+    protected  uint[] _frozenCodes;
+    @property uint[] frozenCodes() { return _frozenCodes; }
+    @property MergeJob frozenCodes(uint[] newCodes) { _frozenCodes = newCodes; return this; }
+    
+
+    protected  Value[] _newDict;
+    @property Value[] newDict() { return _newDict; }
+    @property MergeJob newDict(Value[] newValues) { _newDict = newValues; return this; }
+
+    protected  PackedVector _newCodes;
+    @property PackedVector newCodes() { return _newCodes; }
+    @property MergeJob newCodes(PackedVector newCodes) { _newCodes = newCodes; return this; }
+
+    protected  bool _done;
+    @property bool done() { return _done; }
+    @property MergeJob done(bool newDone) { _done = newDone; return this; }
+
+    protected  bool _released;
+    @property bool released() { return _released; }
+    @property MergeJob released(bool newReleased) { _released = newReleased; return this; }
 
     /// Gemeinsames sortiertes Dictionary, alle Codes werden umgeschrieben und neu gepackt.
     void run() {

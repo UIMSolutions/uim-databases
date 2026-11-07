@@ -1,26 +1,18 @@
 module uim.hdb.domain.entities.user;
 
-import std.exception : enforce;
-import std.string : chomp, split, strip, toLower, toUpper;
+import uim.hdb;
 
-/// Rollen bauen aufeinander auf: jede enthält alle Rechte der vorherigen.
-enum Role {
-    viewer, // SELECT
-    editor, // zusätzlich INSERT, UPDATE, DELETE und Transaktionen
-    admin // zusätzlich CREATE, DROP, Wartung und Benutzerverwaltung
-}
-
-struct User {
+struct HdbUser {
     string name;
     string passwordHash;
-    Role role;
+    HdbRole role;
     bool active = true;
 }
 
 /// Die angemeldete Identität einer Anfrage. Der Standardwert ist anonym.
 struct Principal {
     string name;
-    Role role;
+    HdbRole role;
     bool authenticated;
 }
 
@@ -38,32 +30,32 @@ class AccessDenied : Exception {
     }
 }
 
-string roleName(Role role) {
+string roleName(HdbRole role) {
     final switch (role) {
-    case Role.viewer:
+    case HdbRole.viewer:
         return "viewer";
-    case Role.editor:
+    case HdbRole.editor:
         return "editor";
-    case Role.admin:
+    case HdbRole.admin:
         return "admin";
     }
 }
 
-Role parseRole(string name) {
+HdbRole parseRole(string name) {
     switch (name.strip.toLower) {
     case "viewer":
-        return Role.viewer;
+        return HdbRole.viewer;
     case "editor":
-        return Role.editor;
+        return HdbRole.editor;
     case "admin":
-        return Role.admin;
+        return HdbRole.admin;
     default:
         throw new Exception("Unknown role: " ~ name);
     }
 }
 
 /// Prüft die Rolle; wirft AuthenticationRequired oder AccessDenied.
-void requireRole(Principal principal, Role role) {
+void requireRole(Principal principal, HdbRole role) {
     if (!principal.authenticated)
         throw new AuthenticationRequired;
     if (principal.role < role)
@@ -72,40 +64,40 @@ void requireRole(Principal principal, Role role) {
 
 /// Nötige Rolle einer Anweisung. Normalisiert wie SqlService.executeIn, damit beide dasselbe Verb sehen;
 /// Unbekanntes verlangt admin.
-Role requiredRole(string statement) {
+HdbRole requiredRole(string statement) {
     auto words = statement.strip.chomp(";").strip.split();
     if (words.length == 0)
-        return Role.viewer; // leere Anweisung lehnt der Kern ab
+        return HdbRole.viewer; // leere Anweisung lehnt der Kern ab
     switch (words[0].toUpper) {
     case "SELECT":
-        return Role.viewer;
+        return HdbRole.viewer;
     case "INSERT":
     case "UPDATE":
     case "DELETE":
     case "BEGIN":
     case "COMMIT":
     case "ROLLBACK":
-        return Role.editor;
+        return HdbRole.editor;
     default:
-        return Role.admin;
+        return HdbRole.admin;
     }
 }
 
 unittest {
     import std.exception : assertThrown;
 
-    assert(requiredRole("  select * from t;") == Role.viewer);
-    assert(requiredRole("COMMIT;") == Role.editor);
-    assert(requiredRole("delete from t") == Role.editor);
-    assert(requiredRole("DROP TABLE t") == Role.admin);
-    assert(requiredRole("CREATE TABLE t (a INTEGER)") == Role.admin);
-    assert(requiredRole("VACUUM") == Role.admin);
-    assert(requiredRole("SELECT* FROM t") == Role.admin); // für den Kern kein SELECT
+    assert(requiredRole("  select * from t;") == HdbRole.viewer);
+    assert(requiredRole("COMMIT;") == HdbRole.editor);
+    assert(requiredRole("delete from t") == HdbRole.editor);
+    assert(requiredRole("DROP TABLE t") == HdbRole.admin);
+    assert(requiredRole("CREATE TABLE t (a INTEGER)") == HdbRole.admin);
+    assert(requiredRole("VACUUM") == HdbRole.admin);
+    assert(requiredRole("SELECT* FROM t") == HdbRole.admin); // für den Kern kein SELECT
 
-    assert(parseRole(" Editor ") == Role.editor);
+    assert(parseRole(" Editor ") == HdbRole.editor);
     assertThrown(parseRole("root"));
 
-    assertThrown!AuthenticationRequired(requireRole(Principal.init, Role.viewer));
-    assertThrown!AccessDenied(requireRole(Principal("v", Role.viewer, true), Role.editor));
-    requireRole(Principal("a", Role.admin, true), Role.editor);
+    assertThrown!AuthenticationRequired(requireRole(Principal.init, HdbRole.viewer));
+    assertThrown!AccessDenied(requireRole(Principal("v", HdbRole.viewer, true), HdbRole.editor));
+    requireRole(Principal("a", HdbRole.admin, true), HdbRole.editor);
 }

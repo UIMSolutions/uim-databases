@@ -26,10 +26,6 @@ sap.ui.define([
 
 		_load: function (set, key) {
 			const component = this.getOwnerComponent();
-			if (!component.getModel()) { // Neuladen: die Anmeldung läuft noch
-				window.setTimeout(this._load.bind(this, set, key), 200);
-				return;
-			}
 			this._set = set;
 			this._key = key;
 			const view = this.getView().getModel("view");
@@ -67,7 +63,7 @@ sap.ui.define([
 				const value = values.text(this._entity[column.name]);
 				form.addContent(new Label({ text: column.name, design: column.key ? "Bold" : "Standard" }));
 				if (editing && !column.key) {
-					this._inputs[column.name] = new Input({ value: value, type: column.type === "Edm.String" ? "Text" : "Number" });
+					this._inputs[column.name] = new Input({ value: value, type: values.isNumber(column) ? "Number" : "Text" });
 					form.addContent(this._inputs[column.name]);
 				} else {
 					form.addContent(new Text({ text: value }));

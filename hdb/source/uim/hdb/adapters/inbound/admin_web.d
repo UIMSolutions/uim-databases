@@ -10,6 +10,7 @@ import std.algorithm : all, any, canFind, map, max, min, startsWith;
 import std.array : array, join, replace;
 import std.conv : to;
 import std.exception : enforce;
+import std.file : readText;
 import std.format : format;
 import std.string : icmp, indexOf, strip, toLower, toUpper;
 import std.uni : isAlphaNum;
@@ -62,6 +63,17 @@ struct DashboardView {
     size_t totalRows, totalDeleted, totalDelta;
     string totalSize;
     MergeStatus merge;
+}
+
+struct TableStatsView {
+    TableSummary summary;
+    ColumnInfo[] columns;
+}
+
+struct StatsView {
+    DashboardView overview;
+    TableStatsView[] tables;
+    size_t totalColumns;
 }
 
 struct TableView {
@@ -129,6 +141,13 @@ struct UserRow {
     bool active, self;
 }
 
+struct BackupRow {
+    string name, label, created, size;
+    long tables, rows;
+    bool readable;
+    string kind;
+}
+
 struct ConsoleStatement {
     string sql;
     string[] columns;
@@ -161,10 +180,12 @@ private enum size_t maxConsoleRows = 500;
 final class SqlAdminUi {
     private ISqlUseCase sql;
     private IAccessUseCase access;
+    private IBackupUseCase backups;
 
-    this(ISqlUseCase sql, IAccessUseCase access) {
+    this(ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups) {
         this.sql = sql;
         this.access = access;
+        this.backups = backups;
     }
 
     void register(URLRouter router) {
@@ -179,7 +200,16 @@ final class SqlAdminUi {
         router.post("/admin/users/:user/update", &updateUser);
         router.post("/admin/users/:user/password", &resetPassword);
         router.post("/admin/users/:user/delete", &deleteUser);
+        router.get("/admin/backups", &backupList);
+        router.post("/admin/backups", &createBackup);
+        router.post("/admin/backups/upload", &uploadBackup);
+        router.post("/admin/backups/schedule", &updateSchedule);
+        router.get("/admin/backups/:backup/download", &downloadBackup);
+        router.post("/admin/backups/:backup/restore", &restoreBackup);
+        router.post("/admin/backups/:backup/delete", &deleteBackup);
         router.get("/admin", &dashboard);
+        router.get("/admin/stats", &statistics);
+        router.get("/admin/help", &help);
         router.post("/admin/merge", &merge);
         router.post("/admin/checkpoint", &checkpoint);
         router.get("/admin/sql", &console);
@@ -207,8 +237,8 @@ final class SqlAdminUi {
         auto me = currentPrincipal();
         p.userName = me.name;
         p.roleLabel = roleName(me.role);
-        p.canWrite = me.role >= Role.editor;
-        p.isAdmin = me.role == Role.admin;
+        p.canWrite = me.role >= HdbRole.editor;
+        p.isAdmin = me.role == HdbRole.admin;
         try
             p.tables = sql.listTables();
         catch (Exception)
@@ -296,7 +326,7 @@ final class SqlAdminUi {
                 view.users ~= UserRow(u.name, roleName(u.role), u.active, u.name == me.name);
         } catch (AccessDenied e)
             return renderError(req, res, HTTPStatus.forbidden, e.msg);
-        view.roles = [roleName(Role.viewer), roleName(Role.editor), roleName(Role.admin)];
+        view.roles = [roleName(HdbRole.viewer), roleName(HdbRole.editor), roleName(HdbRole.admin)];
         auto page = pageFor(req, "Users", "users");
         res.render!("users.dt", page, view);
     }
@@ -305,7 +335,7 @@ final class SqlAdminUi {
         act(req, res, "/admin/users", {
             auto u = access.createUser(currentPrincipal(), req.form.get("user", ""), matchingPasswords(req),
                 parseRole(req.form.get("role", "")));
-            return "User " ~ u.name ~ " created";
+            return "HdbUser " ~ u.name ~ " created";
         });
     }
 
@@ -313,7 +343,7 @@ final class SqlAdminUi {
         act(req, res, "/admin/users", {
             auto u = access.updateUser(currentPrincipal(), req.params["user"], parseRole(req.form.get("role", "")),
                 req.form.get("active", "") == "1");
-            return "User " ~ u.name ~ " updated";
+            return "HdbUser " ~ u.name ~ " updated";
         });
     }
 
@@ -327,7 +357,67 @@ final class SqlAdminUi {
     private void deleteUser(HTTPServerRequest req, HTTPServerResponse res) {
         act(req, res, "/admin/users", {
             access.deleteUser(currentPrincipal(), req.params["user"]);
-            return "User " ~ req.params["user"] ~ " deleted";
+            return "HdbUser " ~ req.params["user"] ~ " deleted";
+        });
+    }
+
+    private void backupList(HTTPServerRequest req, HTTPServerResponse res) {
+        BackupRow[] rows;
+        BackupSchedule schedule;
+        try {
+            foreach (b; backups.list())
+                rows ~= BackupRow(b.name, b.label, b.created, humanSize(b.size), b.tables, b.rows, b.readable, b.kind);
+            schedule = backups.schedule();
+        } catch (AccessDenied e)
+            return renderError(req, res, HTTPStatus.forbidden, e.msg);
+        auto page = pageFor(req, "Backups", "backups");
+        res.render!("backups.dt", page, rows, schedule);
+    }
+
+    private void updateSchedule(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/backups", {
+            backups.updateSchedule(req.form.get("enabled", "") == "1", req.form.get("intervalHours", "").to!int,
+                req.form.get("keepScheduled", "").to!int, req.form.get("keepSafety", "").to!int);
+            return "Schedule saved";
+        });
+    }
+
+    private void createBackup(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/backups", () => "Backup " ~ backups.create(req.form.get("label", "")).name ~ " created");
+    }
+
+    private void uploadBackup(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/backups", {
+            requireRole(currentPrincipal(), HdbRole.admin); // vor dem Lesen der Datei
+            auto file = "file" in req.files;
+            enforce(file !is null, "Choose a backup file");
+            return "Backup " ~ backups.upload(readText(file.tempPath.toString)).name ~ " uploaded";
+        });
+    }
+
+    private void downloadBackup(HTTPServerRequest req, HTTPServerResponse res) {
+        string content;
+        try
+            content = backups.download(req.params["backup"]);
+        catch (AccessDenied e)
+            return renderError(req, res, HTTPStatus.forbidden, e.msg);
+        catch (BackupNotFound e)
+            return renderError(req, res, HTTPStatus.notFound, e.msg);
+        res.headers["Content-Disposition"] = `attachment; filename="` ~ req.params["backup"] ~ `"`;
+        res.writeBody(content, "application/octet-stream");
+    }
+
+    private void restoreBackup(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/backups", {
+            auto safety = backups.restore(req.params["backup"]);
+            return "Database restored. The previous state is saved as " ~ safety.name;
+        });
+    }
+
+    private void deleteBackup(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/backups", {
+            backups.remove(req.params["backup"]);
+            return "Backup deleted";
         });
     }
 
@@ -335,21 +425,32 @@ final class SqlAdminUi {
         auto page = pageFor(req, "Dashboard", "dashboard");
         DashboardView view;
         view.merge = sql.mergeStatus();
-        try {
-            size_t totalBytes;
-            foreach (t; sql.stats()) {
-                auto s = summarize(t);
-                view.tables ~= s;
-                view.totalRows += s.rows;
-                view.totalDeleted += s.deletedRows;
-                view.totalDelta += s.deltaRows;
-                foreach (c; t.columns)
-                    totalBytes += c.mainCodeBytes;
-            }
-            view.totalSize = humanSize(totalBytes);
-        } catch (Exception e)
+        try
+            addTotals(view, sql.stats());
+        catch (Exception e)
             page.err = e.msg;
         res.render!("dashboard.dt", page, view);
+    }
+
+    private void statistics(HTTPServerRequest req, HTTPServerResponse res) {
+        auto page = pageFor(req, "Statistics", "stats");
+        StatsView view;
+        view.overview.merge = sql.mergeStatus();
+        try {
+            auto all = sql.stats();
+            addTotals(view.overview, all);
+            foreach (i, t; all) {
+                view.tables ~= TableStatsView(view.overview.tables[i], t.columns.map!(c => columnInfo(c)).array);
+                view.totalColumns += t.columns.length;
+            }
+        } catch (Exception e)
+            page.err = e.msg;
+        res.render!("stats.dt", page, view);
+    }
+
+    private void help(HTTPServerRequest req, HTTPServerResponse res) {
+        auto page = pageFor(req, "Help", "help");
+        res.render!("help.dt", page);
     }
 
     private void merge(HTTPServerRequest req, HTTPServerResponse res) {
@@ -564,6 +665,21 @@ private string rowCount(long n) {
     return n.to!string ~ (n == 1 ? " row" : " rows");
 }
 
+/// Kennzahlen je Tabelle und Summen für Dashboard und Statistik.
+private void addTotals(ref DashboardView view, TableStats[] all) {
+    size_t totalBytes;
+    foreach (t; all) {
+        auto s = summarize(t);
+        view.tables ~= s;
+        view.totalRows += s.rows;
+        view.totalDeleted += s.deletedRows;
+        view.totalDelta += s.deltaRows;
+        foreach (c; t.columns)
+            totalBytes += c.mainCodeBytes;
+    }
+    view.totalSize = humanSize(totalBytes);
+}
+
 private TableSummary summarize(TableStats t) {
     TableSummary s;
     s.name = t.table.toLower;
@@ -581,7 +697,11 @@ private TableSummary summarize(TableStats t) {
 }
 
 private ColumnInfo columnInfo(ColumnStats c) {
-    return ColumnInfo(c.name, typeName(c.type), c.type == ColumnType.text ? "text" : "number", c, humanSize(c.mainCodeBytes));
+    return ColumnInfo(c.name, typeName(c.type), inputTypeOf(c.type), c, humanSize(c.mainCodeBytes));
+}
+
+private string inputTypeOf(ColumnType type) {
+    return isIntegerType(type) ? "integer" : isNumeric(type) ? "number" : "text";
 }
 
 private Cell cell(Value v) {
@@ -629,9 +749,13 @@ string createTableSql(string name, const(string)[] columns, const(string)[] type
             continue; // leere Zeile im Formular
         enforce(isIdentifier(column), "Invalid column name: " ~ column);
         enforce(!seen.canFind(column.toLower), "Duplicate column: " ~ column);
-        enforce(["INTEGER", "DECIMAL", "VARCHAR"].canFind(types[i]), "Invalid column type: " ~ types[i]);
+        ColumnType type;
+        try
+            type = columnTypeOf(types[i]);
+        catch (Exception)
+            throw new Exception("Invalid column type: " ~ types[i]);
         seen ~= column.toLower;
-        defs ~= column ~ " " ~ types[i];
+        defs ~= column ~ " " ~ typeName(type); // nie die Eingabe: VARCHAR); DROP gilt sonst auch als VARCHAR
     }
     enforce(defs.length, "A table needs at least one column");
     immutable target = storage.length ? parseStorage(storage) : TableStorage.memory;

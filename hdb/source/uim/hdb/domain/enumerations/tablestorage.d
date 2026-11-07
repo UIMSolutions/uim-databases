@@ -1,5 +1,6 @@
-module uim.hdb.domain.types.tablestorage;
+module uim.hdb.domain.enumerations.tablestorage;
 
+import uim.hdb;
 import std.string : strip, toUpper;
 
 /// Wo eine Tabelle dauerhaft liegt. Abgefragt wird immer im Hauptspeicher.

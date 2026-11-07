@@ -1,10 +1,8 @@
 module uim.hdb.infrastructure.repositories.json;
 
-import uim.hdb.domain.table;
-import uim.hdb.domain.types.tablestorage : TableStorage;
-import uim.hdb.domain.value;
-import uim.hdb.infrastructure.repositories.snapshot;
+import uim.hdb;
 import std.array : appender;
+import std.conv : to;
 import std.exception : enforce;
 import vibe.data.json : Json, parseJsonString;
 
@@ -33,7 +31,7 @@ final class JsonTableRepository : SnapshotTableRepository {
             foreach (c; 0 .. t.defs.length) {
                 if (c)
                     out_ ~= ", ";
-                out_ ~= jsonValue(t.value(c, row));
+                out_ ~= tableValueJson(t.value(c, row));
             }
             out_ ~= "]";
         }
@@ -52,30 +50,44 @@ final class JsonTableRepository : SnapshotTableRepository {
             enforce(r.length == defs.length, "Ungültige Zeile in Tabelle " ~ name);
             Value[] row;
             foreach (i, d; defs)
-                row ~= fromJson(d.type, r[i]);
+                row ~= tableValueFromJson(d.type, r[i]);
             table.insert(row);
         }
         return table;
     }
 }
 
-private string jsonValue(Value v) {
+/// JSON-Text eines Werts mit exakten Zahlen.
+string tableValueJson(Value v) {
     if (isNull(v))
         return "null";
     if (auto s = v.peek!string)
         return Json(*s).toString;
+    if (auto e = v.peek!Exact)
+        return Json(e.text).toString; // als Zahl verlöre Edm.Decimal beim Lesen Stellen
     return valueText(v);
 }
 
-private Value fromJson(ColumnType type, Json j) {
+Value tableValueFromJson(ColumnType type, Json j) {
     if (j.type == Json.Type.null_)
         return nullValue;
-    final switch (type) {
+    switch (type) {
     case ColumnType.integer:
         return Value(j.get!long);
     case ColumnType.decimal:
         return Value(j.to!double);
     case ColumnType.text:
         return Value(j.get!string);
+    case ColumnType.boolean:
+        return Value(j.get!bool);
+    case ColumnType.byte_:
+    case ColumnType.sbyte:
+    case ColumnType.int16:
+    case ColumnType.int32:
+        return valueFromInput(type, j.get!long.to!string);
+    case ColumnType.single:
+        return valueFromInput(type, exactText(j.to!double));
+    default:
+        return valueFromInput(type, j.get!string); // Backups kommen auch von außen: nur gültige Werte übernehmen
     }
 }

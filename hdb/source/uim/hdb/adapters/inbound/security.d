@@ -3,6 +3,7 @@ module uim.hdb.adapters.inbound.security;
 import uim.hdb.application.ports;
 import uim.hdb.domain.entities.user;
 import std.algorithm : canFind, startsWith;
+import std.conv : to;
 import std.string : icmp, indexOf, strip;
 import vibe.core.task : TaskLocal;
 import vibe.http.common : HTTPMethod, HTTPStatusException;
@@ -17,6 +18,11 @@ private TaskLocal!Principal requestPrincipal;
 
 Principal currentPrincipal() @trusted {
     return requestPrincipal;
+}
+
+/// Für Adapter, die nicht durch das SecurityGate laufen: setzt die Identität des laufenden Tasks.
+void bindPrincipal(Principal principal) @trusted {
+    requestPrincipal = principal;
 }
 
 /// Läuft vor allen Routen und ist standardmäßig geschlossen: frei ist nur, was in isPublicPath steht.
@@ -35,22 +41,27 @@ final class SecurityGate {
     }
 
     private void gate(HTTPServerRequest req, HTTPServerResponse res) {
-        immutable admin = isAdminPath(req.path);
+        immutable admin = isAdminPath(req.requestPath.toString);
         auto token = admin ? req.cookies.get(sessionCookie, "") : bearerToken(req.headers.get("Authorization", ""));
         auto principal = access.authenticate(token);
         requestPrincipal = principal;
+
+        // Das Limit für Anfragen ist wegen der Sicherungen hoch: das gilt nur für angemeldete Benutzer
+        if (!principal.authenticated
+            && !isAnonymousBodyAllowed(req.headers.get("Content-Length", ""), req.headers.get("Transfer-Encoding", "")))
+            throw new HTTPStatusException(HTTPStatus.requestEntityTooLarge, "Request body too large");
 
         if (admin && req.method != HTTPMethod.GET && req.method != HTTPMethod.HEAD
             && !isSameOrigin(req.headers.get("Origin", ""), req.host, req.headers.get("Sec-Fetch-Site", "")))
             throw new HTTPStatusException(HTTPStatus.forbidden, "Cross-site request rejected");
 
-        if (principal.authenticated || isPublicPath(req.path))
+        if (principal.authenticated || isPublicPath(req.requestPath.toString))
             return;
         if (admin)
             return res.redirect("/admin/login");
         res.statusCode = HTTPStatus.unauthorized;
         res.headers["WWW-Authenticate"] = "Bearer";
-        if (req.path.startsWith("/odata/")) { // Clients erwarten dort das OData-Fehlerformat
+        if (req.requestPath.toString.startsWith("/odata/")) { // Clients erwarten dort das OData-Fehlerformat
             res.headers["OData-Version"] = "4.0";
             res.writeBody(`{"error":{"code":"Unauthorized","message":"Authentication required"}}`, "application/json");
         } else
@@ -68,6 +79,19 @@ bool isPublicPath(string path) @safe {
     // Das Fiori-Frontend muss vor der Anmeldung laden. Die Datenablage liegt neben public/: dieser Bereich
     // darf deshalb nie aus sich herausführen, egal wie sich der Dateiserver verhält.
     return path.startsWith("/ui5/") && !path.canFind("..") && !path.canFind('\\') && !path.canFind('\0');
+}
+
+/// Ohne Anmeldung gibt es nur kleine Formulare: Anmeldung und Passwortfelder.
+bool isAnonymousBodyAllowed(string contentLength, string transferEncoding) @safe {
+    enum limit = 64 * 1024;
+    if (transferEncoding.length)
+        return false; // Länge unbekannt
+    if (contentLength.length == 0)
+        return true;
+    try
+        return contentLength.to!ulong <= limit;
+    catch (Exception)
+        return false;
 }
 
 /// Token aus einem Authorization-Header; leer, wenn es kein Bearer-Schema ist.
@@ -98,6 +122,9 @@ unittest {
 
     assert(bearerToken("Bearer abc") == "abc" && bearerToken("bearer  abc ") == "abc");
     assert(bearerToken("Basic abc") == "" && bearerToken("Bearer ") == "" && bearerToken("") == "");
+
+    assert(isAnonymousBodyAllowed("", "") && isAnonymousBodyAllowed("65536", ""));
+    assert(!isAnonymousBodyAllowed("65537", "") && !isAnonymousBodyAllowed("", "chunked") && !isAnonymousBodyAllowed("x", ""));
 
     assert(isAdminPath("/admin") && isAdminPath("/admin/users"));
     assert(!isAdminPath("/administrator") && !isAdminPath("/sql"));

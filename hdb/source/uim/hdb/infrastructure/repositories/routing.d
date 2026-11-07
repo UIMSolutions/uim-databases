@@ -1,8 +1,6 @@
 module uim.hdb.infrastructure.repositories.routing;
 
-import uim.hdb.application.ports;
-import uim.hdb.domain.table;
-import uim.hdb.domain.types.tablestorage : TableStorage;
+import uim.hdb;
 import std.algorithm : sort;
 import std.array : array;
 import std.exception : enforce;
@@ -61,11 +59,7 @@ final class RoutingTableRepository : ITableRepository, IDurableTableRepository {
 }
 
 unittest {
-    import uim.hdb.application.sql_service : SqlService;
-    import uim.hdb.domain.value;
-    import uim.hdb.infrastructure.repositories.files : FileTableRepository;
-    import uim.hdb.infrastructure.repositories.json : JsonTableRepository;
-    import uim.hdb.infrastructure.repositories.memory : MemoryTableRepository;
+    import uim.hdb;
     import std.conv : to;
     import std.exception : assertThrown;
     import std.file : exists, deleteFile = remove, readText, rmdirRecurse, tempDir, write;
@@ -84,11 +78,11 @@ unittest {
         }
 
         string[] readAll() {
-            return lines.dup;
+            return lines.map!"a".array;
         }
 
-        void replaceAll(string[] a) {
-            lines = a.dup;
+        void replaceAll(string[] items) {
+            lines = items.map!"a".array;
         }
     }
 
@@ -212,5 +206,57 @@ unittest {
     write(buildPath(jsonDir, "t_file.json"), `{"name": "t_FILE", "columns": [{"name": "a", "type": "INTEGER"}], "rows": []}`);
     assertThrown(start());
     deleteFile(buildPath(jsonDir, "t_file.json"));
-    start();
+    s = start();
+
+    // BLOB, GEO und LINK überstehen jeden Speicher unverändert
+    foreach (storage; ["MEMORY", "FILE", "JSON"]) {
+        auto t = "m_" ~ storage;
+        s.execute("CREATE TABLE " ~ t ~ " (id INTEGER, b BLOB, g GEO, l LINK) USING " ~ storage);
+        s.execute("INSERT INTO " ~ t ~ " VALUES (1, X'00ff', 'polygon((0 0,1 0,1 1,0 0))', 'https://a.org/?q=it''s')");
+        s.execute("INSERT INTO " ~ t ~ " VALUES (2, NULL, NULL, NULL)");
+    }
+    foreach (round; 0 .. 2) {
+        s = start();
+        s.mergeDelta();
+        foreach (storage; ["MEMORY", "FILE", "JSON"]) {
+            auto r = s.execute("SELECT b, g, l FROM m_" ~ storage ~ " ORDER BY id").rows;
+            assert(r.length == 2 && r[0][0] == Value("00FF"), storage);
+            assert(r[0][1] == Value("POLYGON((0 0, 1 0, 1 1, 0 0))"), storage);
+            assert(r[0][2] == Value("https://a.org/?q=it's"), storage);
+            assert(isNull(r[1][0]) && isNull(r[1][1]) && isNull(r[1][2]), storage);
+        }
+    }
+
+    // Alle EDM-Typen überstehen jeden Speicher mit Wert und Ordnung
+    foreach (storage; ["MEMORY", "FILE", "JSON"]) {
+        auto t = "e_" ~ storage;
+        s.execute("CREATE TABLE " ~ t ~ " (id TINYINT, a BOOLEAN, b SBYTE, c SMALLINT, d INT32, e REAL, f NUMERIC, g DATE, "
+                ~ "h TIMESTAMP, i TIME, j DURATION, k GUID, l GEOGRAPHY) USING " ~ storage);
+        s.execute("INSERT INTO " ~ t ~ " VALUES (1, true, -5, 300, 70000, 0.1, 12345678901234567890.123456789, '2026-11-06', "
+                ~ "'2026-11-06T12:00:00.25+01:00', '12:30:05.5', '-P1DT2H', '01234567-89ab-cdef-0123-456789abcdef', 'POINT(13.4 52.5)')");
+        s.execute("INSERT INTO " ~ t ~ " VALUES (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)");
+    }
+    foreach (round; 0 .. 2) {
+        s = start();
+        s.mergeDelta();
+        foreach (storage; ["MEMORY", "FILE", "JSON"]) {
+            auto r = s.execute("SELECT * FROM e_" ~ storage ~ " ORDER BY id").rows;
+            string[] texts;
+            foreach (v; r[0])
+                texts ~= valueText(v);
+            assert(texts == ["1", "true", "-5", "300", "70000", "0.1", "12345678901234567890.123456789", "2026-11-06",
+                    "2026-11-06T11:00:00.2500000Z", "12:30:05.5", "-P1DT2H", "01234567-89ab-cdef-0123-456789abcdef",
+                    "POINT(13.4 52.5)"], storage);
+            assert(r[0][1].peek!bool !is null && r[0][6].peek!Exact !is null && r[0][10].peek!Exact !is null, storage);
+            foreach (v; r[1][1 .. $])
+                assert(isNull(v), storage);
+        }
+    }
+
+    // Von Hand beschädigte Dateien fallen beim Laden auf, statt ungültige Werte einzuschleusen
+    auto damaged = buildPath(fileDir, "m_file.tbl");
+    import std.array : replace;
+
+    write(damaged, readText(damaged).replace("https://a.org", "javascript:alert(1)//"));
+    assertThrown(start());
 }

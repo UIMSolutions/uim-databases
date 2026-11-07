@@ -1,15 +1,8 @@
 module uim.hdb.presentation.odata.controller;
 
-import uim.hdb.application.ports : ISqlUseCase;
-import uim.hdb.domain.entities.user : AccessDenied, AuthenticationRequired;
-import uim.hdb.domain.types.tablestats : ColumnStats, TableStats;
-import uim.hdb.domain.value;
-import uim.hdb.presentation.odata.errors;
-import uim.hdb.presentation.odata.filter;
-import uim.hdb.presentation.odata.model;
-import uim.hdb.presentation.rest.services : jsonLiteral;
+import uim.hdb;
 import std.algorithm : any, canFind, filter, map, min, startsWith;
-import std.array : appender, array, join, split;
+import std.array : appender, array, join, replace, split;
 import std.conv : to;
 import std.string : icmp, indexOf, strip, toLower;
 import vibe.data.json : Json, parseJsonString;
@@ -22,7 +15,7 @@ import vibe.textfilter.urlencode : urlEncode;
 private enum jsonBase = "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=";
 private enum size_t maxPageSize = 1000;
 
-/// Zerlegter Ressourcenpfad: Set, Set(key), Set(key)/prop, Set/$count, ...
+/// Expanded resource path: Set, Set(key), Set(key)/prop, Set/$count, ...
 struct ResourcePath {
     string entitySet;
     bool hasKey;
@@ -30,6 +23,7 @@ struct ResourcePath {
     string[] segments;
 }
 
+/// Parses an OData resource path into its components.
 ResourcePath parseResourcePath(string path) {
     ResourcePath r;
     size_t i;
@@ -73,25 +67,32 @@ string keyLiteral(ColumnStats column, string key) {
         return toSqlLiteral(parseLiteral(ColumnType.text, text));
     }
     try
-        return toSqlLiteral(valueFromInput(ColumnType.integer, text));
+        return toSqlLiteral(valueFromInput(column.type, text));
     catch (Exception)
-        throw badRequest("Key must be an integer");
+        throw badRequest(column.type == ColumnType.guid ? "Key must be a GUID" : "Key must be an integer");
 }
 
-/// Mit IEEE754Compatible=true sind Int64-Werte Text, weil JavaScript sie als Zahl nicht exakt darstellen kann.
-string propertyJson(Value v, bool ieee754 = false) {
+/// When IEEE754Compatible=true, Int64 values are treated as text because JavaScript cannot represent them exactly as numbers.
+string propertyJson(Value v, bool ieee754 = false, ColumnType type = ColumnType.integer) {
     if (isNull(v))
         return "null";
-    if (ieee754 && v.peek!long)
+    if (ieee754 && type == ColumnType.integer && v.peek!long)
         return `"` ~ valueText(v) ~ `"`;
-    if (auto s = v.peek!string)
+    if (auto e = v.peek!Exact)
+        return ieee754 || e.text != e.rank ? `"` ~ e.text ~ `"` : e.text; // Edm.Duration ist immer Text
+    if (auto s = v.peek!string) {
+        if (type == ColumnType.blob)
+            return `"` ~ hexToBase64Url(*s) ~ `"`;
+        if (type == ColumnType.geo || type == ColumnType.geography)
+            return wktToGeoJson(*s);
         return Json(*s).toString;
+    }
     return valueText(v); // nicht Json: dessen Ausgabe hat nur 16 Stellen
 }
 
-/// Eingehender Adapter: OData-4.0-Dienst unter /odata/v4 über ISqlUseCase. Tabellen sind Entity Sets.
-/// Anmeldung und Rollen gelten wie überall, weil der Controller nur die abgesicherte Sicht auf den Kern sieht.
-/// Eigene Routen statt registerRestInterface, weil OData-Pfade wie orders(1)/$value keine festen Muster sind.
+/// Inbound adapter: OData 4.0 service at /odata/v4 via ISqlUseCase. Tables are entity sets.
+/// Authentication and roles apply as they do everywhere else, because the controller only sees the secured view of the core.
+/// Custom routes instead of registerRestInterface, because OData paths such as orders(1)/$value are not fixed patterns.
 final class ODataController {
     enum root = "/odata/v4";
     private ISqlUseCase sql;
@@ -123,7 +124,7 @@ final class ODataController {
     }
 
     private void route(HTTPServerRequest req, HTTPServerResponse res) {
-        auto path = req.path[root.length .. $];
+        auto path = req.requestPath.toString[root.length .. $];
         if (path.startsWith("/"))
             path = path[1 .. $];
 
@@ -202,10 +203,12 @@ final class ODataController {
         auto value = single(table, predicate)[index];
         if (isNull(value))
             return noContent(res); // laut Spezifikation 204 für eine Eigenschaft ohne Wert
+        if (raw && table.columns[index].type == ColumnType.blob)
+            return res.writeBody(hexToBytes(*value.peek!string), "application/octet-stream");
         if (raw)
             return res.writeBody(valueText(value), "text/plain");
         res.writeBody(`{"@odata.context":` ~ Json(contextBase(req) ~ "#" ~ table.table ~ "/" ~ name).toString
-                ~ `,"value":` ~ propertyJson(value, ieee754(req)) ~ "}", jsonTypeOf(req));
+                ~ `,"value":` ~ propertyJson(value, ieee754(req), table.columns[index].type) ~ "}", jsonTypeOf(req));
     }
 
     private void serviceDocument(HTTPServerRequest req, HTTPServerResponse res) {
@@ -274,7 +277,8 @@ final class ODataController {
             auto last = sql.execute("SELECT * FROM " ~ table.table ~ " LIMIT 1 OFFSET " ~ (position - 1).to!string).rows[0];
             return writeEntity(req, res, table, last, 201, position);
         }
-        auto location = entityUrl(req, table, predicate[key.length + 3 .. $]);
+        // anders als in SQL steht eine GUID in der Adresse ohne Anführungszeichen
+        auto location = entityUrl(req, table, predicate[key.length + 3 .. $].replace("'", guidKey(table) ? "" : "'"));
         res.headers["Location"] = location;
         if (prefersMinimal(req)) {
             res.headers["OData-EntityId"] = location;
@@ -390,11 +394,13 @@ private void checkOptions(HTTPServerRequest req) {
         throw new ODataError(406, "NotAcceptable", "Only JSON is available");
 }
 
+/// Returns the SQL WHERE clause corresponding to the OData $filter query option. Returns an empty string if no $filter is present.
 private string whereOf(HTTPServerRequest req, TableStats table) {
     auto text = req.query.get("$filter", "");
     return "$filter" in req.query ? filterToWhere(text, table.columns) : "";
 }
 
+/// Returns the value of a numeric OData query option, or the fallback if not present. Throws an error if the value is not a non-negative integer.
 private size_t numberOption(HTTPServerRequest req, string name, size_t fallback) {
     auto text = req.query.get(name, "");
     if (text.length == 0)
@@ -405,7 +411,7 @@ private size_t numberOption(HTTPServerRequest req, string name, size_t fallback)
         throw badRequest(name ~ " must be a non-negative integer");
 }
 
-/// Ausgewählte Eigenschaften; leer bedeutet alle.
+/// Selected properties; empty means all.
 private string[] selection(HTTPServerRequest req, TableStats table) {
     auto text = req.query.get("$select", "").strip;
     if (text.length == 0 || text == "*")
@@ -426,11 +432,11 @@ private string entityJson(TableStats table, Value[] row, string[] selected, size
         fields ~= `"` ~ rowIdProperty ~ `":` ~ propertyJson(Value(cast(long) position), ieee);
     foreach (i, c; table.columns)
         if (selected.length == 0 || selected.canFind(c.name))
-            fields ~= Json(c.name).toString ~ ":" ~ propertyJson(row[i], ieee);
+            fields ~= Json(c.name).toString ~ ":" ~ propertyJson(row[i], ieee, c.type);
     return "{" ~ fields.join(",") ~ "}";
 }
 
-/// Liest den Rumpf einer Entität. Annotationen wie @odata.type werden übersprungen.
+/// Reads the body of an entity. Annotations like @odata.type are skipped.
 private Json[string] readEntity(HTTPServerRequest req, TableStats table) {
     Json document;
     try
@@ -452,9 +458,28 @@ private Json[string] readEntity(HTTPServerRequest req, TableStats table) {
             catch (Exception)
                 throw badRequest("Property " ~ name ~ " expects an integer");
         }
+        value = fromWire(column.front, value);
         entity[name] = value;
     }
     return entity;
+}
+
+/// Converts the OData format into the core's text form. Geo columns also accept WKT: the UI5 client can
+/// only modify properties with simple values, it cannot set a GeoJSON object.
+private Json fromWire(ColumnStats column, Json value) {
+    try {
+        if (column.type == ColumnType.blob && value.type == Json.Type.string)
+            return Json(base64UrlToHex(value.get!string));
+        if ((column.type == ColumnType.geo || column.type == ColumnType.geography) && value.type == Json.Type.object)
+            return Json(geoJsonToWkt(value));
+    } catch (Exception e)
+        throw badRequest("Property " ~ column.name ~ ": " ~ e.msg);
+    return value;
+}
+
+private bool guidKey(TableStats table) {
+    auto key = keyColumn(table);
+    return table.columns.any!(c => c.name == key && c.type == ColumnType.guid);
 }
 
 private bool ieee754(HTTPServerRequest req) {
@@ -487,7 +512,7 @@ private string entityUrl(HTTPServerRequest req, TableStats table, string keyLite
     return serviceRoot(req) ~ table.table ~ "(" ~ keyLiteralText ~ ")";
 }
 
-/// Link auf die nächste Seite: alle Optionen bleiben, $skip und $top werden fortgeschrieben.
+/// Link to the next page: all options remain, $skip and $top are carried forward.
 private string nextLink(HTTPServerRequest req, TableStats table, size_t skip, size_t top) {
     string[] parts;
     foreach (name, value; req.query.byKeyValue)
@@ -498,7 +523,7 @@ private string nextLink(HTTPServerRequest req, TableStats table, size_t skip, si
         parts ~= "$top=" ~ top.to!string;
     return serviceRoot(req) ~ table.table ~ "?" ~ parts.join("&");
 }
-
+///
 unittest {
     import std.exception : assertThrown;
 
@@ -531,4 +556,23 @@ unittest {
     assert(propertyJson(Value(long.max)) == "9223372036854775807");
     assert(propertyJson(Value(long.max), true) == `"9223372036854775807"`);
     assert(propertyJson(Value(1.5), true) == "1.5"); // Edm.Double bleibt eine Zahl
+    assert(propertyJson(Value(5L), true, ColumnType.int32) == "5"); // nur Edm.Int64 wird Text
+    assert(propertyJson(Value(true), false, ColumnType.boolean) == "true");
+    assert(propertyJson(Value("FBFF"), false, ColumnType.blob) == `"-_8"`);
+    assert(propertyJson(Value("POINT(1 2)"), false, ColumnType.geo) == `{"type":"Point","coordinates":[1,2]}`);
+    assert(propertyJson(Value("POINT(1 2)"), false, ColumnType.geography) == `{"type":"Point","coordinates":[1,2]}`);
+    auto amount = valueFromInput(ColumnType.exact, "12345678901234567890.5");
+    assert(propertyJson(amount, false, ColumnType.exact) == "12345678901234567890.5");
+    assert(propertyJson(amount, true, ColumnType.exact) == `"12345678901234567890.5"`);
+    assert(propertyJson(valueFromInput(ColumnType.duration, "P1D"), false, ColumnType.duration) == `"P1D"`);
+
+    ColumnStats uid;
+    uid.name = "id";
+    uid.type = ColumnType.guid;
+    assert(keyLiteral(uid, "01234567-89AB-CDEF-0123-456789ABCDEF") == "'01234567-89ab-cdef-0123-456789abcdef'");
+    assert(keyLiteral(uid, "id=01234567-89ab-cdef-0123-456789abcdef") == "'01234567-89ab-cdef-0123-456789abcdef'");
+    assertThrown(keyLiteral(uid, "1"));
+    uid.type = ColumnType.int16;
+    assert(keyLiteral(uid, "5") == "5");
+    assertThrown(keyLiteral(uid, "70000"));
 }

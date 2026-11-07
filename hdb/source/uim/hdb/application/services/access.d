@@ -1,7 +1,6 @@
-module uim.hdb.application.access_service;
+module uim.hdb.application.services.access;
 
-import uim.hdb.application.ports;
-import uim.hdb.domain.entities.user;
+import uim.hdb;
 import core.time : Duration, hours, minutes, MonoTime;
 import std.algorithm : all, canFind, count, map, sort;
 import std.array : array;
@@ -34,7 +33,7 @@ final class AccessService : IAccessUseCase {
     private IUserStore store;
     private ICredentialCrypto crypto;
     private MonoTime delegate() now;
-    private User[string] users;
+    private HdbUser[string] users;
     private Session[string] sessions; // Schlüssel: SHA-256 des Tokens
     private Failures[string] failures;
     private string dummyHash; // unbekannte Namen kosten dieselbe Zeit wie bekannte
@@ -49,17 +48,30 @@ final class AccessService : IAccessUseCase {
         dummyHash = crypto.hashPassword(crypto.randomSecret());
     }
 
-    /// Legt beim ersten Start den Administrator an. Ohne vorgegebenes Passwort wird eines erzeugt und
-    /// zurückgegeben, damit es einmalig angezeigt werden kann; sonst ist das Ergebnis leer.
+    /** 
+     *  Create an administrator when you first start. 
+     *  If no password is specified, one is generated and returned so that it can be displayed once; otherwise, the result is empty.
+     *
+     *  @param name The name of the administrator to create.
+     *  @param password The password for the administrator. If empty, a random password is generated.
+     *  @return The generated password if no password was specified, otherwise an empty string.
+    **/
     string bootstrap(string name, string password) {
         if (users.length)
             return "";
         auto generated = password.length ? "" : crypto.randomSecret();
         auto normalized = validName(name);
-        commit(User(normalized, crypto.hashPassword(password.length ? password : generated), Role.admin));
+        commit(HdbUser(normalized, crypto.hashPassword(password.length ? password : generated), HdbRole.admin));
         return generated;
     }
 
+    /** 
+     *  Attempt to log in with the given user name and password.
+     *
+     *  @param name The name of the user attempting to log in.
+     *  @param password The password for the user.
+     *  @return The result of the login attempt, including a session token if successful.
+    **/
     LoginResult login(string name, string password) {
         auto key = name.strip.toLower;
         auto locked = key in failures;
@@ -84,10 +96,21 @@ final class AccessService : IAccessUseCase {
         return LoginResult(token, principalOf(*user), sessionLifetime.total!"seconds");
     }
 
+    /** 
+     *  Log out the session associated with the given token.
+     *
+     *  @param token The session token to log out.
+    **/
     void logout(string token) {
         sessions.remove(digest(token));
     }
 
+    /** 
+     *  Authenticate the session associated with the given token.
+     *
+     *  @param token The session token to authenticate.
+     *  @return The principal associated with the session, or an empty principal if authentication fails.
+    **/
     Principal authenticate(string token) {
         if (token.length == 0)
             return Principal.init;
@@ -103,35 +126,66 @@ final class AccessService : IAccessUseCase {
         return principalOf(*user);
     }
 
+    /** 
+     *  Change the password of the currently authenticated user.
+     *
+     *  @param actor The principal representing the currently authenticated user.
+     *  @param current The current password of the user.
+     *  @param replacement The new password to set.
+    **/
     void changeOwnPassword(Principal actor, string current, string replacement) {
-        requireRole(actor, Role.viewer);
+        requireRole(actor, HdbRole.viewer);
         auto user = actor.name in users;
         enforce!AuthenticationRequired(user !is null);
         enforce(crypto.verifyPassword(current, user.passwordHash), "Current password is wrong");
         setPassword(*user, replacement);
     }
 
+    /** 
+     *  List all users in the system.
+     *
+     *  @param actor The principal representing the currently authenticated user.
+     *  @return An array of user information for all users.
+    **/
     UserInfo[] listUsers(Principal actor) {
-        requireRole(actor, Role.admin);
+        requireRole(actor, HdbRole.admin);
         auto result = users.values.map!(u => info(u)).array;
         result.sort!((a, b) => a.name < b.name);
         return result;
     }
 
-    UserInfo createUser(Principal actor, string name, string password, Role role) {
-        requireRole(actor, Role.admin);
+    /** 
+     *  Create a new user in the system.
+     *
+     *  @param actor The principal representing the currently authenticated user.
+     *  @param name The name of the new user.
+     *  @param password The password for the new user.
+     *  @param role The role to assign to the new user.
+     *  @return The information of the newly created user.
+    **/
+    UserInfo createUser(Principal actor, string name, string password, HdbRole role) {
+        requireRole(actor, HdbRole.admin);
         auto normalized = validName(name);
-        enforce((normalized in users) is null, "User already exists: " ~ normalized);
+        enforce((normalized in users) is null, "HdbUser already exists: " ~ normalized);
         validPassword(password);
-        auto user = User(normalized, crypto.hashPassword(password), role);
+        auto user = HdbUser(normalized, crypto.hashPassword(password), role);
         commit(user);
         return info(user);
     }
 
-    UserInfo updateUser(Principal actor, string name, Role role, bool active) {
-        requireRole(actor, Role.admin);
+    /** 
+     *  Update the role and active status of an existing user.
+     *
+     *  @param actor The principal representing the currently authenticated user.
+     *  @param name The name of the user to update.
+     *  @param role The new role to assign to the user.
+     *  @param active The new active status of the user.
+     *  @return The updated user information.
+    **/
+    UserInfo updateUser(Principal actor, string name, HdbRole role, bool active) {
+        requireRole(actor, HdbRole.admin);
         auto user = find(name);
-        if (role != Role.admin || !active)
+        if (role != HdbRole.admin || !active)
             requireOtherAdmin(user);
         user.role = role;
         user.active = active;
@@ -141,13 +195,26 @@ final class AccessService : IAccessUseCase {
         return info(user);
     }
 
+    /** 
+     *  Reset the password of an existing user.
+     *
+     *  @param actor The principal representing the currently authenticated user.
+     *  @param name The name of the user whose password is to be reset.
+     *  @param replacement The new password to set.
+    **/
     void resetPassword(Principal actor, string name, string replacement) {
-        requireRole(actor, Role.admin);
+        requireRole(actor, HdbRole.admin);
         setPassword(find(name), replacement);
     }
 
+    /** 
+     *  Delete an existing user from the system.
+     *
+     *  @param actor The principal representing the currently authenticated user.
+     *  @param name The name of the user to delete.
+    **/
     void deleteUser(Principal actor, string name) {
-        requireRole(actor, Role.admin);
+        requireRole(actor, HdbRole.admin);
         auto user = find(name);
         requireOtherAdmin(user);
         auto remaining = users.dup;
@@ -157,32 +224,38 @@ final class AccessService : IAccessUseCase {
         revokeSessions(user.name);
     }
 
-    private void setPassword(User user, string replacement) {
+    /** 
+     *  Set the password for a user.
+     *
+     *  @param user The user whose password is to be set.
+     *  @param replacement The new password to set.
+    **/
+    private void setPassword(HdbUser user, string replacement) {
         validPassword(replacement);
         user.passwordHash = crypto.hashPassword(replacement);
         commit(user);
         revokeSessions(user.name); // gestohlene Sitzungen enden mit dem Passwort
     }
 
-    /// Erst speichern, dann im Speicher übernehmen: schlägt das Schreiben fehl, bleibt alles beim Alten.
-    private void commit(User user) {
+    /// First save, then take over from the storage: if writing fails, everything remains as it was.
+    private void commit(HdbUser user) {
         auto next = users.dup;
         next[user.name] = user;
         store.save(next.values);
         users = next;
     }
 
-    private User find(string name) {
+    private HdbUser find(string name) {
         auto user = name.strip.toLower in users;
-        enforce(user !is null, "User not found: " ~ name);
+        enforce(user !is null, "HdbUser not found: " ~ name);
         return *user;
     }
 
-    /// Ohne aktiven Administrator ließe sich das System nicht mehr verwalten.
-    private void requireOtherAdmin(User user) {
-        if (user.role != Role.admin || !user.active)
+    /// Without an active administrator, the system could no longer be managed.
+    private void requireOtherAdmin(HdbUser user) {
+        if (user.role != HdbRole.admin || !user.active)
             return;
-        enforce(users.values.count!(u => u.role == Role.admin && u.active) > 1, "Cannot remove the last active admin");
+        enforce(users.values.count!(u => u.role == HdbRole.admin && u.active) > 1, "Cannot remove the last active admin");
     }
 
     private void revokeSessions(string name) {
@@ -226,11 +299,11 @@ final class AccessService : IAccessUseCase {
     }
 }
 
-private Principal principalOf(User user) {
+private Principal principalOf(HdbUser user) {
     return Principal(user.name, user.role, true);
 }
 
-private UserInfo info(User user) {
+private UserInfo info(HdbUser user) {
     return UserInfo(user.name, user.role, user.active);
 }
 
@@ -242,7 +315,7 @@ private string validName(string name) {
     auto normalized = name.strip.toLower;
     enforce(normalized.length >= 1 && normalized.length <= 64
             && normalized.all!(c => isAlphaNum(c) || c == '_' || c == '-' || c == '.'),
-        "User names use 1 to 64 letters, digits, '_', '-' or '.'");
+        "HdbUser names use 1 to 64 letters, digits, '_', '-' or '.'");
     return normalized;
 }
 
@@ -255,13 +328,13 @@ unittest {
     import core.time : seconds;
 
     static class MemStore : IUserStore {
-        User[] saved;
+        HdbUser[] saved;
         bool failing;
-        User[] load() {
+        HdbUser[] load() {
             return saved;
         }
 
-        void save(User[] users) {
+        void save(HdbUser[] users) {
             if (failing)
                 throw new Exception("disk full");
             saved = users.dup;
@@ -297,38 +370,38 @@ unittest {
 
     auto session = a.login("ADMIN", generated);
     auto root = a.authenticate(session.token);
-    assert(root.authenticated && root.role == Role.admin);
+    assert(root.authenticated && root.role == HdbRole.admin);
     assert(!a.authenticate("forged").authenticated);
     assert(!a.authenticate("").authenticated);
 
     // Benutzerverwaltung nur für Administratoren
     auto long1 = "correct-horse-1";
     auto long2 = "correct-horse-2";
-    a.createUser(root, "ed", long1, Role.editor);
+    a.createUser(root, "ed", long1, HdbRole.editor);
     auto ed = a.authenticate(a.login("ed", long1).token);
-    assert(ed.role == Role.editor);
+    assert(ed.role == HdbRole.editor);
     assertThrown!AccessDenied(a.listUsers(ed));
-    assertThrown!AccessDenied(a.createUser(ed, "x", long1, Role.admin));
-    assertThrown!AccessDenied(a.updateUser(ed, "ed", Role.admin, true)); // keine Selbstbeförderung
+    assertThrown!AccessDenied(a.createUser(ed, "x", long1, HdbRole.admin));
+    assertThrown!AccessDenied(a.updateUser(ed, "ed", HdbRole.admin, true)); // keine Selbstbeförderung
     assertThrown!AccessDenied(a.resetPassword(ed, "admin", long2));
     assertThrown!AccessDenied(a.deleteUser(ed, "admin"));
     assertThrown!AuthenticationRequired(a.listUsers(Principal.init));
 
-    assertThrown(a.createUser(root, "ed", long1, Role.viewer)); // doppelt
-    assertThrown(a.createUser(root, "bad name", long1, Role.viewer));
-    assertThrown(a.createUser(root, "shorty", "short", Role.viewer));
+    assertThrown(a.createUser(root, "ed", long1, HdbRole.viewer)); // doppelt
+    assertThrown(a.createUser(root, "bad name", long1, HdbRole.viewer));
+    assertThrown(a.createUser(root, "shorty", "short", HdbRole.viewer));
     assert(a.listUsers(root).map!(u => u.name).array == ["admin", "ed"]);
 
     // Rollenänderung wirkt in laufenden Sitzungen sofort
     auto edSession = a.login("ed", long1).token;
-    a.updateUser(root, "ed", Role.viewer, true);
-    assert(a.authenticate(edSession).role == Role.viewer);
+    a.updateUser(root, "ed", HdbRole.viewer, true);
+    assert(a.authenticate(edSession).role == HdbRole.viewer);
 
     // Deaktivieren beendet Sitzungen und verhindert die Anmeldung
-    a.updateUser(root, "ed", Role.viewer, false);
+    a.updateUser(root, "ed", HdbRole.viewer, false);
     assert(!a.authenticate(edSession).authenticated);
     assertThrown!AuthenticationRequired(a.login("ed", long1));
-    a.updateUser(root, "ed", Role.editor, true);
+    a.updateUser(root, "ed", HdbRole.editor, true);
 
     // Passwortwechsel beendet Sitzungen; das alte Passwort gilt nicht mehr
     edSession = a.login("ed", long1).token;
@@ -342,11 +415,11 @@ unittest {
 
     // Der letzte aktive Administrator bleibt erhalten
     assertThrown(a.deleteUser(root, "admin"));
-    assertThrown(a.updateUser(root, "admin", Role.editor, true));
-    assertThrown(a.updateUser(root, "admin", Role.admin, false));
-    a.updateUser(root, "ed", Role.admin, true);
-    a.updateUser(root, "admin", Role.viewer, true);
-    a.updateUser(a.authenticate(a.login("ed", long2).token), "admin", Role.admin, true);
+    assertThrown(a.updateUser(root, "admin", HdbRole.editor, true));
+    assertThrown(a.updateUser(root, "admin", HdbRole.admin, false));
+    a.updateUser(root, "ed", HdbRole.admin, true);
+    a.updateUser(root, "admin", HdbRole.viewer, true);
+    a.updateUser(a.authenticate(a.login("ed", long2).token), "admin", HdbRole.admin, true);
 
     // Sperre nach Fehlversuchen, auch für unbekannte Namen; danach geht es wieder
     foreach (i; 0 .. 5)
@@ -365,7 +438,7 @@ unittest {
     // Schlägt das Speichern fehl, bleibt der Zustand unverändert
     root = a.authenticate(a.login("ed", long2).token);
     store.failing = true;
-    assertThrown(a.createUser(root, "lost", long1, Role.viewer));
+    assertThrown(a.createUser(root, "lost", long1, HdbRole.viewer));
     store.failing = false;
     assert(!a.listUsers(root).map!(u => u.name).canFind("lost"));
 
@@ -373,5 +446,5 @@ unittest {
     token = a.login("ed", long2).token;
     auto restarted = new AccessService(store, new FakeCrypto, () => clock);
     assert(!restarted.authenticate(token).authenticated);
-    assert(restarted.login("ed", long2).principal.role == Role.admin);
+    assert(restarted.login("ed", long2).principal.role == HdbRole.admin);
 }

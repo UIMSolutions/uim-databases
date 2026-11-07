@@ -1,10 +1,6 @@
 module uim.hdb.presentation.rest.models;
 
-import uim.hdb.application.ports : MergeStatus, QueryResult, UserInfo;
-import uim.hdb.domain.entities.user : roleName;
-import uim.hdb.domain.types.tablestats : ColumnStats, TableStats;
-import uim.hdb.domain.types.tablestorage : storageName;
-import uim.hdb.domain.value;
+import uim.hdb;
 import std.algorithm : map;
 import std.array : array;
 import vibe.data.json : Json;
@@ -27,6 +23,24 @@ struct RestLogin {
     RestUser user;
 }
 
+struct RestBackup {
+    string name, label, created;
+    long size, tables, rows;
+    bool readable;
+    string kind; // manual, scheduled, safety oder uploaded
+}
+
+struct RestBackupSchedule {
+    bool enabled;
+    int intervalHours, keepScheduled, keepSafety;
+    string lastRun, lastError, nextRun;
+}
+
+struct RestRestore {
+    string status;
+    RestBackup safetyBackup; // Stand vor der Wiederherstellung
+}
+
 struct RestMergeStatus {
     bool running;
     long completed;
@@ -35,7 +49,7 @@ struct RestMergeStatus {
 
 struct RestColumnDef {
     string name;
-    string type; // INTEGER, DECIMAL oder VARCHAR
+    string type; // SQL- oder EDM-Name, siehe typeSpecs
 }
 
 struct RestColumnStats {
@@ -68,6 +82,14 @@ struct RestRowPage {
     long limit, offset;
 }
 
+RestBackup toRest(BackupInfo b) {
+    return RestBackup(b.name, b.label, b.created, b.size, b.tables, b.rows, b.readable, b.kind);
+}
+
+RestBackupSchedule toRest(BackupSchedule s) {
+    return RestBackupSchedule(s.enabled, s.intervalHours, s.keepScheduled, s.keepSafety, s.lastRun, s.lastError, s.nextRun);
+}
+
 RestUser toRest(UserInfo u) {
     return RestUser(u.name, roleName(u.role), u.active);
 }
@@ -79,6 +101,10 @@ Json toRestJson(Value v) {
         return Json(*d);
     if (auto s = v.peek!string)
         return Json(*s);
+    if (auto b = v.peek!bool)
+        return Json(*b);
+    if (auto e = v.peek!Exact)
+        return Json(e.text); // als Text, weil eine JSON-Zahl hier ein double würde
     return Json(null);
 }
 

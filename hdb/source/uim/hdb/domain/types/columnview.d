@@ -9,10 +9,14 @@ import std.range : assumeSorted;
 
 /// Momentaufnahme einer Spalte: erlaubt Lesen einzelner Werte, ohne die Spalte selbst anzufassen.
 struct ColumnView {
-    /* private */ Value[] mainDict;
-    /* private */ PackedVector mainCodes;
-    /* private */ Value[] deltaDict;
-    /* private */ uint[] deltaCodes;
+    /* private */
+    Value[] mainDict;
+    /* private */
+    PackedVector mainCodes;
+    /* private */
+    Value[] deltaDict;
+    /* private */
+    uint[] deltaCodes;
 
     size_t length() const {
         return mainCodes.length + deltaCodes.length;
@@ -22,6 +26,14 @@ struct ColumnView {
         return row < mainCodes.length
             ? mainDict[mainCodes[row]] : deltaDict[deltaCodes[row - mainCodes.length]];
     }
+
+    // Json toJson() const {
+    //     return Json.emptyObject
+    //         .set("mainDict", mainDict.map!(v => v.toJson).array)
+    //         .set("mainCodes", mainCodes)
+    //         .set("delta", deltaDict.map!(v => v.toJson).array)
+    //         .set("deltaCodes", deltaCodes);
+    // }
 }
 ///
 unittest {

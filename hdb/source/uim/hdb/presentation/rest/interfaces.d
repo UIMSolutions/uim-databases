@@ -43,7 +43,7 @@ interface ITableRestApi {
     @method(HTTPMethod.GET) @path("/tables")
     string[] list();
 
-    /// Legt eine Tabelle an; type ist INTEGER, DECIMAL oder VARCHAR, storage MEMORY (Standard), FILE oder JSON.
+    /// Legt eine Tabelle an; type ist ein SQL- oder EDM-Name wie INTEGER oder Edm.Int64, storage MEMORY (Standard), FILE oder JSON.
     @method(HTTPMethod.POST) @path("/tables")
     @bodyParam("name", "name") @bodyParam("columns", "columns") @bodyParam("storage", "storage")
     RestTableInfo create(string name, RestColumnDef[] columns, string storage = "");
@@ -108,5 +108,34 @@ interface IUserRestApi {
     RestStatus resetPassword(string _name, string password);
 
     @method(HTTPMethod.DELETE) @path("/users/:name")
+    RestStatus remove(string _name);
+}
+
+/// Sichern und Wiederherstellen, nur für die Rolle admin. Dazu kommen außerhalb dieser Schnittstelle, weil es rohe
+/// Dateien sind: GET /api/v1/backups/:name/content und POST /api/v1/backups/import.
+@path("/api/v1")
+interface IBackupRestApi {
+@safe:
+    @method(HTTPMethod.GET) @path("/backups")
+    RestBackup[] list();
+
+    @method(HTTPMethod.POST) @path("/backups")
+    @bodyParam("label", "label")
+    RestBackup create(string label = "");
+
+    @method(HTTPMethod.GET) @path("/backups/schedule")
+    RestBackupSchedule schedule();
+
+    /// Weniger aufbewahren wirkt sofort: überzählige geplante und Sicherheitskopien werden gelöscht.
+    @method(HTTPMethod.PUT) @path("/backups/schedule")
+    @bodyParam("enabled", "enabled") @bodyParam("intervalHours", "intervalHours")
+    @bodyParam("keepScheduled", "keepScheduled") @bodyParam("keepSafety", "keepSafety")
+    RestBackupSchedule updateSchedule(bool enabled, int intervalHours, int keepScheduled, int keepSafety);
+
+    /// Ersetzt alle Tabellen; vorher wird automatisch eine Sicherheitskopie angelegt.
+    @method(HTTPMethod.POST) @path("/backups/:name/restore")
+    RestRestore restore(string _name);
+
+    @method(HTTPMethod.DELETE) @path("/backups/:name")
     RestStatus remove(string _name);
 }

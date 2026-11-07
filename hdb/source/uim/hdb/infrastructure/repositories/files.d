@@ -1,9 +1,6 @@
 module uim.hdb.infrastructure.repositories.files;
 
-import uim.hdb.domain.table;
-import uim.hdb.domain.types.tablestorage : TableStorage;
-import uim.hdb.domain.value;
-import uim.hdb.infrastructure.repositories.snapshot;
+import uim.hdb;
 import std.algorithm : findSplit, map;
 import std.array : appender, array, join, replace, split;
 import std.conv : to;
@@ -73,14 +70,7 @@ private string field(Value v) {
 private Value parseField(ColumnType type, string text) {
     if (text == `\N`)
         return nullValue;
-    final switch (type) {
-    case ColumnType.integer:
-        return Value(text.to!long);
-    case ColumnType.decimal:
-        return Value(text.to!double);
-    case ColumnType.text:
-        return Value(unescape(text));
-    }
+    return valueFromInput(type, unescape(text));
 }
 
 private string unescape(string s) {

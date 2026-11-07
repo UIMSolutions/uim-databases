@@ -1,9 +1,6 @@
-module uim.hdb.application.sql_service;
+module uim.hdb.application.services.sql;
 
-import uim.hdb.application.ports;
 import uim.hdb;
-import uim.hdb.domain.table;
-import uim.hdb.domain.value;
 import std.algorithm : all, canFind, map, sort, startsWith, endsWith, SwapStrategy;
 import std.ascii : isDigit;
 import std.array : array, join, split;
@@ -17,7 +14,7 @@ import core.thread : Thread;
 import core.time : MonoTime, msecs, seconds;
 
 /// Mini-SQL: CREATE TABLE, INSERT, SELECT (Spalten, *, COUNT(*), SUM(x)) mit einfachem WHERE.
-final class SqlService : ISqlUseCase {
+final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private ITableRepository repo;
     private IDurableTableRepository durable; // null, wenn das Repository nur im Speicher arbeitet
     private IStatementLog log;
@@ -223,6 +220,62 @@ final class SqlService : ISqlUseCase {
         }
     }
 
+    /// Konsistenter Stand aller Tabellen: unter der Sperre und ohne offene Transaktion.
+    TableSnapshot[] snapshot() {
+        synchronized (this) {
+            requireIdle();
+            TableSnapshot[] result;
+            foreach (name; repo.list()) {
+                auto t = repo.get(name);
+                TableSnapshot s = TableSnapshot(t.name, t.storage, t.defs.dup);
+                foreach (r; t.liveRows()) {
+                    auto row = new Value[t.defs.length];
+                    foreach (c; 0 .. t.defs.length)
+                        row[c] = t.value(c, r);
+                    s.rows ~= row;
+                }
+                result ~= s;
+            }
+            return result;
+        }
+    }
+
+    void restore(TableSnapshot[] tables) {
+        // Erst alles aufbauen und prüfen: ein Fehler hier lässt die Datenbank unberührt.
+        // Der Name wird in File- und Json-Tabellen zum Dateinamen und kann aus einer hochgeladenen Datei stammen.
+        ColumnTable[] fresh;
+        bool[string] seen;
+        foreach (s; tables) {
+            enforce(!matchFirst(s.name, ctRegex!(`^\w+$`)).empty, "Ungültiger Tabellenname: " ~ s.name);
+            enforce((s.name.toLower in seen) is null, "Tabelle ist doppelt: " ~ s.name);
+            enforce(s.storage == TableStorage.memory || durable !is null, "Dieses Repository unterstützt nur MEMORY");
+            enforce(s.columns.length > 0, "Tabelle ohne Spalten: " ~ s.name);
+            seen[s.name.toLower] = true;
+            foreach (c; s.columns)
+                enforce(!matchFirst(c.name, ctRegex!(`^\w+$`)).empty, "Ungültiger Spaltenname: " ~ c.name);
+            auto t = new ColumnTable(s.name, s.columns.dup, s.storage);
+            foreach (row; s.rows)
+                t.insert(row);
+            fresh ~= t;
+        }
+
+        synchronized (this) {
+            requireIdle();
+            foreach (name; repo.list()) {
+                repo.remove(name);
+                if (durable !is null)
+                    durable.flush(name);
+            }
+            foreach (t; fresh) {
+                repo.save(t);
+                if (t.storage != TableStorage.memory)
+                    durable.flush(t.name);
+            }
+            checkpoint(); // das Log enthält danach genau die wiederhergestellten Speicher-Tabellen
+        }
+        mergeDeltaAsync();
+    }
+
     string[] listTables() {
         synchronized (this) {
             requireIdle();
@@ -382,7 +435,7 @@ final class SqlService : ISqlUseCase {
         foreach (part; splitList(m[2])) {
             auto p = part.strip.split();
             enforce(p.length == 2, "Ungültige Spaltendefinition: " ~ part);
-            defs ~= ColumnDef(p[0], parseType(p[1]));
+            defs ~= ColumnDef(p[0], columnTypeOf(p[1]));
         }
         repo.save(new ColumnTable(m[1], defs, storage));
         if (tx !is null)
@@ -825,7 +878,7 @@ final class SqlService : ISqlUseCase {
                 if (it.kind == AggKind.sum || it.kind == AggKind.avg)
                     sums[ii][g] += toDouble(v);
                 else if (it.kind == AggKind.min || it.kind == AggKind.max) {
-                    if (!has[ii][g] || (it.kind == AggKind.min ? v < best[ii][g] : v > best[ii][g])) {
+                    if (!has[ii][g] || (it.kind == AggKind.min ? valueLess(v, best[ii][g]) : valueLess(best[ii][g], v))) {
                         best[ii][g] = v;
                         has[ii][g] = true;
                     }
@@ -981,8 +1034,8 @@ final class SqlService : ISqlUseCase {
                     || (!isNull(lo) && compareValues(v, lo) < 0);
             };
         } else if (opU == "LIKE" || opU == "NOT LIKE") {
-            enforce(type == ColumnType.text, "LIKE gibt es nur für Textspalten");
-            auto pat = parseLiteral(type, args[0]);
+            enforce(isTextual(type), "LIKE gibt es nur für Textspalten");
+            auto pat = parseLiteral(ColumnType.text, args[0]); // ein Muster ist selbst kein gültiger Wert des Typs
             immutable negate = opU == "NOT LIKE";
             if (isNull(pat))
                 pred = (Value v) => false;
@@ -1003,17 +1056,6 @@ final class SqlService : ISqlUseCase {
         }
         return t.filterLive(t.columns[ci].scan(pred));
     }
-}
-
-private ColumnType parseType(string t) {
-    auto u = t.toUpper;
-    if (u == "INTEGER" || u == "INT" || u == "BIGINT")
-        return ColumnType.integer;
-    if (u == "DECIMAL" || u == "DOUBLE")
-        return ColumnType.decimal;
-    if (u.startsWith("VARCHAR") || u.startsWith("NVARCHAR") || u == "TEXT")
-        return ColumnType.text;
-    throw new Exception("Unbekannter Typ: " ~ t);
 }
 
 /// Ersetzt den Inhalt von 'Textliteralen' Byte für Byte, damit darin stehende Schlüsselwörter wie WHERE
@@ -1136,7 +1178,7 @@ private bool parseAgg(ColumnTable t, string item, out AggItem a) {
         break;
     }
     if (kind == AggKind.sum || kind == AggKind.avg)
-        enforce(t.defs[ci].type != ColumnType.text, fn ~ " nur für numerische Spalten");
+        enforce(isNumeric(t.defs[ci].type), fn ~ " nur für numerische Spalten");
     // DISTINCT ändert MIN/MAX nicht
     immutable effective = distinct && kind != AggKind.min && kind != AggKind.max;
     a = AggItem(kind, ci, fn ~ "(" ~ (effective ? "DISTINCT " : "") ~ t.defs[ci].name ~ ")", item, false, effective);
@@ -1827,7 +1869,7 @@ private struct Token {
     string text;
 }
 
-/// Zerlegt eine WHERE-Bedingung; Textliterale ('...' mit '' als Escape) bleiben unangetastet.
+/// Zerlegt eine WHERE-Bedingung; Textliterale ('...' mit '' als Escape) und Binärliterale (X'...') bleiben unangetastet.
 private Token[] tokenize(string s) {
     Token[] r;
     size_t i = 0;
@@ -1844,8 +1886,8 @@ private Token[] tokenize(string s) {
         } else if (c == ',') {
             r ~= Token(TokKind.comma, ",");
             ++i;
-        } else if (c == '\'') {
-            size_t j = i + 1;
+        } else if (c == '\'' || ((c == 'X' || c == 'x') && i + 1 < s.length && s[i + 1] == '\'')) {
+            size_t j = (c == '\'' ? i : i + 1) + 1;
             while (true) {
                 enforce(j < s.length, "Textliteral in WHERE nicht abgeschlossen");
                 if (s[j] == '\'') {
@@ -2635,4 +2677,104 @@ unittest {
     s.mergeDelta();
     auto w = s.execute("SELECT k, w FROM f ORDER BY k").rows;
     assert(w.length == 2 && w[0][1] == Value(5.0) && w[1][1] == Value(7.0));
+}
+
+unittest {
+    import std.exception : assertThrown;
+
+    auto s = new SqlService(new MemoryTableRepository);
+    s.execute("CREATE TABLE m (id INTEGER, b BLOB, g GEO, l LINK)");
+    s.execute("INSERT INTO m VALUES (1, X'00ff', 'point(13.4  52.5)', 'https://example.org/a?x=1,2')");
+    s.execute("INSERT INTO m VALUES (2, 'AB', 'LINESTRING(0 0, 1 1)', 'mailto:a@example.org')");
+    s.execute("INSERT INTO m VALUES (3, NULL, NULL, NULL)");
+
+    auto r = s.execute("SELECT b, g, l FROM m WHERE id = 1").rows;
+    assert(r[0][0] == Value("00FF") && r[0][1] == Value("POINT(13.4 52.5)"));
+    assert(r[0][2] == Value("https://example.org/a?x=1,2"));
+
+    // Vergleiche laufen über die kanonische Form, auch nach dem Merge ins Dictionary
+    foreach (round; 0 .. 2) {
+        assert(s.execute("SELECT id FROM m WHERE b = x'00FF'").rows == [[Value(1L)]]);
+        assert(s.execute("SELECT id FROM m WHERE b IN (X'ab', X'CD')").rows == [[Value(2L)]]);
+        assert(s.execute("SELECT id FROM m WHERE g = 'POINT( 13.4 52.5 )'").rows == [[Value(1L)]]);
+        assert(s.execute("SELECT id FROM m WHERE g LIKE 'LINE%'").rows == [[Value(2L)]]);
+        assert(s.execute("SELECT id FROM m WHERE l LIKE '%example.org/%'").rows == [[Value(1L)]]);
+        assert(s.execute("SELECT id FROM m WHERE l IS NULL").rows == [[Value(3L)]]);
+        s.mergeDelta();
+    }
+
+    s.execute("UPDATE m SET b = X'11', g = 'POINT(1 2)', l = 'http://h/?a=b' WHERE b = X'AB'");
+    assert(s.execute("SELECT b, g, l FROM m WHERE id = 2").rows
+            == [[Value("11"), Value("POINT(1 2)"), Value("http://h/?a=b")]]);
+    assert(s.execute("SELECT MIN(b), COUNT(g) FROM m").rows[0][0] == Value("00FF"));
+
+    assertThrown(s.execute("INSERT INTO m VALUES (4, X'0', NULL, NULL)"));
+    assertThrown(s.execute("INSERT INTO m VALUES (4, NULL, 'CIRCLE(1 2)', NULL)"));
+    assertThrown(s.execute("INSERT INTO m VALUES (4, NULL, NULL, 'javascript:alert(1)')"));
+    assertThrown(s.execute("UPDATE m SET l = 'data:text/html,x' WHERE id = 1"));
+    assertThrown(s.execute("SELECT SUM(b) FROM m"));
+    assertThrown(s.execute("SELECT AVG(g) FROM m"));
+
+    s.execute("CREATE TABLE a1 (g ST_GEOMETRY, l URL, n Edm.Int16)");
+    foreach (table; s.stats())
+        if (table.table == "a1") {
+            assert(table.columns[0].type == ColumnType.geo && table.columns[1].type == ColumnType.link);
+            assert(table.columns[2].type == ColumnType.int16);
+        }
+}
+
+unittest {
+    import std.exception : assertThrown;
+
+    auto s = new SqlService(new MemoryTableRepository);
+    s.execute("CREATE TABLE e (k TINYINT, f BOOLEAN, x NUMERIC, r REAL, d DATE, ts TIMESTAMP, tm TIME, du DURATION, u GUID)");
+    s.execute("INSERT INTO e VALUES (1, TRUE, 10.5, 0.1, '2026-11-06', '2026-11-06T12:00:00Z', '08:00', 'PT36H', '01234567-89ab-cdef-0123-456789abcdef')");
+    s.execute("INSERT INTO e VALUES (2, FALSE, 9.25, 0.2, '2026-11-07', '2026-11-06T12:00:00.5+01:00', '09:30', 'PT2H', 'ffffffff-89ab-cdef-0123-456789abcdef')");
+    s.execute("INSERT INTO e VALUES (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)");
+
+    long[] ids(string where) {
+        long[] r;
+        foreach (row; s.execute("SELECT k FROM e WHERE " ~ where ~ " ORDER BY k").rows)
+            r ~= row[0].get!long;
+        return r;
+    }
+
+    string[] order(string column) {
+        string[] r;
+        foreach (row; s.execute("SELECT " ~ column ~ " FROM e WHERE k < 3 ORDER BY " ~ column).rows)
+            r ~= valueText(row[0]);
+        return r;
+    }
+
+    foreach (round; 0 .. 2) { // Delta, danach das sortierte Dictionary nach dem Merge
+        assert(ids("f = TRUE") == [1] && ids("f = false") == [2] && ids("f IS NULL") == [3]);
+        assert(ids("x > 9.3") == [1] && ids("x = 10.50") == [1] && ids("x BETWEEN 9 AND 10") == [2]);
+        assert(ids("d >= '2026-11-07'") == [2]);
+        assert(ids("ts < '2026-11-06T12:00:00Z'") == [2]); // 12:00:00.5+01:00 liegt früher
+        assert(ids("du > 'PT3H'") == [1] && ids("du = 'P1DT12H'") == [1]);
+        assert(ids("u = '01234567-89AB-CDEF-0123-456789ABCDEF'") == [1]);
+        assert(ids("d LIKE '2026-11-0%'") == [1, 2]);
+        assert(order("x") == ["9.25", "10.5"]); // als Text stünde 10.5 vorn
+        assert(order("du") == ["PT2H", "P1DT12H"]); // als Text ebenfalls verkehrt
+        s.mergeDelta();
+    }
+
+    auto sums = s.execute("SELECT SUM(x), AVG(r), MIN(x), MAX(du), MIN(d), COUNT(f) FROM e").rows[0];
+    assert(sums[0] == Value(19.75) && valueText(sums[2]) == "9.25" && valueText(sums[3]) == "P1DT12H");
+    assert(sums[4] == Value("2026-11-06") && sums[5] == Value(2L));
+    assert(s.execute("SELECT f, COUNT(*) FROM e GROUP BY f").rows.length == 3);
+    assert(s.execute("SELECT DISTINCT x FROM e WHERE k < 3").rows.length == 2);
+
+    s.execute("UPDATE e SET f = false, x = 1e2, du = 'P2D' WHERE k = 1");
+    assert(ids("x = 100") == [1] && ids("f = false") == [1, 2] && ids("du = 'PT48H'") == [1]);
+
+    assertThrown(s.execute("INSERT INTO e VALUES (256, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)"));
+    assertThrown(s.execute("INSERT INTO e VALUES (4, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL)"));
+    assertThrown(s.execute("INSERT INTO e VALUES (4, NULL, NULL, NULL, '2026-02-30', NULL, NULL, NULL, NULL)"));
+    assertThrown(s.execute("SELECT SUM(du) FROM e"));
+    assertThrown(s.execute("SELECT SUM(f) FROM e"));
+    assertThrown(s.execute("SELECT SUM(d) FROM e"));
+    assertThrown(s.execute("SELECT k FROM e WHERE du LIKE 'P%'"));
+    assertThrown(s.execute("SELECT k FROM e WHERE x LIKE '1%'"));
+    assertThrown(s.execute("CREATE TABLE z (a RAW)"));
 }

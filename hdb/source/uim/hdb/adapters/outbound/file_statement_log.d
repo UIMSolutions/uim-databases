@@ -1,43 +1,36 @@
 module uim.hdb.adapters.outbound.file_statement_log;
 
-import uim.hdb.application.ports;
-import std.file : exists, mkdirRecurse, rename;
-import std.path : dirName;
-import std.stdio : File;
-import std.string : replace;
+import uim.hdb;
 
-/// Ausgehender Adapter: zeilenweises Anweisungsprotokoll in einer Datei.
-final class FileStatementLog : IStatementLog
-{
+/// Outgoing adapter: line-by-line instruction log in a file.
+final class FileStatementLog : IStatementLog {
     private string path;
 
-    this(string path)
-    {
+    this(string path) {
         this.path = path;
         auto dir = dirName(path);
         if (dir.length && !exists(dir))
             mkdirRecurse(dir);
     }
 
-    void append(string statement)
-    {
+    void append(string statement) {
         auto f = File(path, "a");
-        scope (exit) f.close();
+        scope (exit)
+            f.close();
         f.writeln(escape(statement));
         f.flush();
     }
 
-    void appendAll(string[] statements)
-    {
+    void appendAll(string[] statements) {
         auto f = File(path, "a");
-        scope (exit) f.close();
+        scope (exit)
+            f.close();
         foreach (s; statements)
             f.writeln(escape(s));
         f.flush();
     }
 
-    string[] readAll()
-    {
+    string[] readAll() {
         string[] result;
         if (!exists(path))
             return result;
@@ -47,8 +40,7 @@ final class FileStatementLog : IStatementLog
         return result;
     }
 
-    void replaceAll(string[] statements)
-    {
+    void replaceAll(string[] statements) {
         auto tmp = path ~ ".tmp";
         {
             auto f = File(tmp, "w");
@@ -60,18 +52,14 @@ final class FileStatementLog : IStatementLog
     }
 }
 
-private string escape(string s)
-{
+private string escape(string s) {
     return s.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r");
 }
 
-private string unescape(string s)
-{
+private string unescape(string s) {
     string r;
-    for (size_t i = 0; i < s.length; ++i)
-    {
-        if (s[i] == '\\' && i + 1 < s.length)
-        {
+    for (size_t i = 0; i < s.length; ++i) {
+        if (s[i] == '\\' && i + 1 < s.length) {
             ++i;
             if (s[i] == 'n')
                 r ~= '\n';
@@ -79,8 +67,7 @@ private string unescape(string s)
                 r ~= '\r';
             else
                 r ~= s[i];
-        }
-        else
+        } else
             r ~= s[i];
     }
     return r;

@@ -1,8 +1,6 @@
 module uim.hdb.presentation.odata.filter;
 
-import uim.hdb.domain.types.tablestats : ColumnStats;
-import uim.hdb.domain.value;
-import uim.hdb.presentation.odata.errors;
+import uim.hdb;
 import std.algorithm : all, canFind;
 import std.array : array, join, replace, split;
 import std.ascii : isDigit;
@@ -11,12 +9,12 @@ import std.regex : ctRegex, matchFirst;
 import std.string : indexOf, strip;
 import std.uni : isAlphaNum;
 
-/// Übersetzt OData-$filter in eine WHERE-Bedingung. Der Text wird nie durchgereicht: er wird in einen Baum
-/// geparst und neu erzeugt, Eigenschaften gegen das Schema und Literale gegen den Spaltentyp geprüft.
+/// Translates an OData-$filter into a WHERE clause. The text is never passed through as-is: it is parsed into a tree
+/// and regenerated, with properties checked against the schema and literals checked against the column type.
 ///
-/// Anders als SQL hat OData 4.0 hier zweiwertige Vergleiche: `a ne 1` ist für NULL wahr, `a gt 1` ist falsch und
-/// `not (a gt 1)` deshalb wieder wahr. Der Renderer ergänzt dafür `OR a IS NULL`; eine direkte Übersetzung würde
-/// diese Zeilen stillschweigend verlieren.
+/// Unlike SQL, OData 4.0 uses two-valued comparisons here: `a ne 1` is true for NULL, `a gt 1` is false, and
+/// `not (a gt 1)` is therefore true again. The renderer adds `OR a IS NULL` to account for this; a direct translation would
+/// silently omit these lines.
 string filterToWhere(string text, ColumnStats[] columns) {
     auto parser = Parser(tokenize(text), columns);
     auto node = parser.parseOr();
@@ -25,7 +23,7 @@ string filterToWhere(string text, ColumnStats[] columns) {
     return render(node, false);
 }
 
-/// Übersetzt $orderby in eine ORDER-BY-Liste.
+/// Translates $orderby into an ORDER-BY list.
 string orderByToSql(string text, ColumnStats[] columns) {
     string[] keys;
     foreach (raw; text.split(",")) {
@@ -49,6 +47,8 @@ private enum TokenKind {
     word,
     text,
     number,
+    bare, /// Literal ohne Anführungszeichen: true, 2026-11-06, 12:30:00, GUIDs
+    typed, /// Literal mit Präfix: duration'P1D', binary'AA', geometry'Point(1 2)'
     open,
     close,
     comma
@@ -57,6 +57,7 @@ private enum TokenKind {
 private struct Token {
     TokenKind kind;
     string text;
+    string prefix;
 }
 
 private Token[] tokenize(string s) {
@@ -171,7 +172,8 @@ private struct Parser {
             expect(TokenKind.close, ")");
             return node;
         }
-        if (tokens[pos].kind == TokenKind.word && pos + 1 < tokens.length && tokens[pos + 1].kind == TokenKind.open)
+        if (tokens[pos].kind == TokenKind.word && pos + 1 < tokens.length && tokens[pos + 1].kind == TokenKind
+            .open)
             return parseFunction();
 
         auto left = parseOperand();
@@ -191,12 +193,18 @@ private struct Parser {
         final switch (t.kind) {
         case TokenKind.text:
         case TokenKind.number:
+        case TokenKind.bare:
+        case TokenKind.typed:
             return Operand(false, ColumnStats.init, t, false);
         case TokenKind.word:
             if (t.text == "null")
                 return Operand(false, ColumnStats.init, t, true);
-            if (t.text == "true" || t.text == "false")
-                throw badRequest("The database has no boolean columns");
+            if (literalPrefixes.canFind(t.text) && pos < tokens.length && tokens[pos].kind == TokenKind
+                .text)
+                return Operand(false, ColumnStats.init, Token(TokenKind.typed, tokens[pos++].text, t
+                        .text), false);
+            if (isBareLiteral(t.text))
+                return Operand(false, ColumnStats.init, Token(TokenKind.bare, t.text), false);
             return Operand(true, findColumn(columns, t.text), t, false);
         case TokenKind.open:
         case TokenKind.close:
@@ -209,7 +217,10 @@ private struct Parser {
         if (left.isColumn == right.isColumn)
             throw notImplemented("$filter compares a property with a literal");
         if (!left.isColumn) { // 5 lt a  ==  a gt 5
-            auto swapped = ["lt": "gt", "gt": "lt", "le": "ge", "ge": "le", "eq": "eq", "ne": "ne"];
+            auto swapped = [
+                "lt": "gt", "gt": "lt", "le": "ge", "ge": "le", "eq": "eq",
+                "ne": "ne"
+            ];
             return compare(right, swapped[op], left);
         }
         auto node = new Node;
@@ -233,7 +244,7 @@ private struct Parser {
         if (pos >= tokens.length || tokens[pos].kind != TokenKind.word)
             throw badRequest(name ~ " expects a property");
         auto column = findColumn(columns, tokens[pos++].text);
-        if (column.type != ColumnType.text)
+        if (edmType(column.type) != "Edm.String")
             throw badRequest(name ~ " needs a text property: " ~ column.name);
         expect(TokenKind.comma, ",");
         if (pos >= tokens.length || tokens[pos].kind != TokenKind.text)
@@ -244,8 +255,7 @@ private struct Parser {
         auto node = new Node;
         node.kind = NodeKind.like;
         node.column = column.name;
-        node.literal = name == "contains" ? "%" ~ needle ~ "%"
-            : name == "startswith" ? needle ~ "%" : "%" ~ needle;
+        node.literal = name == "contains" ? "%" ~ needle ~ "%" : name == "startswith" ? needle ~ "%" : "%" ~ needle;
         return node;
     }
 
@@ -263,18 +273,58 @@ private Node group(NodeKind kind, Node[] kids) {
     return node;
 }
 
+private enum literalPrefixes = ["duration", "binary", "geometry", "geography"];
+
+/// Bezeichner beginnen nie mit einer Ziffer und enthalten kein -, Spalten sind also nicht zu verwechseln.
+private bool isBareLiteral(string word) {
+    return word == "true" || word == "false" || isDigit(word[0]) || word.indexOf('-') >= 0;
+}
+
+/// Prüft die Form eines Literals gegen den Spaltentyp; der Text selbst ist noch ungeprüft.
 private string typedLiteral(ColumnStats column, Token token) {
-    if (column.type == ColumnType.text) {
-        if (token.kind != TokenKind.text)
-            throw badRequest("Property " ~ column.name ~ " expects a string");
-        return toSqlLiteral(Value(token.text));
+    void expect(TokenKind kind, string what, string prefix = "") {
+        if (token.kind != kind || token.prefix != prefix)
+            throw badRequest("Property " ~ column.name ~ " expects " ~ what);
     }
-    if (token.kind != TokenKind.number)
-        throw badRequest("Property " ~ column.name ~ " expects a number");
-    if (column.type == ColumnType.integer && !token.text.all!(c => isDigit(c) || c == '-'))
-        throw badRequest("Property " ~ column.name ~ " expects an integer");
-    try
-        return toSqlLiteral(valueFromInput(column.type, token.text));
+
+    auto text = token.text;
+    try {
+        switch (column.type) {
+        case ColumnType.text:
+        case ColumnType.link:
+            expect(TokenKind.text, "a string");
+            break;
+        case ColumnType.blob:
+            expect(TokenKind.typed, "binary'...'", "binary");
+            text = base64UrlToHex(text);
+            break;
+        case ColumnType.duration:
+            expect(TokenKind.typed, "duration'...'", "duration");
+            break;
+        case ColumnType.geo:
+        case ColumnType.geography:
+            immutable prefix = column.type == ColumnType.geo ? "geometry" : "geography";
+            expect(TokenKind.typed, prefix ~ "'...'", prefix);
+            auto srid = matchFirst(text, ctRegex!(`^SRID=\d+;`, "i"));
+            if (!srid.empty)
+                text = srid.post;
+            break;
+        case ColumnType.boolean:
+        case ColumnType.date:
+        case ColumnType.dateTime:
+        case ColumnType.time:
+        case ColumnType.guid:
+            expect(TokenKind.bare, "an unquoted " ~ edmType(column.type));
+            break;
+        default:
+            expect(TokenKind.number, "a number");
+            if (isIntegerType(column.type) && !text.all!(c => isDigit(c) || c == '-'))
+                throw badRequest("Property " ~ column.name ~ " expects an integer");
+            break;
+        }
+        return toSqlLiteral(valueFromInput(column.type, text));
+    } catch (ODataError e)
+        throw e;
     catch (Exception e)
         throw badRequest(e.msg);
 }
@@ -308,16 +358,29 @@ private string renderCompare(Node node, bool negated) {
     auto c = node.column;
     if (node.literal == "NULL")
         return c ~ ((node.op == "eq") != negated ? " IS NULL" : " IS NOT NULL");
-    auto op = negated ? ["eq": "ne", "ne": "eq", "gt": "le", "ge": "lt", "lt": "ge", "le": "gt"][node.op] : node.op;
-    immutable sqlOp = ["eq": "=", "ne": "!=", "gt": ">", "ge": ">=", "lt": "<", "le": "<="][op];
+    auto op = negated ? [
+        "eq": "ne",
+        "ne": "eq",
+        "gt": "le",
+        "ge": "lt",
+        "lt": "ge",
+        "le": "gt"
+    ][node.op] : node.op;
+    immutable sqlOp = [
+        "eq": "=",
+        "ne": "!=",
+        "gt": ">",
+        "ge": ">=",
+        "lt": "<",
+        "le": "<="
+    ][op];
     auto comparison = c ~ " " ~ sqlOp ~ " " ~ node.literal;
     immutable matchesNull = op == "ne" || (negated && node.op != "ne");
     return matchesNull ? "(" ~ comparison ~ " OR " ~ c ~ " IS NULL)" : comparison;
 }
 
 unittest {
-    import uim.hdb.application.sql_service : SqlService;
-    import uim.hdb.infrastructure.repositories.memory : MemoryTableRepository;
+    import uim.hdb;
     import std.algorithm : map, sort;
     import std.exception : collectException;
 
@@ -333,7 +396,8 @@ unittest {
     auto columns = sql.stats()[0].columns;
 
     long[] ids(string filter) {
-        auto rows = sql.execute("SELECT id FROM t WHERE " ~ filterToWhere(filter, columns) ~ " ORDER BY id").rows;
+        auto rows = sql.execute("SELECT id FROM t WHERE " ~ filterToWhere(filter, columns) ~ " ORDER BY id")
+            .rows;
         return rows.map!(r => r[0].get!long).array;
     }
 
@@ -341,7 +405,6 @@ unittest {
         auto e = collectException!ODataError(filterToWhere(filter, columns));
         return e is null ? 0 : e.status;
     }
-
 
     // Vergleiche, auch mit vertauschten Operanden
     assert(ids("id eq 2") == [2]);
@@ -404,4 +467,52 @@ unittest {
     assert(collectException!ODataError(orderByToSql("nope", columns)).status == 400);
     assert(collectException!ODataError(orderByToSql("n up", columns)).status == 400);
     assert(collectException!ODataError(orderByToSql("n; DROP", columns)).status == 400);
+}
+
+unittest {
+    import uim.hdb;
+    import std.exception : collectException;
+
+    auto sql = new SqlService(new MemoryTableRepository);
+    sql.execute(
+        "CREATE TABLE t (id INT32, f BOOLEAN, x NUMERIC, r REAL, d DATE, ts TIMESTAMP, tm TIME, du DURATION, u GUID,
+        b BLOB, g GEO, w GEOGRAPHY, l LINK)".replace("\n", " "));
+    sql.execute(
+        "INSERT INTO t VALUES (1, true, 1.50, 0.5, '2026-11-06', '2026-11-06T12:00:00+01:00', '12:30:00', 'PT36H',
+        '01234567-89AB-CDEF-0123-456789ABCDEF', X'FBFF', 'POINT(1 2)', 'POINT(13.4 52.5)', 'https://example.org/x')"
+            .replace("\n", " "));
+    auto columns = sql.stats()[0].columns;
+
+    bool hit(string filter) {
+        return sql.execute("SELECT id FROM t WHERE " ~ filterToWhere(filter, columns)).rows.length == 1;
+    }
+
+    foreach (filter; [
+            "f eq true", "not (f eq false)", "x eq 1.5",
+            "x gt 1.49999999999999999999", "r eq 0.5", "d eq 2026-11-06",
+            "d lt 2026-11-07", "ts eq 2026-11-06T11:00:00Z",
+            "ts lt 2026-11-06T12:00:00Z", "tm ge 12:30:00",
+            "du eq duration'P1DT12H'", "du gt duration'PT1H'",
+            "u eq 01234567-89ab-cdef-0123-456789abcdef",
+            "b eq binary'-_8'", "g eq geometry'SRID=0;Point(1 2)'",
+            "w eq geography'SRID=4326;Point(13.4 52.5)'",
+            "l eq 'https://example.org/x'", "contains(l,'example')",
+            "2026-11-05 lt d"
+        ])
+        assert(hit(filter), filter);
+    assert(!hit("f eq false") && !hit("d gt 2026-11-06"));
+
+    foreach (bad; [
+            "f eq 'true'", "f eq 1", "x eq 'a'", "d eq '2026-11-06'",
+            "d eq 2026-13-01", "ts eq 2026-11-06",
+            "du eq 'P1D'", "du eq duration'P1Y'", "u eq 'x'", "u eq 1-2",
+            "b eq 'FBFF'", "b eq binary'a+'",
+            "g eq 'POINT(1 2)'", "g eq geography'Point(1 2)'",
+            "w eq geography'Point(200 0)'",
+            "l eq 'javascript:alert(1)'", "contains(b,'FB')",
+            "contains(g,'POINT')", "contains(d,'2026')"
+        ]) {
+        auto e = collectException!ODataError(filterToWhere(bad, columns));
+        assert(e !is null && e.status == 400, bad);
+    }
 }
