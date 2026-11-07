@@ -1,0 +1,50 @@
+<mvc:View controllerName="hdb.client.controller.Backups" height="100%" xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f">
+	<f:DynamicPage toggleHeaderOnTitleClick="false" showFooter="false">
+		<f:title>
+			<f:DynamicPageTitle>
+				<f:heading><Title text="{i18n>backups}"/></f:heading>
+				<f:actions>
+					<Button id="create" text="{i18n>createBackup}" type="Emphasized" press=".onCreate"/>
+					<Button id="scheduleButton" text="{i18n>schedule}" icon="sap-icon://date-time" press=".onSchedule"/>
+					<Button id="upload" text="{i18n>uploadBackup}" icon="sap-icon://upload" press=".onUpload"/>
+					<Button icon="sap-icon://refresh" tooltip="{i18n>refresh}" type="Transparent" press=".onRefresh"/>
+				</f:actions>
+				<f:navigationActions>
+					<Button icon="sap-icon://decline" tooltip="{i18n>close}" type="Transparent" press=".onClose"/>
+				</f:navigationActions>
+			</f:DynamicPageTitle>
+		</f:title>
+		<f:content>
+			<VBox>
+				<MessageStrip text="{i18n>backupHint}" type="Information" class="sapUiSmallMarginBottom"/>
+				<MessageStrip id="scheduleStatus" text="{view>/scheduleText}" type="Information" class="sapUiSmallMarginBottom"/>
+				<MessageStrip text="{view>/scheduleError}" type="Warning" visible="{= !!${view>/scheduleError} }" class="sapUiSmallMarginBottom"/>
+				<MessageStrip id="error" type="Error" visible="false" showCloseButton="true" class="sapUiSmallMarginBottom"/>
+				<Table id="table" items="{view>/items}" noDataText="{i18n>noBackups}" busy="{view>/busy}" sticky="ColumnHeaders">
+					<columns>
+						<Column><Text text="{i18n>backupCreated}"/></Column>
+						<Column minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>backupType}"/></Column>
+						<Column minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>backupLabelColumn}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>backupTables}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>backupRows}"/></Column>
+						<Column hAlign="End"><Text text="{i18n>backupSize}"/></Column>
+						<Column hAlign="End" width="21rem"><Text text=""/></Column>
+					</columns>
+					<ColumnListItem>
+						<Text text="{= ${view>readable} ? ${view>created} : ${view>name} }" wrapping="false"/>
+						<Text text="{path: 'view>kind', formatter: '.formatKind'}"/>
+						<ObjectStatus text="{= ${view>readable} ? ${view>label} : ${i18n>unreadable} }" state="{= ${view>readable} ? 'None' : 'Error' }"/>
+						<Text text="{view>tables}"/>
+						<Text text="{view>rows}"/>
+						<Text text="{path: 'view>size', formatter: '.formatSize'}"/>
+						<HBox justifyContent="End">
+							<Button text="{i18n>download}" type="Transparent" press=".onDownload"/>
+							<Button text="{i18n>restore}" type="Transparent" enabled="{view>readable}" press=".onRestore"/>
+							<Button text="{i18n>delete}" type="Transparent" press=".onDelete"/>
+						</HBox>
+					</ColumnListItem>
+				</Table>
+			</VBox>
+		</f:content>
+	</f:DynamicPage>
+</mvc:View>

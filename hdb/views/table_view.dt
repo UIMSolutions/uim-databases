@@ -53,10 +53,13 @@ block content
         tbody
           - foreach (row; view.rows)
             tr(data-values=row.match)
-              - foreach (c; row.cells)
+              - foreach (i, c; row.cells)
                 - if (c.isNull)
                   td
                     span.badge.badge-ghost.badge-xs NULL
+                - else if (view.columns[i].type == "LINK")
+                  td.font-mono.max-w-xs.truncate(title=c.text)
+                    a.link(href=c.text, target="_blank", rel="noopener noreferrer") #{c.text}
                 - else
                   td.font-mono.max-w-xs.truncate(title=c.text) #{c.text}
               - if (page.canWrite)
@@ -120,9 +123,9 @@ block content
                 span.font-mono #{c.name}
                 span.opacity-60  #{c.type}
               div.flex.items-center.gap-3
-                - if (c.type == "VARCHAR")
+                - if (c.inputType == "text")
                   input.input.grow.min-w-0(id="row-v#{i}", type="text", name="v#{i}", data-field="#{i}", autocomplete="off")
-                - else if (c.type == "INTEGER")
+                - else if (c.inputType == "integer")
                   input.input.grow.min-w-0(id="row-v#{i}", type="number", step="1", name="v#{i}", data-field="#{i}", autocomplete="off")
                 - else
                   input.input.grow.min-w-0(id="row-v#{i}", type="number", step="any", name="v#{i}", data-field="#{i}", autocomplete="off")

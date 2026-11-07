@@ -1,0 +1,29 @@
+<mvc:View controllerName="hdb.client.controller.Help" height="100%" xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f">
+	<f:DynamicPage toggleHeaderOnTitleClick="false" showFooter="false">
+		<f:title>
+			<f:DynamicPageTitle>
+				<f:heading><Title text="{i18n>help}"/></f:heading>
+				<f:navigationActions>
+					<Button icon="sap-icon://decline" tooltip="{i18n>close}" type="Transparent" press=".onClose"/>
+				</f:navigationActions>
+			</f:DynamicPageTitle>
+		</f:title>
+		<f:content>
+			<VBox>
+				<Title text="{i18n>helpStartTitle}" titleStyle="H4" class="sapUiSmallMarginTop sapUiTinyMarginBottom"/>
+				<Text text="{i18n>helpStartText}" class="sapUiSmallMarginBottom"/>
+				<Title text="{i18n>helpRowsTitle}" titleStyle="H4" class="sapUiSmallMarginTop sapUiTinyMarginBottom"/>
+				<Text text="{i18n>helpRowsText}" class="sapUiSmallMarginBottom"/>
+				<Title text="{i18n>helpRolesTitle}" titleStyle="H4" class="sapUiSmallMarginTop sapUiTinyMarginBottom"/>
+				<Text text="{i18n>helpRolesText}" class="sapUiSmallMarginBottom"/>
+				<Title text="{i18n>helpBackupsTitle}" titleStyle="H4" class="sapUiSmallMarginTop sapUiTinyMarginBottom"/>
+				<Text text="{i18n>helpBackupsText}" class="sapUiSmallMarginBottom"/>
+				<Title text="{i18n>helpStatsTitle}" titleStyle="H4" class="sapUiSmallMarginTop sapUiTinyMarginBottom"/>
+				<Text text="{i18n>helpStatsText}" class="sapUiSmallMarginBottom"/>
+				<Title text="{i18n>helpSessionTitle}" titleStyle="H4" class="sapUiSmallMarginTop sapUiTinyMarginBottom"/>
+				<Text text="{i18n>helpSessionText}" class="sapUiSmallMarginBottom"/>
+				<Link text="{i18n>helpAdminLink}" href="/admin/help" class="sapUiSmallMarginTop"/>
+			</VBox>
+		</f:content>
+	</f:DynamicPage>
+</mvc:View>

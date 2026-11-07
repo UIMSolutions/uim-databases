@@ -1,0 +1,74 @@
+extends layout
+
+block content
+  div.stats.stats-vertical.bg-base-100.shadow.w-full.mb-6(class="lg:stats-horizontal")
+    div.stat
+      div.stat-title Tables
+      div.stat-value #{view.tables.length}
+      div.stat-desc #{view.totalColumns} columns
+    div.stat
+      div.stat-title Live rows
+      div.stat-value #{view.overview.totalRows}
+    div.stat
+      div.stat-title Rows in delta
+      div.stat-value #{view.overview.totalDelta}
+      div.stat-desc Not yet merged into main
+    div.stat
+      div.stat-title Deleted rows
+      div.stat-value #{view.overview.totalDeleted}
+      div.stat-desc Removed at the next merge
+    div.stat
+      div.stat-title Main store codes
+      div.stat-value #{view.overview.totalSize}
+      div.stat-desc Bit-packed, without dictionaries
+
+  div.card.bg-base-100.shadow.mb-6
+    div.card-body
+      div.flex.flex-wrap.items-center.gap-x-6.gap-y-2
+        h2.card-title Delta merge
+        - if (view.overview.merge.running)
+          span.badge.badge-info
+            i(data-lucide="loader", class="w-3 h-3")
+            | Running
+        - else
+          span.badge.badge-ghost Idle
+        span.text-sm.opacity-70 Completed in this session: #{view.overview.merge.completed}
+        a.link.link-hover.text-sm(href="/admin/help#statistics") What do these numbers mean?
+      - if (view.overview.merge.lastError.length)
+        p.text-sm.text-error Last error: #{view.overview.merge.lastError}
+
+  - foreach (t; view.tables)
+    div.card.bg-base-100.shadow.mb-6.min-w-0
+      div.card-body
+        div.flex.flex-wrap.items-center.gap-x-4.gap-y-1
+          h2.card-title
+            a.link.link-hover.font-mono(href="/admin/tables/#{t.summary.name}") #{t.summary.name}
+          span.badge.badge-ghost.badge-sm #{t.summary.storage}
+          span.text-sm.opacity-70 #{t.summary.rows} live, #{t.summary.deltaRows} in delta, #{t.summary.deletedRows} deleted, #{t.summary.codeSize} codes
+        div.overflow-x-auto
+          table.table.table-sm
+            thead
+              tr
+                th Column
+                th Type
+                th.text-right Main rows
+                th.text-right Delta rows
+                th.text-right Main distinct
+                th.text-right Delta distinct
+                th.text-right Bits per value
+                th.text-right Code size
+            tbody
+              - foreach (c; t.columns)
+                tr
+                  td.font-mono #{c.name}
+                  td #{c.type}
+                  td.text-right #{c.stats.mainRows}
+                  td.text-right #{c.stats.deltaRows}
+                  td.text-right #{c.stats.mainDistinct}
+                  td.text-right #{c.stats.deltaDistinct}
+                  td.text-right #{c.stats.mainBits}
+                  td.text-right #{c.codeSize}
+  - if (view.tables.length == 0 && page.err.length == 0)
+    div.card.bg-base-100.shadow
+      div.card-body
+        p.opacity-70 No tables yet, so there is nothing to measure.

@@ -1,11 +1,14 @@
 sap.ui.define([
+	"sap/base/i18n/Localization",
 	"sap/ui/core/UIComponent",
 	"sap/ui/model/json/JSONModel",
 	"sap/ui/model/odata/v4/ODataModel"
-], function (UIComponent, JSONModel, ODataModel) {
+], function (Localization, UIComponent, JSONModel, ODataModel) {
 	"use strict";
 
 	const TOKEN_KEY = "hdb.token";
+	const LANGUAGE_KEY = "hdb.language";
+	const LANGUAGES = [{ key: "en", name: "English" }, { key: "de", name: "Deutsch" }];
 
 	return UIComponent.extend("hdb.client.Component", {
 		metadata: {
@@ -16,11 +19,48 @@ sap.ui.define([
 		init: function () {
 			UIComponent.prototype.init.apply(this, arguments);
 			this.setModel(new JSONModel({
-				authenticated: false, busy: true, user: "", role: "", canWrite: false,
-				layout: "OneColumn", sets: [], loginError: ""
+				authenticated: false, busy: true, user: "", role: "", canWrite: false, isAdmin: false,
+				layout: "OneColumn", navKey: "home", sets: [], loginError: ""
 			}), "app");
-			this.getRouter().initialize();
+			this._viewsReady = new Promise(function (resolve) {
+				this.viewsLoaded = resolve;
+			}.bind(this));
 			this._restoreSession();
+		},
+
+		getLanguages: function () {
+			return LANGUAGES;
+		},
+
+		/** Sprachen ohne Übersetzung fallen auf die Grundtexte zurück, und die sind Englisch. */
+		getLanguage: function () {
+			const current = Localization.getLanguage().split(/[-_]/)[0];
+			return LANGUAGES.some(function (language) { return language.key === current; }) ? current : "en";
+		},
+
+		/**
+		 * index.html liest die Wahl vor dem Start von UI5. Neu laden, weil im Code gebaute Texte und die Texte der
+		 * UI5-Controls sonst in der alten Sprache blieben.
+		 * Token und Hash überstehen das. Ohne Speicher ginge beides verloren: dann nur die Modelle umstellen.
+		 */
+		setLanguage: function (key) {
+			try {
+				window.localStorage.setItem(LANGUAGE_KEY, key);
+			} catch (e) {
+				Localization.setLanguage(key);
+				return;
+			}
+			window.location.reload();
+		},
+
+		/**
+		 * Der Router startet erst mit den Spalten-Views und einem Modell: sonst ginge das erste Routenereignis
+		 * eines Deep Links verloren, oder ein Controller bekäme eine Route, bevor er Daten lesen kann.
+		 */
+		_startRouting: function () {
+			return this._viewsReady.then(function () {
+				this.getRouter().initialize();
+			}.bind(this));
 		},
 
 		/** Ein Token aus dieser Browser-Sitzung kann abgelaufen sein: /auth/me entscheidet. */
@@ -78,10 +118,10 @@ sap.ui.define([
 				}));
 				app.setData(Object.assign(app.getData(), {
 					authenticated: true, busy: false, user: me.name, role: me.role,
-					canWrite: me.role !== "viewer", loginError: ""
+					canWrite: me.role !== "viewer", isAdmin: me.role === "admin", loginError: ""
 				}));
 				return this.loadEntitySets();
-			}.bind(this));
+			}.bind(this)).then(this._startRouting.bind(this));
 		},
 
 		/** Entity Sets und ihre Spalten kommen aus $metadata: neue Tabellen brauchen keine Änderung am Client. */
@@ -130,10 +170,30 @@ sap.ui.define([
 			}
 			const app = this.getModel("app");
 			app.setData(Object.assign(app.getData(), {
-				authenticated: false, busy: false, user: "", role: "", canWrite: false,
-				layout: "OneColumn", sets: [], loginError: message || ""
+				authenticated: false, busy: false, user: "", role: "", canWrite: false, isAdmin: false,
+				layout: "OneColumn", navKey: "home", sets: [], loginError: message || ""
 			}));
-			this.getRouter().navTo("home");
+			sap.ui.getCore().getEventBus().publish("hdb", "sessionEnded");
+			this.getRouter().stop();
+			this.getRouter().getHashChanger().setHash("");
+		},
+
+		/** Anfragen an die REST-API mit Token; Fehler tragen Status und Meldung des Servers. */
+		authFetch: function (url, options) {
+			const settings = Object.assign({}, options);
+			settings.headers = Object.assign({ Authorization: "Bearer " + this._token }, settings.headers);
+			return fetch(url, settings).then(function (response) {
+				if (response.ok) {
+					return response;
+				}
+				return response.json().catch(function () {
+					return {};
+				}).then(function (body) {
+					const error = new Error(body.statusMessage || response.statusText);
+					error.status = response.status;
+					throw error;
+				});
+			});
 		},
 
 		/** Fehler aus Anfragen: eine abgelaufene Sitzung führt zurück zur Anmeldung. */

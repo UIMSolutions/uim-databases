@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>hdb</title>
   <link rel="icon" href="data:,">
+  <!-- Die Sprache muss vor UI5 feststehen, weil das Textmodell noch vor Component.js entsteht. Ohne Wahl gilt die Browsersprache. -->
+  <script>
+    try {
+      const language = window.localStorage.getItem("hdb.language");
+      if (language) {
+        window["sap-ui-config"] = { language: language };
+      }
+    } catch (e) { /* gesperrter Speicher */ }
+  </script>
   <!-- Feste Version: das Skript hat Zugriff auf das Anmeldetoken und darf sich nicht unbemerkt ändern. -->
   <script id="sap-ui-bootstrap"
     src="https://sdk.openui5.org/1.148.10/resources/sap-ui-core.js"

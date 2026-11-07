@@ -100,9 +100,25 @@ block content
           div.flex.gap-2(data-column-row="1")
             input.input.grow.min-w-0.font-mono(type="text", name="col_name", placeholder="column_name", aria-label="Column name", required=true, pattern="\\w+", autocomplete="off")
             select.select.w-36(name="col_type", aria-label="Column type")
-              option(value="INTEGER") INTEGER
+              option(value="BOOLEAN") BOOLEAN
+              option(value="TINYINT") TINYINT
+              option(value="SBYTE") SBYTE
+              option(value="SMALLINT") SMALLINT
+              option(value="INT32") INT32
+              option(value="INTEGER", selected=true) INTEGER
+              option(value="REAL") REAL
               option(value="DECIMAL") DECIMAL
+              option(value="NUMERIC") NUMERIC
               option(value="VARCHAR") VARCHAR
+              option(value="BLOB") BLOB
+              option(value="DATE") DATE
+              option(value="TIMESTAMP") TIMESTAMP
+              option(value="TIME") TIME
+              option(value="DURATION") DURATION
+              option(value="GUID") GUID
+              option(value="GEO") GEO
+              option(value="GEOGRAPHY") GEOGRAPHY
+              option(value="LINK") LINK
             button.btn.btn-square.btn-ghost(type="button", data-remove-column="1", aria-label="Remove column") ×
         button.btn.btn-ghost.btn-sm.mt-2(type="button", data-add-column="1") + Add column
         div.modal-action

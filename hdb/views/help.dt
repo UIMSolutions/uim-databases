@@ -1,0 +1,241 @@
+extends layout
+
+block content
+  div.flex.flex-col.gap-6.max-w-4xl
+    div.card.bg-base-100.shadow
+      div.card-body
+        h2.card-title On this page
+        ul.flex.flex-wrap.gap-x-4.gap-y-1
+          li: a.link(href="#start") Getting started
+          li: a.link(href="#roles") Roles
+          li: a.link(href="#sql") SQL
+          li: a.link(href="#types") Data types
+          li: a.link(href="#storage") Table storage
+          li: a.link(href="#statistics") Statistics
+          li: a.link(href="#maintenance") Merge and checkpoint
+          li: a.link(href="#transactions") Transactions
+          li: a.link(href="#backups") Backups
+
+    section#start.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Getting started
+        ul.list-disc.pl-5.space-y-1
+          li Dashboard: key figures for every table, and new tables if you are an admin.
+          li SQL Console: several statements separated by semicolons. It stops at the first error.
+          li Tables: filter with a WHERE condition, sort, page through rows, edit rows and export CSV.
+          li Statistics: storage figures for every column of every table.
+          li
+            | Fiori client: a separate app for browsing and editing rows, at
+            a.link.ml-1(href="/ui5/") /ui5/
+            | .
+        p.text-sm.opacity-70 Tables have no primary key. Editing or deleting a row here affects every row with identical values, and the result message reports how many.
+
+    section#roles.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Roles
+        p The interface hides what your role can't do. You are signed in as #{page.userName} (#{page.roleLabel}).
+        div.overflow-x-auto
+          table.table.table-sm
+            thead
+              tr
+                th Role
+                th Can do
+            tbody
+              tr
+                td.font-mono viewer
+                td SELECT, read tables and statistics
+              tr
+                td.font-mono editor
+                td Also INSERT, UPDATE, DELETE and transactions
+              tr
+                td.font-mono admin
+                td Also CREATE, DROP, merge, checkpoint, users and backups
+        p.text-sm.opacity-70 Roles apply to the whole database, not to single tables.
+
+    section#sql.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title SQL
+        p.text-sm.font-semibold Tables and rows
+        div.mockup-code.text-sm
+          pre: code CREATE TABLE orders (id INTEGER, customer VARCHAR, amount NUMERIC)
+          pre: code CREATE TABLE small (id INTEGER, name VARCHAR) USING JSON
+          pre: code INSERT INTO orders VALUES (1, 'ACME', 99.50)
+          pre: code UPDATE orders SET amount = 120.5 WHERE id = 1
+          pre: code DELETE FROM orders WHERE customer = 'ACME'
+          pre: code DROP TABLE orders
+        p.text-sm.font-semibold.mt-2 Queries
+        div.mockup-code.text-sm
+          pre: code SELECT DISTINCT customer FROM orders ORDER BY customer
+          pre: code SELECT customer, COUNT(*), SUM(amount) FROM orders WHERE amount >= 10
+          pre: code   GROUP BY customer HAVING COUNT(*) >= 2 ORDER BY SUM(amount) DESC LIMIT 10 OFFSET 20
+          pre: code SELECT c.name, o.amount FROM customers c LEFT JOIN orders o ON c.id = o.customer_id
+        ul.list-disc.pl-5.space-y-1
+          li Clause order: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT. OFFSET needs LIMIT.
+          li Aggregates: COUNT(*), SUM, AVG, MIN, MAX. SUM and AVG work on numbers only.
+          li WHERE supports AND, OR, parentheses, IN, BETWEEN and LIKE, each also with NOT. In LIKE, % matches any characters and _ matches one.
+          li JOIN: INNER and LEFT, equality conditions only. A self-join needs two different aliases.
+          li Comparisons with NULL are never true, and that includes NOT IN, NOT BETWEEN and NOT LIKE.
+
+    section#types.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Data types
+        p Column types also accept the synonyms below and the OData name, in any letter case.
+        div.overflow-x-auto
+          table.table.table-sm
+            thead
+              tr
+                th Type
+                th Synonyms
+                th Example value
+            tbody
+              tr
+                td.font-mono BOOLEAN
+                td.font-mono BOOL
+                td.font-mono TRUE
+              tr
+                td.font-mono TINYINT
+                td.font-mono BYTE
+                td.font-mono 255
+              tr
+                td.font-mono SBYTE
+                td
+                td.font-mono -128
+              tr
+                td.font-mono SMALLINT
+                td.font-mono INT16
+                td.font-mono 32767
+              tr
+                td.font-mono INT32
+                td
+                td.font-mono 2147483647
+              tr
+                td.font-mono INTEGER
+                td.font-mono INT, BIGINT, INT64
+                td.font-mono 42
+              tr
+                td.font-mono REAL
+                td.font-mono SINGLE
+                td.font-mono 0.1
+              tr
+                td.font-mono DECIMAL
+                td.font-mono DOUBLE
+                td.font-mono 1.5
+              tr
+                td.font-mono NUMERIC
+                td
+                td.font-mono 12345678901234567890.55
+              tr
+                td.font-mono VARCHAR
+                td.font-mono NVARCHAR, TEXT
+                td.font-mono 'Text'
+              tr
+                td.font-mono BLOB
+                td.font-mono BINARY, VARBINARY
+                td.font-mono X'00FF'
+              tr
+                td.font-mono DATE
+                td
+                td.font-mono '2026-11-06'
+              tr
+                td.font-mono TIMESTAMP
+                td.font-mono DATETIMEOFFSET
+                td.font-mono '2026-11-06T12:30:00+01:00'
+              tr
+                td.font-mono TIME
+                td.font-mono TIMEOFDAY
+                td.font-mono '12:30:00'
+              tr
+                td.font-mono DURATION
+                td
+                td.font-mono 'P1DT2H'
+              tr
+                td.font-mono GUID
+                td.font-mono UUID
+                td.font-mono '01234567-89ab-cdef-0123-456789abcdef'
+              tr
+                td.font-mono GEO
+                td.font-mono GEOMETRY, ST_GEOMETRY
+                td.font-mono 'POINT(13.4 52.5)'
+              tr
+                td.font-mono GEOGRAPHY
+                td
+                td.font-mono 'POINT(13.4 52.5)'
+              tr
+                td.font-mono LINK
+                td.font-mono URL
+                td.font-mono 'https://example.org/a'
+        div.alert.alert-warning(role="note")
+          i(data-lucide="triangle-alert", class="w-5 h-5")
+          span DECIMAL is a floating-point double. Use NUMERIC for exact values such as money.
+
+    section#storage.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Table storage
+        p Queries always run in memory. Storage only decides how a table survives a restart, and it can't be changed later.
+        div.overflow-x-auto
+          table.table.table-sm
+            thead
+              tr
+                th Storage
+                th Kept in
+                th Each change costs
+            tbody
+              tr
+                td.font-mono MEMORY
+                td The statement log
+                td One log line
+              tr
+                td.font-mono FILE
+                td One tab-separated text file per table
+                td Rewriting the whole file
+              tr
+                td.font-mono JSON
+                td One JSON file per table
+                td Rewriting the whole file
+        p.text-sm.opacity-70 For large or frequently changed tables, MEMORY is the better choice.
+
+    section#statistics.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Statistics
+        p Each column has a sorted, compressed main store and a small delta store that takes new rows.
+        dl.grid.gap-x-6.gap-y-2(class="sm:grid-cols-[12rem_1fr]")
+          dt.font-semibold Live rows
+          dd Rows that queries can see.
+          dt.font-semibold Rows in delta
+          dd New or updated rows that aren't merged into the main store yet.
+          dt.font-semibold Deleted rows
+          dd Rows marked as deleted. Queries skip them, and a merge removes them.
+          dt.font-semibold Main and delta distinct
+          dd Number of different values in each store. Fewer values compress better.
+          dt.font-semibold Bits per value
+          dd Size of each value's code in the main store, based on the number of distinct values.
+          dt.font-semibold Code size
+          dd Memory used by the main store's codes, without dictionaries. It isn't the total memory of the table.
+
+    section#maintenance.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Merge and checkpoint
+        ul.list-disc.pl-5.space-y-1
+          li Delta merge: moves delta rows into the main store. It runs in the background, after startup, from 1000 delta rows on, or from the Dashboard.
+          li Deleted rows are removed by a merge. A merge also starts by itself from 1000 deleted rows, if they are more than half of the table.
+          li Checkpoint: rewrites the statement log as a compact snapshot. It happens after 1000 statements, or from the Dashboard.
+
+    section#transactions.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Transactions
+        ul.list-disc.pl-5.space-y-1
+          li In the SQL Console, BEGIN stays open across runs until COMMIT or ROLLBACK.
+          li An open transaction locks the database for everyone else. Their requests fail at once instead of waiting.
+          li After 30 seconds without activity, a transaction rolls back.
+          li Savepoints and nested transactions aren't supported.
+
+    section#backups.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Backups
+        p Admins manage backups on the Backups page, and in the Fiori client.
+        ul.list-disc.pl-5.space-y-1
+          li A backup contains all tables from every storage type. Users aren't included.
+          li By default a backup runs every 24 hours, keeping 7 scheduled and 5 safety backups.
+          li Restoring replaces all tables. A safety backup of the current state is saved first.
+          li A backup can't be created while a transaction is open.
+          li Backups are stored on the same disk as the data and aren't encrypted, so copy them somewhere else too.

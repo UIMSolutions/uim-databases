@@ -1,0 +1,99 @@
+<mvc:View controllerName="hdb.client.controller.Statistics" height="100%" xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f">
+	<f:DynamicPage toggleHeaderOnTitleClick="false" showFooter="false">
+		<f:title>
+			<f:DynamicPageTitle>
+				<f:heading><Title text="{i18n>statistics}"/></f:heading>
+				<f:actions>
+					<Button icon="sap-icon://refresh" tooltip="{i18n>refresh}" type="Transparent" press=".onRefresh"/>
+				</f:actions>
+				<f:navigationActions>
+					<Button icon="sap-icon://decline" tooltip="{i18n>close}" type="Transparent" press=".onClose"/>
+				</f:navigationActions>
+			</f:DynamicPageTitle>
+		</f:title>
+		<f:content>
+			<VBox busy="{view>/busy}">
+				<MessageStrip id="error" type="Error" visible="false" showCloseButton="true" class="sapUiSmallMarginBottom"/>
+				<FlexBox wrap="Wrap" class="sapUiSmallMarginBottom">
+					<VBox class="sapUiLargeMarginEnd sapUiSmallMarginBottom">
+						<Label text="{i18n>tables}"/>
+						<Title text="{view>/totals/tables}" titleStyle="H2"/>
+					</VBox>
+					<VBox class="sapUiLargeMarginEnd sapUiSmallMarginBottom">
+						<Label text="{i18n>statColumns}"/>
+						<Title text="{view>/totals/columns}" titleStyle="H2"/>
+					</VBox>
+					<VBox class="sapUiLargeMarginEnd sapUiSmallMarginBottom">
+						<Label text="{i18n>statLiveRows}"/>
+						<Title text="{view>/totals/rows}" titleStyle="H2"/>
+					</VBox>
+					<VBox class="sapUiLargeMarginEnd sapUiSmallMarginBottom">
+						<Label text="{i18n>statDeltaRows}"/>
+						<Title text="{view>/totals/deltaRows}" titleStyle="H2"/>
+					</VBox>
+					<VBox class="sapUiLargeMarginEnd sapUiSmallMarginBottom">
+						<Label text="{i18n>statDeletedRows}"/>
+						<Title text="{view>/totals/deletedRows}" titleStyle="H2"/>
+					</VBox>
+					<VBox class="sapUiLargeMarginEnd sapUiSmallMarginBottom">
+						<Label text="{i18n>statCodeSize}"/>
+						<Title text="{path: 'view>/totals/codeBytes', formatter: '.formatSize'}" titleStyle="H2"/>
+					</VBox>
+					<VBox class="sapUiSmallMarginBottom">
+						<Label text="{i18n>statMerge}"/>
+						<ObjectStatus text="{= ${view>/merge/running} ? ${i18n>statMergeRunning} : ${i18n>statMergeIdle} }"
+							icon="{= ${view>/merge/running} ? 'sap-icon://synchronize' : 'sap-icon://status-inactive' }"
+							state="{= ${view>/merge/running} ? 'Information' : 'None' }"/>
+						<Text text="{parts: ['i18n>statMergeCompleted', 'view>/merge/completed'], formatter: '.formatMessage'}"/>
+					</VBox>
+				</FlexBox>
+				<MessageStrip text="{parts: ['i18n>statMergeError', 'view>/merge/lastError'], formatter: '.formatMessage'}" type="Warning"
+					visible="{= !!${view>/merge/lastError} }" class="sapUiSmallMarginBottom"/>
+				<Table id="tableStats" items="{view>/tables}" noDataText="{i18n>noTables}" class="sapUiMediumMarginBottom">
+					<headerToolbar><OverflowToolbar><Title text="{i18n>tables}"/></OverflowToolbar></headerToolbar>
+					<columns>
+						<Column><Text text="{i18n>statTable}"/></Column>
+						<Column minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statStorage}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statColumns}"/></Column>
+						<Column hAlign="End"><Text text="{i18n>statLiveRows}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statDeltaRows}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statDeletedRows}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statCodeSize}"/></Column>
+					</columns>
+					<ColumnListItem>
+						<Text text="{view>table}" wrapping="false"/>
+						<Text text="{view>storage}"/>
+						<Text text="{view>columnCount}"/>
+						<Text text="{view>rows}"/>
+						<Text text="{view>deltaRows}"/>
+						<Text text="{view>deletedRows}"/>
+						<Text text="{path: 'view>codeBytes', formatter: '.formatSize'}"/>
+					</ColumnListItem>
+				</Table>
+				<Table id="columnStats" items="{path: 'view>/columns', sorter: {path: 'table', group: true}}" noDataText="{i18n>noTables}" sticky="ColumnHeaders">
+					<headerToolbar><OverflowToolbar><Title text="{i18n>statColumns}"/></OverflowToolbar></headerToolbar>
+					<columns>
+						<Column><Text text="{i18n>statColumn}"/></Column>
+						<Column minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statType}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statMainRows}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statDeltaRows}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statMainDistinct}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statDeltaDistinct}"/></Column>
+						<Column hAlign="End" minScreenWidth="Tablet" demandPopin="true"><Text text="{i18n>statBits}"/></Column>
+						<Column hAlign="End"><Text text="{i18n>statCodeSize}"/></Column>
+					</columns>
+					<ColumnListItem>
+						<Text text="{view>name}" wrapping="false"/>
+						<Text text="{view>type}"/>
+						<Text text="{view>mainRows}"/>
+						<Text text="{view>deltaRows}"/>
+						<Text text="{view>mainDistinct}"/>
+						<Text text="{view>deltaDistinct}"/>
+						<Text text="{view>mainBits}"/>
+						<Text text="{path: 'view>mainCodeBytes', formatter: '.formatSize'}"/>
+					</ColumnListItem>
+				</Table>
+			</VBox>
+		</f:content>
+	</f:DynamicPage>
+</mvc:View>

@@ -52,6 +52,14 @@ html(lang="en", data-theme="dark")
               a(href="/admin/sql", class=page.active == "sql" ? "menu-active" : "")
                 i(data-lucide="terminal", class="w-4 h-4")
                 | SQL Console
+            li
+              a(href="/admin/stats", class=page.active == "stats" ? "menu-active" : "")
+                i(data-lucide="chart-column", class="w-4 h-4")
+                | Statistics
+            li
+              a(href="/admin/help", class=page.active == "help" ? "menu-active" : "")
+                i(data-lucide="circle-help", class="w-4 h-4")
+                | Help
 
             li.menu-title.mt-4 Tables
             - foreach (t; page.tables)
@@ -74,6 +82,10 @@ html(lang="en", data-theme="dark")
                 a(href="/admin/users", class=page.active == "users" ? "menu-active" : "")
                   i(data-lucide="users", class="w-4 h-4")
                   | Users
+              li
+                a(href="/admin/backups", class=page.active == "backups" ? "menu-active" : "")
+                  i(data-lucide="archive", class="w-4 h-4")
+                  | Backups
 
           div.p-4.border-t.border-base-300
             div.flex.items-center.justify-between.gap-2.mb-2

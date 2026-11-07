@@ -1,5 +1,6 @@
 <mvc:View controllerName="hdb.client.controller.Login" xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:core="sap.ui.core">
-	<Panel width="22rem" class="sapUiResponsiveMargin" backgroundDesign="Solid">
+	<FlexBox width="100%" justifyContent="Center">
+	<Panel width="22rem" backgroundDesign="Solid">
 		<VBox class="sapUiSmallMargin">
 			<Title text="{i18n>loginTitle}" titleStyle="H3" class="sapUiSmallMarginBottom"/>
 			<MessageStrip text="{app>/loginError}" type="Error" visible="{= !!${app>/loginError} }" class="sapUiSmallMarginBottom"/>
@@ -10,4 +11,5 @@
 			<Button id="signIn" text="{i18n>loginTitle}" type="Emphasized" width="100%" press=".onLogin" class="sapUiSmallMarginTop"/>
 		</VBox>
 	</Panel>
+	</FlexBox>
 </mvc:View>

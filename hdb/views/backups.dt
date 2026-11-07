@@ -1,0 +1,94 @@
+extends layout
+
+block content
+  div.grid.gap-6.grid-cols-1.mb-6(class="lg:grid-cols-2")
+    div.card.bg-base-100.shadow
+      div.card-body
+        h2.card-title Create backup
+        p.text-sm.opacity-70 Saves all tables from every storage type. Users are not included.
+        form.flex.gap-2(action="/admin/backups", method="POST")
+          input.input.input-sm.grow.min-w-0(type="text", name="label", maxlength="40", placeholder="Label (optional)", aria-label="Backup label", autocomplete="off")
+          button.btn.btn-primary.btn-sm(type="submit")
+            i(data-lucide="archive", class="w-4 h-4")
+            | Create
+    div.card.bg-base-100.shadow
+      div.card-body
+        h2.card-title Upload backup
+        p.text-sm.opacity-70 Adds a .hdbbak file to the list. Nothing is restored yet.
+        form.flex.gap-2(action="/admin/backups/upload", method="POST", enctype="multipart/form-data")
+          input.file-input.file-input-sm.grow.min-w-0(type="file", name="file", accept=".hdbbak", required=true, aria-label="Backup file")
+          button.btn.btn-sm(type="submit")
+            i(data-lucide="upload", class="w-4 h-4")
+            | Upload
+
+  div.card.bg-base-100.shadow.mb-6
+    div.card-body
+      h2.card-title Schedule
+      - if (schedule.lastError.length)
+        div.alert.alert-error(role="alert")
+          i(data-lucide="circle-alert", class="w-5 h-5")
+          span.break-words.min-w-0 Last scheduled backup failed: #{schedule.lastError}
+      form.flex.flex-wrap.items-end.gap-4(action="/admin/backups/schedule", method="POST")
+        label.flex.items-center.gap-2.h-8
+          input.toggle.toggle-sm(type="checkbox", name="enabled", value="1", checked=schedule.enabled)
+          span.text-sm Automatic backups
+        label.block
+          span.block.text-sm.mb-1 Every (hours)
+          input.input.input-sm.w-28(type="number", name="intervalHours", min="1", max="8760", required=true, value="#{schedule.intervalHours}")
+        label.block
+          span.block.text-sm.mb-1 Keep scheduled
+          input.input.input-sm.w-28(type="number", name="keepScheduled", min="1", max="1000", required=true, value="#{schedule.keepScheduled}")
+        label.block
+          span.block.text-sm.mb-1 Keep safety backups
+          input.input.input-sm.w-28(type="number", name="keepSafety", min="1", max="1000", required=true, value="#{schedule.keepSafety}")
+        button.btn.btn-sm(type="submit") Save
+      p.text-sm.opacity-70
+        - if (schedule.lastRun.length)
+          | Last run: #{schedule.lastRun}.
+        - if (schedule.nextRun.length)
+          |  Next run: #{schedule.nextRun}.
+      p.text-xs.opacity-70 Only scheduled and safety backups are removed automatically, oldest first. Your own and uploaded backups are kept. Lowering a limit takes effect immediately.
+
+  div.card.bg-base-100.shadow
+    div.card-body
+      h2.card-title Backups
+      - if (rows.length)
+        div.overflow-x-auto
+          table.table.table-sm
+            thead
+              tr
+                th Created (UTC)
+                th Type
+                th Label
+                th.text-right Tables
+                th.text-right Rows
+                th.text-right Size
+                th.text-right Actions
+            tbody
+              - foreach (b; rows)
+                tr
+                  - if (b.readable)
+                    td.whitespace-nowrap(title=b.name) #{b.created}
+                    td
+                      span.badge.badge-ghost.badge-sm #{b.kind}
+                    td #{b.label}
+                    td.text-right #{b.tables}
+                    td.text-right #{b.rows}
+                  - else
+                    td.font-mono(title=b.name) #{b.name}
+                    td
+                      span.badge.badge-ghost.badge-sm #{b.kind}
+                    td
+                      span.badge.badge-error.badge-sm Unreadable
+                    td
+                    td
+                  td.text-right.whitespace-nowrap #{b.size}
+                  td.text-right.whitespace-nowrap
+                    a.btn.btn-ghost.btn-xs(href="/admin/backups/#{b.name}/download") Download
+                    - if (b.readable)
+                      form.inline(action="/admin/backups/#{b.name}/restore", method="POST", data-confirm="Replace ALL tables with this backup? Changes made since then are lost. The current state is saved first as a safety backup.")
+                        button.btn.btn-ghost.btn-xs.text-warning(type="submit") Restore
+                    form.inline(action="/admin/backups/#{b.name}/delete", method="POST", data-confirm="Delete this backup permanently?")
+                      button.btn.btn-ghost.btn-xs.text-error(type="submit") Delete
+      - else
+        p.opacity-70.py-6 No backups yet.

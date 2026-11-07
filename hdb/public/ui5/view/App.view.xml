@@ -1,30 +1,52 @@
 <mvc:View controllerName="hdb.client.controller.App" displayBlock="true" height="100%"
-	xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f" xmlns:core="sap.ui.core">
+	xmlns="sap.m" xmlns:mvc="sap.ui.core.mvc" xmlns:f="sap.f" xmlns:core="sap.ui.core" xmlns:tnt="sap.tnt">
 	<App id="shell">
 		<Page showHeader="false" enableScrolling="false" busy="{app>/busy}">
 			<VBox height="100%" renderType="Bare" visible="{= !${app>/authenticated} }" alignItems="Center" justifyContent="Center">
 				<mvc:XMLView id="login" viewName="hdb.client.view.Login" async="true"/>
 			</VBox>
-			<VBox height="100%" renderType="Bare" visible="{app>/authenticated}">
-				<f:ShellBar title="{i18n>appTitle}" homeIcon="sap-icon://database" showNavButton="false"
-					homeIconPressed=".onHome" avatarPressed=".onProfile">
-					<f:profile>
-						<Avatar id="profile" initials="{path: 'app>/user', formatter: '.initials'}"/>
-					</f:profile>
-				</f:ShellBar>
-				<f:FlexibleColumnLayout id="fcl" layout="{app>/layout}" backgroundDesign="Solid">
-					<f:layoutData><FlexItemData growFactor="1" baseSize="0"/></f:layoutData>
-					<f:beginColumnPages>
-						<mvc:XMLView id="tables" viewName="hdb.client.view.Tables" async="true"/>
-					</f:beginColumnPages>
-					<f:midColumnPages>
-						<mvc:XMLView id="rows" viewName="hdb.client.view.Rows" async="true"/>
-					</f:midColumnPages>
-					<f:endColumnPages>
-						<mvc:XMLView id="row" viewName="hdb.client.view.Row" async="true"/>
-					</f:endColumnPages>
-				</f:FlexibleColumnLayout>
-			</VBox>
+			<tnt:ToolPage id="toolPage" visible="{app>/authenticated}">
+				<tnt:header>
+					<f:ShellBar title="{i18n>appTitle}" showNavButton="false" showMenuButton="true" menuButtonPressed=".onToggleSideNav" avatarPressed=".onProfile">
+						<f:profile>
+							<Avatar id="profile" initials="{path: 'app>/user', formatter: '.initials'}"/>
+						</f:profile>
+					</f:ShellBar>
+				</tnt:header>
+				<tnt:sideContent>
+					<tnt:SideNavigation id="sideNav" ariaLabel="{i18n>navigation}" selectedKey="{app>/navKey}" itemSelect=".onSideNavSelect">
+						<tnt:item>
+							<tnt:NavigationList>
+								<tnt:NavigationListItem key="home" text="{i18n>tables}" icon="sap-icon://table-view"/>
+								<tnt:NavigationListItem key="statistics" text="{i18n>statistics}" icon="sap-icon://vertical-bar-chart"/>
+								<tnt:NavigationListItem key="backups" text="{i18n>backups}" icon="sap-icon://product" visible="{app>/isAdmin}"/>
+							</tnt:NavigationList>
+						</tnt:item>
+						<tnt:fixedItem>
+							<tnt:NavigationList>
+								<tnt:NavigationListItem key="help" text="{i18n>help}" icon="sap-icon://sys-help"/>
+								<tnt:NavigationListItem text="{i18n>adminConsole}" icon="sap-icon://action-settings" href="/admin" selectable="false"/>
+							</tnt:NavigationList>
+						</tnt:fixedItem>
+					</tnt:SideNavigation>
+				</tnt:sideContent>
+				<tnt:mainContents>
+					<f:FlexibleColumnLayout id="fcl" layout="{app>/layout}" backgroundDesign="Solid">
+						<f:beginColumnPages>
+							<mvc:XMLView id="tables" viewName="hdb.client.view.Tables" async="true"/>
+						</f:beginColumnPages>
+						<f:midColumnPages>
+							<mvc:XMLView id="rows" viewName="hdb.client.view.Rows" async="true"/>
+							<mvc:XMLView id="backups" viewName="hdb.client.view.Backups" async="true"/>
+							<mvc:XMLView id="statistics" viewName="hdb.client.view.Statistics" async="true"/>
+							<mvc:XMLView id="help" viewName="hdb.client.view.Help" async="true"/>
+						</f:midColumnPages>
+						<f:endColumnPages>
+							<mvc:XMLView id="row" viewName="hdb.client.view.Row" async="true"/>
+						</f:endColumnPages>
+					</f:FlexibleColumnLayout>
+				</tnt:mainContents>
+			</tnt:ToolPage>
 		</Page>
 	</App>
 </mvc:View>
