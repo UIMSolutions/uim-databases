@@ -124,7 +124,7 @@ bool isAdminPath(string path) @safe {
 }
 
 bool isPublicPath(string path) @safe {
-    if (["/", "/health", "/api/v1/health", "/api/v1/auth/login", "/admin/login", "/admin.js", "/ui5"].canFind(path))
+    if (["/", "/health", "/api/v1/health", "/api/v1/auth/login", "/api/v1/info", "/admin/login", "/admin.js", "/ui5"].canFind(path))
         return true;
     // Das Fiori-Frontend muss vor der Anmeldung laden. Die Datenablage liegt neben public/: dieser Bereich
     // darf deshalb nie aus sich herausführen, egal wie sich der Dateiserver verhält.

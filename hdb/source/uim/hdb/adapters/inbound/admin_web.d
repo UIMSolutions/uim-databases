@@ -236,6 +236,8 @@ final class SqlAdminUi {
     private IBackupUseCase backups;
     private ITenantUseCase tenants;
     private IReplicationUseCase replication;
+    /// Einzelmandanten-Betrieb: die Anmeldung fragt keinen Mandanten ab.
+    bool singleTenant;
 
     this(ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups, ITenantUseCase tenants,
         IReplicationUseCase replication) {
@@ -376,7 +378,7 @@ final class SqlAdminUi {
         string tenantValue = req.cookies.get(tenantCookie, "");
         if (!isPlainTenant(tenantValue))
             tenantValue = "";
-        res.render!("login.dt", loginError, loginNotice, tenantValue);
+        res.render!("login.dt", loginError, loginNotice, tenantValue, singleTenant);
     }
 
     private void login(HTTPServerRequest req, HTTPServerResponse res) {
@@ -389,12 +391,12 @@ final class SqlAdminUi {
             string loginError = e.msg;
             string loginNotice;
             res.statusCode = HTTPStatus.unauthorized;
-            return res.render!("login.dt", loginError, loginNotice, tenantValue);
+            return res.render!("login.dt", loginError, loginNotice, tenantValue, singleTenant);
         } catch (AccessDenied e) { // Netz nicht erlaubt
             string loginError = e.msg;
             string loginNotice;
             res.statusCode = HTTPStatus.forbidden;
-            return res.render!("login.dt", loginError, loginNotice, tenantValue);
+            return res.render!("login.dt", loginError, loginNotice, tenantValue, singleTenant);
         }
         // Nur zum Vorausfüllen des Formulars, kein Geheimnis
         auto remembered = res.setCookie(tenantCookie, session.principal.tenant, "/admin", Cookie.Encoding.none);

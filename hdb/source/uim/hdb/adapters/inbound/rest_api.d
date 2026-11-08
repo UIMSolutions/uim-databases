@@ -7,6 +7,17 @@ import vibe.d;
 
 @safe:
 
+/// Öffentlich: Betriebsart des Servers. Clients blenden danach das Mandantenfeld der Anmeldung aus.
+/// `tenantLogin`: ob die Anmeldung einen Mandanten braucht (multi und gateway).
+void registerServerInfo(URLRouter router, ServerMode mode) {
+    router.get("/api/v1/info", (HTTPServerRequest req, HTTPServerResponse res) @safe {
+        auto info = Json.emptyObject;
+        info["mode"] = modeName(mode);
+        info["tenantLogin"] = mode != ServerMode.single;
+        res.writeJsonBody(info);
+    });
+}
+
 /// Eingehender Adapter: HTTP/JSON -> ISqlUseCase.
 final class SqlRestApi {
     private ISqlUseCase sql;

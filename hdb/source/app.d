@@ -6,9 +6,21 @@
 module app;
 
 import uim.hdb;
+import uim.hdb.gateway : GatewayConfigFile, GatewayProxy;
 
 /// Composition Root: einziger Ort, an dem Adapter und Kern verdrahtet werden.
+/// HDB_MODE wählt die Betriebsart: multi (Standard), single oder gateway. Eingebettet ist keine Betriebsart des
+/// Servers, sondern die Bibliothek (dub build --config=library, Modul uim.hdb.embedded).
 void main() @safe {
+    ServerMode mode;
+    try
+        mode = parseServerMode(environment.get("HDB_MODE", ""));
+    catch (Exception e)
+        return logError("%s", e.msg);
+    if (mode == ServerMode.gateway)
+        return runGateway();
+    immutable single = mode == ServerMode.single;
+
     // Eine Datenbank je Mandant unter TENANTS_DIR. Daten aus der Zeit vor den Mandanten (TABLES_DIR, DATA_FILE,
     // BACKUP_DIR) ziehen beim ersten Start in den Mandanten default.
     auto tenantsDir = environment.get("TENANTS_DIR", "data/tenants");
@@ -21,8 +33,15 @@ void main() @safe {
     auto knownUsers = userStore.load();
     immutable firstStart = registry.all().length == 0 && knownUsers.length == 0;
     immutable legacyUsers = knownUsers.canFind!(u => u.tenant == defaultTenant);
-    if (!registry.has(defaultTenant) && (firstStart || migrated || legacyUsers))
+    if (!registry.has(defaultTenant) && (firstStart || migrated || legacyUsers || single))
         registry.put(Tenant(defaultTenant, "Default", true));
+    if (single) {
+        // Zurück von mehreren Mandanten nur ohne weitere Mandanten: deren Daten wären sonst nicht mehr erreichbar
+        auto others = registry.all().filter!(t => t.name != defaultTenant).map!(t => t.name).array;
+        if (others.length)
+            return logError("HDB_MODE=single needs a server with only the tenant '%s', but there are also: %s. "
+                ~ "Move or delete these tenants first, or run with HDB_MODE=multi.", defaultTenant, others.join(", "));
+    }
 
     // Eigene Rollen aller Mandanten und des Bereichs system; die vordefinierten stehen nicht in der Datei
     // Befristete Freigaben laufen nach der Systemuhr (UTC); erlaubte Netze kommen aus der Mandantenliste
@@ -38,9 +57,13 @@ void main() @safe {
         auto adminName = environment.get("ADMIN_USER", "admin");
         announce(defaultTenant, adminName, access.bootstrap(defaultTenant, adminName, environment.get("ADMIN_PASSWORD", "")));
     }
-    auto systemAdmin = environment.get("SYSTEM_ADMIN_USER", "sysadmin");
-    announce(systemTenant, systemAdmin, access.bootstrap(systemTenant, systemAdmin, environment.get(
-            "SYSTEM_ADMIN_PASSWORD", "")));
+    if (single)
+        access.restrictTo(defaultTenant); // ohne Mandantenfeld und ohne Systembereich
+    else {
+        auto systemAdmin = environment.get("SYSTEM_ADMIN_USER", "sysadmin");
+        announce(systemTenant, systemAdmin, access.bootstrap(systemTenant, systemAdmin, environment.get(
+                "SYSTEM_ADMIN_PASSWORD", "")));
+    }
 
     // Alle eingehenden Adapter sehen nur die abgesicherte, nach Mandanten getrennte Sicht auf den Kern.
     auto storage = new FileTenantStorage(tenantsDir);
@@ -93,10 +116,13 @@ void main() @safe {
     // gilt die Adresse der Verbindung
     auto trustedProxies = parseNetworks(environment.get("TRUSTED_PROXIES", "").split(","));
     new SecurityGate(access, trustedProxies).register(router); // muss vor allen anderen Routen stehen
+    registerServerInfo(router, mode);
     new SqlRestApi(secured).register(router);
     registerHdbRestApi(router, secured, access, backups, tenants, databases, toDelegate(&currentPrincipal));
     new ODataController(secured).register(router);
-    new SqlAdminUi(secured, access, backups, tenants, databases).register(router);
+    auto adminUi = new SqlAdminUi(secured, access, backups, tenants, databases);
+    adminUi.singleTenant = single;
+    adminUi.register(router);
 
     // Fiori-Frontend: OData-Client, der nur /odata/v4 und die Anmeldung nutzt
     router.get("/ui5", staticRedirect("/ui5/"));
@@ -105,11 +131,8 @@ void main() @safe {
     // Serve static assets if needed
     router.get("/*", serveStaticFiles("public/"));
 
-    auto settings = new HTTPServerSettings;
-    settings.port = environment.get("PORT", "8080").to!ushort;
-    settings.bindAddresses = ["0.0.0.0"];
-    settings.maxRequestSize = environment.get("MAX_REQUEST_MB", "256").to!ulong * 1024 * 1024; // hochgeladene Sicherungen
-    listenHTTP(settings, router);
+    listenHTTP(serverSettings(), router);
+    logInfo("Betriebsart: %s", modeName(mode));
 
     // Optional: lokale Clients ohne TCP. Anmeldung und Rollen gelten wie über HTTP
     UnixServer unixServer;
@@ -125,4 +148,31 @@ void main() @safe {
 
     if (unixServer !is null)
         unixServer.stop();
+}
+
+private HTTPServerSettings serverSettings() @safe {
+    auto settings = new HTTPServerSettings;
+    settings.port = environment.get("PORT", "8080").to!ushort;
+    settings.bindAddresses = ["0.0.0.0"];
+    settings.maxRequestSize = environment.get("MAX_REQUEST_MB", "256").to!ulong * 1024 * 1024; // hochgeladene Sicherungen
+    return settings;
+}
+
+/// Verteilter Betrieb: dieser Prozess hat keine Daten und keine Benutzer, er leitet jede Anfrage an den hdb-Server
+/// des Mandanten weiter (GATEWAY_CONFIG, siehe uim.hdb.gateway.routes). Die Backends sollten das Gateway in
+/// TRUSTED_PROXIES eintragen, sonst gelten deren erlaubte Netze für die Adresse des Gateways.
+private void runGateway() @safe {
+    auto path = environment.get("GATEWAY_CONFIG", "data/hdb-gateway.json");
+    GatewayConfigFile config;
+    try
+        config = new GatewayConfigFile(path);
+    catch (Exception e)
+        return logError("Gateway: Konfiguration %s nicht lesbar: %s", path, e.msg);
+    auto router = new URLRouter;
+    registerServerInfo(router, ServerMode.gateway);
+    new GatewayProxy(&config.current, environment.get("GATEWAY_CONNECT_SECONDS", "5").to!long.seconds,
+        environment.get("GATEWAY_READ_SECONDS", "300").to!long.seconds).register(router);
+    listenHTTP(serverSettings(), router);
+    logInfo("Betriebsart: gateway, Backends: %s", config.current().backendIds);
+    runApplication();
 }

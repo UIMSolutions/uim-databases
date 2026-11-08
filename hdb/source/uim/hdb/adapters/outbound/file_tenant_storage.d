@@ -27,15 +27,7 @@ final class FileTenantStorage : ITenantStorage {
     }
 
     TenantStorage open(string tenant) {
-        auto dir = directoryOf(tenant);
-        auto tables = buildPath(dir, "tables");
-        return TenantStorage(
-            new RoutingTableRepository(new MemoryTableRepository,
-                new FileTableRepository(buildPath(tables, "file")), new JsonTableRepository(buildPath(tables, "json")),
-                new BinaryTableRepository(buildPath(tables, "binary")), new BsonTableRepository(buildPath(tables, "bson"))),
-            new FileStatementLog(buildPath(dir, "hdb.log")),
-            new FileBackupStore(buildPath(dir, "backups")),
-            new FileReplicationConfigStore(buildPath(dir, "replication.json")));
+        return storageIn(directoryOf(tenant));
     }
 
     bool exists(string tenant) {
@@ -52,6 +44,19 @@ final class FileTenantStorage : ITenantStorage {
         enforce(validTenantName(tenant) == tenant && tenant != systemTenant, "Invalid tenant: " ~ tenant);
         return buildPath(root, tenant);
     }
+}
+
+/// Ablage einer Datenbank im Verzeichnis `dir`, im Aufbau oben. Die eingebettete Datenbank nutzt denselben Aufbau:
+/// ihr Verzeichnis lässt sich als Mandant in einen Server übernehmen und umgekehrt.
+TenantStorage storageIn(string dir) {
+    auto tables = buildPath(dir, "tables");
+    return TenantStorage(
+        new RoutingTableRepository(new MemoryTableRepository,
+            new FileTableRepository(buildPath(tables, "file")), new JsonTableRepository(buildPath(tables, "json")),
+            new BinaryTableRepository(buildPath(tables, "binary")), new BsonTableRepository(buildPath(tables, "bson"))),
+        new FileStatementLog(buildPath(dir, "hdb.log")),
+        new FileBackupStore(buildPath(dir, "backups")),
+        new FileReplicationConfigStore(buildPath(dir, "replication.json")));
 }
 
 /// Umstellung auf Mandanten: Daten aus der Zeit vor den Mandanten (Tabellen, Protokoll, Sicherungen an den

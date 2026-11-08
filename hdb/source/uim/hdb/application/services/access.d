@@ -50,6 +50,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
     private Failures[string] failures;
     private string dummyHash; // unbekannte Namen kosten dieselbe Zeit wie bekannte
     private int loginsInFlight;
+    private string onlyTenant; // Einzelmandanten-Betrieb: nur dieser Mandant, siehe restrictTo
 
     /// `tenantActive` sagt, ob ein Mandant existiert und aktiv ist; ohne gelten alle als aktiv.
     /// Ohne `roleStore` gibt es eigene Rollen nur bis zum Neustart.
@@ -69,6 +70,12 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
         foreach (r; this.roleStore.load())
             customRoles[userKey(r.tenant, r.name)] = r;
         dummyHash = crypto.hashPassword(crypto.randomSecret());
+    }
+
+    /// Einzelmandanten-Betrieb: jede Anmeldung gilt `tenant`, eine Angabe beim Login wird nicht beachtet. Benutzer
+    /// anderer Mandanten und des Systembereichs können sich nicht anmelden, ihre Sitzungen gelten nicht mehr.
+    void restrictTo(string tenant) {
+        onlyTenant = tenant;
     }
 
     /** 
@@ -104,7 +111,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @return The result of the login attempt, including a session token if successful.
     **/
     LoginResult login(string tenant, string name, string password, string address) {
-        auto key = userKey(loginTenant(tenant), name.strip.toLower);
+        auto key = userKey(onlyTenant.length ? onlyTenant : loginTenant(tenant), name.strip.toLower);
         auto locked = key in failures;
         enforce!AuthenticationRequired(locked is null || locked.lockedUntil <= now(),
             "Too many failed attempts, try again later");
@@ -164,7 +171,8 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
         if (session is null)
             return Principal.init;
         auto user = session.user in users;
-        if (session.expires <= now() || user is null || !user.active || !tenantActive(user.tenant)) {
+        if (session.expires <= now() || user is null || !user.active || !tenantActive(user.tenant)
+            || (onlyTenant.length && user.tenant != onlyTenant)) {
             sessions.remove(id);
             return Principal.init;
         }
@@ -788,6 +796,14 @@ unittest {
     auto restarted = new AccessService(store, new FakeCrypto);
     assert(restarted.userCount("acme") == 0 && restarted.userCount("globex") == 2);
     assert(restarted.login("globex", "ed", "globex-ed-password").principal.tenant == "globex");
+
+    // Einzelmandanten-Betrieb: die Angabe beim Login zählt nicht, andere Mandanten sind ausgesperrt
+    auto globexSession = restarted.login("globex", "admin", "globex-password1").token;
+    restarted.restrictTo(defaultTenant);
+    assert(!restarted.authenticate(globexSession).authenticated);
+    assert(restarted.authenticate(restarted.login("globex", "admin", pw).token).tenant == defaultTenant);
+    assert(restarted.authenticate(restarted.login("", "admin", pw).token).tenant == defaultTenant);
+    assertThrown!AuthenticationRequired(restarted.login("globex", "admin", "globex-password1"));
 }
 
 /// Eigene Rollen nur im Speicher.

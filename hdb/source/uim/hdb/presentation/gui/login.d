@@ -14,19 +14,33 @@ import gtk.Window;
 /// Gibt den angemeldeten Client zurück oder null.
 HdbClient signIn(Window parent, string serverUrl, string tenant, string user) {
     while (true) {
+        // Ein Einzelmandanten-Server fragt keinen Mandanten ab. Ist er nicht erreichbar, bleibt das Feld da;
+        // der Fehler kommt dann bei der Anmeldung.
+        auto info = ServerInfo.init;
+        try
+            info = new HdbClient(new CurlTransport, serverUrl).info();
+        catch (Exception) {
+        }
         auto form = new FormDialog(parent, "Sign in to hdb", "Sign in");
-        form.text("url", "Server", serverUrl)
-            .text("tenant", "Tenant", tenant)
-            .text("user", "User name", user)
-            .text("password", "Password", "", true)
-            .note("Leave the tenant empty for the default tenant. System administrators use \"system\".");
+        form.text("url", "Server", serverUrl);
+        if (info.tenantLogin)
+            form.text("tenant", "Tenant", tenant);
+        form.text("user", "User name", user)
+            .text("password", "Password", "", true);
+        if (info.tenantLogin)
+            form.note(info.mode == "gateway"
+                    ? "This server forwards each tenant to its database server. Leave the tenant empty for the default tenant."
+                    : "Leave the tenant empty for the default tenant. System administrators use \"system\".");
         scope (exit)
             form.close();
         if (!form.run())
             return null;
+        immutable changedServer = form["url"] != serverUrl;
         serverUrl = form["url"];
-        tenant = form["tenant"];
+        tenant = info.tenantLogin ? form["tenant"] : "";
         user = form["user"];
+        if (changedServer && !info.tenantLogin)
+            continue; // anderer Server: dessen Betriebsart erst abfragen
         HdbClient client;
         if (guarded(parent, {
                 client = new HdbClient(new CurlTransport, serverUrl);

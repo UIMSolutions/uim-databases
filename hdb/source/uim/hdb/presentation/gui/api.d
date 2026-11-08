@@ -92,6 +92,12 @@ struct TenantRow {
     string[] networks;
 }
 
+/// Antwort von /api/v1/info.
+struct ServerInfo {
+    string mode = "multi";
+    bool tenantLogin = true; // false im Einzelmandanten-Betrieb: kein Mandantenfeld
+}
+
 /// Client für die REST-API eines hdb-Servers. Hält das Sitzungstoken; jede Methode ist eine Anfrage.
 final class HdbClient {
     private IHttpTransport transport;
@@ -115,6 +121,18 @@ final class HdbClient {
 
     bool signedIn() const {
         return token.length > 0;
+    }
+
+    /// Betriebsart des Servers (single, multi, gateway), ohne Anmeldung. Ältere Server kennen das nicht: dann multi.
+    ServerInfo info() {
+        try {
+            auto j = call("GET", "/api/v1/info", JSONValue.init, false);
+            return ServerInfo(j["mode"].str, j["tenantLogin"].boolean);
+        } catch (ApiError e) {
+            if (e.status == 404)
+                return ServerInfo("multi", true);
+            throw e;
+        }
     }
 
     /// Meldet an und lädt die Rechte. Ein leerer Mandant ist default.
