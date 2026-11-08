@@ -1,27 +1,68 @@
 module uim.hdb.domain.entities.user;
 
 import uim.hdb;
+import std.algorithm : any;
 
 /// Ein Benutzer gehört zu genau einem Mandanten; der Name ist nur innerhalb des Mandanten eindeutig.
+/// `role` ist seine Rolle im Mandanten (leer: keine), `grants` gibt ihm zusätzlich Rollen für einzelne Tabellen.
 struct HdbUser {
     string name;
     string passwordHash;
-    HdbRole role;
+    string role;
     bool active = true;
     string tenant = defaultTenant;
+    TableGrant[] grants;
 }
 
-/// Die angemeldete Identität einer Anfrage. Der Standardwert ist anonym.
-/// `tenant` bestimmt, welche Daten und welche Benutzer die Anfrage sieht.
+/// Die angemeldete Identität einer Anfrage mit ihren aufgelösten Rechten. Der Standardwert ist anonym.
+/// `tenant` bestimmt, welche Daten und welche Benutzer die Anfrage sieht. Rechte addieren sich: die der Rolle im
+/// Mandanten gelten für alle Tabellen, die aus Tabellenfreigaben nur für die jeweilige Tabelle.
 struct Principal {
     string name;
-    HdbRole role;
     bool authenticated;
     string tenant;
+    string role; // Rolle im Mandanten, nur zur Anzeige
+    PermissionSet permissions; // gilt im ganzen Mandanten bzw. auf dem Server
+    PermissionSet[string] tables; // Schlüssel: Tabellenname klein geschrieben
 
-    /// Systemadministratoren verwalten Mandanten und haben keinen Zugriff auf deren Daten.
+    /// Identität mit einer vordefinierten Rolle, etwa für Tests und Werkzeuge.
+    this(string name, HdbRole builtin, bool authenticated, string tenant = "") {
+        this.name = name;
+        this.authenticated = authenticated;
+        this.tenant = tenant;
+        role = roleName(builtin);
+        foreach (r; builtinRoles(tenant.length ? tenant : defaultTenant))
+            if (r.name == role)
+                permissions = r.permissions;
+    }
+
+    /// Systembenutzer verwalten den Server und haben keinen Zugriff auf Daten der Mandanten.
     bool isSystem() const {
         return authenticated && tenant == systemTenant;
+    }
+
+    bool can(Permission p) const {
+        return authenticated && permissions.has(p);
+    }
+
+    /// Recht auf einer Tabelle: aus der Rolle im Mandanten oder aus einer Freigabe der Tabelle.
+    bool can(Permission p, string table) const {
+        if (can(p))
+            return true;
+        if (!authenticated)
+            return false;
+        auto grant = table.toLower in tables;
+        return grant !is null && grant.has(p);
+    }
+
+    /// Ob die Tabelle in Listen, Statistik und $metadata erscheint: bei irgendeinem Recht auf ihr.
+    bool canSee(string table) const {
+        if (can(Permission.select))
+            return true;
+        if (!authenticated)
+            return false;
+        auto grant = table.toLower in tables;
+        return grant !is null && !grant.empty;
     }
 }
 
@@ -39,6 +80,7 @@ class AccessDenied : Exception {
     }
 }
 
+/// Namen der vordefinierten Rollen.
 string roleName(HdbRole role) {
     final switch (role) {
     case HdbRole.viewer:
@@ -50,76 +92,63 @@ string roleName(HdbRole role) {
     }
 }
 
-HdbRole parseRole(string name) {
-    switch (name.strip.toLower) {
-    case "viewer":
-        return HdbRole.viewer;
-    case "editor":
-        return HdbRole.editor;
-    case "admin":
-        return HdbRole.admin;
-    default:
-        throw new Exception("Unknown role: " ~ name);
-    }
-}
-
-/// Nur für Administratoren des Systembereichs; wirft AuthenticationRequired oder AccessDenied.
-void requireSystemAdmin(Principal principal) {
-    requireRole(principal, HdbRole.admin);
-    if (principal.tenant != systemTenant)
-        throw new AccessDenied("Requires a system administrator");
-}
-
-/// Prüft die Rolle; wirft AuthenticationRequired oder AccessDenied.
-void requireRole(Principal principal, HdbRole role) {
+/// Prüft ein Recht im ganzen Mandanten bzw. auf dem Server; wirft AuthenticationRequired oder AccessDenied.
+void requirePermission(Principal principal, Permission p) {
     if (!principal.authenticated)
         throw new AuthenticationRequired;
-    if (principal.role < role)
-        throw new AccessDenied("Requires role " ~ roleName(role));
+    if (!principal.can(p))
+        throw new AccessDenied("Requires permission " ~ permissionName(p));
 }
 
-/// Nötige Rolle einer Anweisung. Normalisiert wie SqlService.executeIn, damit beide dasselbe Verb sehen;
-/// Unbekanntes verlangt admin.
-HdbRole requiredRole(string statement) {
+/// Prüft ein Recht auf einer Tabelle (Rolle im Mandanten oder Freigabe).
+void requirePermission(Principal principal, Permission p, string table) {
+    if (!principal.authenticated)
+        throw new AuthenticationRequired;
+    if (!principal.can(p, table))
+        throw new AccessDenied("Requires permission " ~ permissionName(p) ~ " on table " ~ table);
+}
+
+/// Nur angemeldet, ohne bestimmtes Recht.
+void requireAuthenticated(Principal principal) {
+    if (!principal.authenticated)
+        throw new AuthenticationRequired;
+}
+
+/// Ob eine Anweisung nur liest. Normalisiert wie SqlService.executeIn, damit beide dasselbe Verb sehen.
+bool isReadOnlyStatement(string statement) {
     auto words = statement.strip.chomp(";").strip.split();
-    if (words.length == 0)
-        return HdbRole.viewer; // leere Anweisung lehnt der Kern ab
-    switch (words[0].toUpper) {
-    case "SELECT":
-        return HdbRole.viewer;
-    case "INSERT":
-    case "UPDATE":
-    case "DELETE":
-    case "BEGIN":
-    case "COMMIT":
-    case "ROLLBACK":
-        return HdbRole.editor;
-    default:
-        return HdbRole.admin;
-    }
+    return words.length == 0 || words[0].toUpper == "SELECT";
 }
 
 unittest {
     import std.exception : assertThrown;
 
-    assert(requiredRole("  select * from t;") == HdbRole.viewer);
-    assert(requiredRole("COMMIT;") == HdbRole.editor);
-    assert(requiredRole("delete from t") == HdbRole.editor);
-    assert(requiredRole("DROP TABLE t") == HdbRole.admin);
-    assert(requiredRole("CREATE TABLE t (a INTEGER)") == HdbRole.admin);
-    assert(requiredRole("VACUUM") == HdbRole.admin);
-    assert(requiredRole("SELECT* FROM t") == HdbRole.admin); // für den Kern kein SELECT
+    assert(isReadOnlyStatement("  select * from t;") && isReadOnlyStatement(""));
+    assert(!isReadOnlyStatement("COMMIT;") && !isReadOnlyStatement("DROP TABLE t") && !isReadOnlyStatement("VACUUM"));
 
-    assert(parseRole(" Editor ") == HdbRole.editor);
-    assertThrown(parseRole("root"));
+    auto viewer = Principal("v", HdbRole.viewer, true);
+    assert(viewer.can(Permission.select) && !viewer.can(Permission.insert) && viewer.role == "viewer");
+    assertThrown!AuthenticationRequired(requirePermission(Principal.init, Permission.select));
+    assertThrown!AccessDenied(requirePermission(viewer, Permission.insert));
+    requirePermission(Principal("a", HdbRole.admin, true), Permission.create);
 
-    assertThrown!AuthenticationRequired(requireRole(Principal.init, HdbRole.viewer));
-    assertThrown!AccessDenied(requireRole(Principal("v", HdbRole.viewer, true), HdbRole.editor));
-    requireRole(Principal("a", HdbRole.admin, true), HdbRole.editor);
+    // Tabellenfreigaben gelten nur für ihre Tabelle und addieren sich zur Rolle
+    Principal p;
+    p.name = "t";
+    p.authenticated = true;
+    p.tables["orders"] = PermissionSet.of(Permission.select, Permission.insert);
+    assert(p.can(Permission.insert, "Orders") && !p.can(Permission.insert, "other") && !p.can(Permission.insert));
+    assert(p.canSee("orders") && !p.canSee("other"));
+    assertThrown!AccessDenied(requirePermission(p, Permission.update, "orders"));
+    requirePermission(p, Permission.insert, "ORDERS");
+    viewer.tables["orders"] = PermissionSet.of(Permission.update);
+    assert(viewer.can(Permission.update, "orders") && viewer.can(Permission.select, "other") && viewer.canSee("x"));
+    p.authenticated = false;
+    assert(!p.can(Permission.select, "orders") && !p.canSee("orders"));
 
-    assertThrown!AccessDenied(requireSystemAdmin(Principal("a", HdbRole.admin, true, defaultTenant)));
-    assertThrown!AccessDenied(requireSystemAdmin(Principal("s", HdbRole.editor, true, systemTenant)));
-    assertThrown!AuthenticationRequired(requireSystemAdmin(Principal.init));
-    requireSystemAdmin(Principal("s", HdbRole.admin, true, systemTenant));
-    assert(Principal("s", HdbRole.viewer, true, systemTenant).isSystem && !Principal("s", HdbRole.admin, false, systemTenant).isSystem);
+    // Serverrechte gibt es nur im Bereich system
+    auto sys = Principal("s", HdbRole.admin, true, systemTenant);
+    assert(sys.isSystem && sys.can(Permission.manageTenants) && !sys.can(Permission.select));
+    assert(!Principal("a", HdbRole.admin, true, defaultTenant).can(Permission.viewTenants));
+    assert(!Principal("s", HdbRole.editor, true, systemTenant).can(Permission.viewTenants)); // keine Systemrolle
 }

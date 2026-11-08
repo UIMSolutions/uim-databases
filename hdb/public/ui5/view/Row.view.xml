@@ -5,8 +5,8 @@
 			<f:DynamicPageTitle>
 				<f:heading><Title text="{view>/title}" wrapping="true"/></f:heading>
 				<f:actions>
-					<Button id="edit" text="{i18n>edit}" type="Emphasized" visible="{= ${app>/canWrite} &amp;&amp; !${view>/editing} }" press=".onEdit"/>
-					<Button id="delete" text="{i18n>delete}" visible="{= ${app>/canWrite} &amp;&amp; !${view>/editing} }" press=".onDelete"/>
+					<Button id="edit" text="{i18n>edit}" type="Emphasized" visible="{= ${app>/canUpdate} &amp;&amp; !${view>/editing} }" press=".onEdit"/>
+					<Button id="delete" text="{i18n>delete}" visible="{= ${app>/canDelete} &amp;&amp; !${view>/editing} }" press=".onDelete"/>
 				</f:actions>
 				<f:navigationActions>
 					<Button icon="sap-icon://decline" tooltip="{i18n>close}" type="Transparent" press=".onClose"/>

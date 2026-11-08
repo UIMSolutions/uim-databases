@@ -32,12 +32,12 @@ final class BackupService : IBackupUseCase, IBackupScheduler {
     }
 
     BackupInfo[] list() {
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageBackups);
         return store.list();
     }
 
     BackupInfo create(string label) {
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageBackups);
         // Diese Namen löscht die Aufbewahrung: eine eigene Sicherung darf nie darunter fallen
         auto normalized = label.strip.toLower.replace(" ", "-");
         enforce(normalized != scheduledLabel && normalized != safetyLabel, "This label is reserved: " ~ label);
@@ -47,7 +47,7 @@ final class BackupService : IBackupUseCase, IBackupScheduler {
     /// Reihenfolge: Sicherung prüfen, Sicherheitskopie anlegen, ersetzen, im Fehlerfall zurückspielen.
     /// Die Sicherheitskopie bleibt liegen, damit sich auch eine erfolgreiche Wiederherstellung rückgängig machen lässt.
     BackupInfo restore(string name) {
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageBackups);
         auto target = store.load(name);
         auto previous = database.snapshot();
         auto safety = store.save(safetyLabel, previous);
@@ -71,27 +71,27 @@ final class BackupService : IBackupUseCase, IBackupScheduler {
     }
 
     void remove(string name) {
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageBackups);
         store.remove(name);
     }
 
     string download(string name) {
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageBackups);
         return store.read(name);
     }
 
     BackupInfo upload(string content) {
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageBackups);
         return store.store(content);
     }
 
     BackupSchedule schedule() {
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageBackups);
         return withNextRun(store.loadSchedule());
     }
 
     BackupSchedule updateSchedule(bool enabled, int intervalHours, int keepScheduled, int keepSafety) {
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageBackups);
         enforce(intervalHours >= 1 && intervalHours <= 8760, "The interval must be between 1 and 8760 hours");
         enforce(keepScheduled >= 1 && keepScheduled <= 1000, "Keep between 1 and 1000 scheduled backups");
         enforce(keepSafety >= 1 && keepSafety <= 1000, "Keep between 1 and 1000 safety backups");

@@ -19,7 +19,7 @@
 							<tnt:NavigationList>
 								<tnt:NavigationListItem key="home" text="{i18n>tables}" icon="sap-icon://table-view"/>
 								<tnt:NavigationListItem key="statistics" text="{i18n>statistics}" icon="sap-icon://vertical-bar-chart"/>
-								<tnt:NavigationListItem key="backups" text="{i18n>backups}" icon="sap-icon://product" visible="{app>/isAdmin}"/>
+								<tnt:NavigationListItem key="backups" text="{i18n>backups}" icon="sap-icon://product" visible="{app>/canBackups}"/>
 							</tnt:NavigationList>
 						</tnt:item>
 						<tnt:fixedItem>

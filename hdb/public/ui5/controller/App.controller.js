@@ -28,6 +28,10 @@ sap.ui.define([
 			});
 			router.attachRouteMatched(function (event) {
 				const route = event.getParameter("name");
+				const args = event.getParameter("arguments") || {};
+				if (args.set) {
+					component.showTableRights(args.set);
+				}
 				app.setProperty("/navKey", route === "table" || route === "row" ? "home" : route);
 			});
 			const showMid = function (id, layout) {
@@ -63,7 +67,7 @@ sap.ui.define([
 				return language.key === component.getLanguage();
 			});
 			this._openSheet(bundle.getText("profileTitle", [app.getProperty("/user"), app.getProperty("/role"), app.getProperty("/userTenant")]), avatar, [
-				new Button({ text: bundle.getText("backups"), icon: "sap-icon://product", visible: app.getProperty("/isAdmin"), press: function () {
+				new Button({ text: bundle.getText("backups"), icon: "sap-icon://product", visible: app.getProperty("/canBackups"), press: function () {
 					component.getRouter().navTo("backups");
 				} }),
 				new Button({ text: bundle.getText("adminConsole"), icon: "sap-icon://action-settings", press: function () {

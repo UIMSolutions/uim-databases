@@ -19,9 +19,35 @@ struct RestStatus {
 
 struct RestUser {
     string name;
-    string role; // viewer, editor oder admin
+    string role; // Rolle im Mandanten (vordefiniert oder eigene), leer: keine
     bool active;
-    @optional string tenant; // Mandant; system für Systemadministratoren
+    @optional string tenant; // Mandant; system für Systembenutzer
+    @optional RestGrant[] grants; // Tabellenfreigaben
+}
+
+/// Rolle für eine einzelne Tabelle; davon gelten nur select, insert, update, delete und drop.
+struct RestGrant {
+    string table;
+    string role;
+}
+
+struct RestRole {
+    string name, description;
+    string[] permissions;
+    bool builtin;
+    long users;
+}
+
+/// Rechte der angemeldeten Identität: im ganzen Mandanten (bzw. auf dem Server) und je Tabelle.
+struct RestTableAccess {
+    string table;
+    string[] permissions;
+}
+
+struct RestMe {
+    string name, role, tenant;
+    string[] permissions;
+    RestTableAccess[] tables;
 }
 
 struct RestTenant {
@@ -108,7 +134,21 @@ RestTenant toRest(TenantInfo t) {
 }
 
 RestUser toRest(UserInfo u) {
-    return RestUser(u.name, roleName(u.role), u.active, u.tenant);
+    return RestUser(u.name, u.role, u.active, u.tenant, u.grants.map!(g => RestGrant(g.table, g.role)).array);
+}
+
+RestRole toRest(RoleInfo r) {
+    return RestRole(r.name, r.description, r.permissions, r.builtin, r.users);
+}
+
+RestMe toRestMe(Principal p) {
+    import std.algorithm : sort;
+
+    RestMe me = RestMe(p.name, p.role, p.tenant, p.permissions.names);
+    foreach (table, set; p.tables)
+        me.tables ~= RestTableAccess(table, set.names);
+    me.tables.sort!((a, b) => a.table < b.table);
+    return me;
 }
 
 Json toRestJson(Value v) {

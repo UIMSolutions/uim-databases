@@ -134,7 +134,7 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
 
     QueryResult executeIn(string txId, string sql) {
         auto e = engine();
-        if (requiredRole(sql) > HdbRole.viewer)
+        if (!isReadOnlyStatement(sql))
             requireWritable(e);
         return e.sql.executeIn(txId, sql);
     }
@@ -201,37 +201,37 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
     // IReplicationUseCase: lesen darf jeder Benutzer des Mandanten, er sieht über SELECT ohnehin alle Daten
     ReplicationSnapshot replicationSnapshot() {
         auto e = engine();
-        requireRole(current(), HdbRole.viewer);
+        requirePermission(current(), Permission.replicate);
         return e.replication.snapshot();
     }
 
     ChangeBatch replicationChanges(string epoch, ulong since, size_t limit) {
         auto e = engine();
-        requireRole(current(), HdbRole.viewer);
+        requirePermission(current(), Permission.replicate);
         return e.replication.changes(epoch, since, limit);
     }
 
     ReplicationStatus replicationStatus() {
         auto e = engine();
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageReplication);
         return e.replication.status();
     }
 
     ReplicationStatus configureReplica(ReplicationConfig config) {
         auto e = engine();
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageReplication);
         return e.replication.configure(config);
     }
 
     ReplicationStatus stopReplica() {
         auto e = engine();
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageReplication);
         return e.replication.stop();
     }
 
     ReplicationStatus resyncReplica() {
         auto e = engine();
-        requireRole(current(), HdbRole.admin);
+        requirePermission(current(), Permission.manageReplication);
         return e.replication.resync();
     }
 
@@ -266,7 +266,7 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
     }
 }
 
-/// Mandanten anlegen, ändern und löschen. Nur Systemadministratoren dürfen das.
+/// Mandanten anlegen, ändern und löschen (Recht manageTenants) und auflisten (viewTenants), beides nur im Bereich system.
 final class TenantService : ITenantUseCase {
     private TenantRegistry registry;
     private ITenantAccounts accounts;
@@ -281,14 +281,14 @@ final class TenantService : ITenantUseCase {
     }
 
     TenantInfo[] listTenants(Principal actor) {
-        requireSystemAdmin(actor);
+        requirePermission(actor, Permission.viewTenants);
         return registry.all().map!(t => info(t)).array;
     }
 
     /// Reihenfolge: prüfen, eintragen, Datenbank anlegen, Administrator anlegen. Scheitert ein Schritt,
     /// werden die vorigen zurückgenommen.
     TenantInfo createTenant(Principal actor, string name, string label, string adminName, string adminPassword) {
-        requireSystemAdmin(actor);
+        requirePermission(actor, Permission.manageTenants);
         auto normalized = validTenantName(name);
         enforce(normalized != systemTenant, "This tenant name is reserved: " ~ normalized);
         enforce(!registry.has(normalized), "Tenant already exists: " ~ normalized);
@@ -315,7 +315,7 @@ final class TenantService : ITenantUseCase {
     }
 
     TenantInfo updateTenant(Principal actor, string name, string label, bool active) {
-        requireSystemAdmin(actor);
+        requirePermission(actor, Permission.manageTenants);
         auto tenant = registry.get(validTenantName(name));
         tenant.label = cleanLabel(label, tenant.name);
         tenant.active = active;
@@ -328,7 +328,7 @@ final class TenantService : ITenantUseCase {
     /// Erst austragen und die Benutzer löschen, dann die Daten: bricht das Löschen der Dateien ab, ist der Mandant
     /// trotzdem nicht mehr erreichbar, und die Meldung nennt, was übrig ist.
     void deleteTenant(Principal actor, string name) {
-        requireSystemAdmin(actor);
+        requirePermission(actor, Permission.manageTenants);
         auto tenant = registry.get(validTenantName(name));
         enforce(!tenant.active, "Deactivate tenant " ~ tenant.name ~ " before deleting it");
         registry.remove(tenant.name);

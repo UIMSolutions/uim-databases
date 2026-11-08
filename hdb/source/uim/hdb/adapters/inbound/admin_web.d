@@ -6,7 +6,7 @@ import uim.hdb.adapters.inbound.security : currentPrincipal, sessionCookie;
 import uim.hdb.domain.entities.user;
 import uim.hdb.domain.value;
 import core.time : MonoTime;
-import std.algorithm : all, any, canFind, map, max, min, startsWith;
+import std.algorithm : all, any, canFind, filter, map, max, min, startsWith;
 import std.array : array, join, replace;
 import std.conv : to;
 import std.exception : enforce;
@@ -30,7 +30,8 @@ struct AdminPage {
     string replicaOf; // Quelle, wenn der Mandant ein schreibgeschütztes Ziel ist (nur für Administratoren ermittelt)
     string userName, roleLabel;
     string tenant; // Mandant des Benutzers
-    bool canWrite, isAdmin;
+    // Rechte im ganzen Mandanten bzw. auf dem Server; Tabellenrechte stehen in TableView
+    bool canCreate, canMaintain, canManageAccess, canManageBackups, canManageReplication, canViewTenants;
     bool isSystem; // Systemadministrator: nur Mandanten, Benutzer des Systembereichs und das eigene Konto
     string ok;
     string err;
@@ -82,6 +83,7 @@ struct StatsView {
 struct TableView {
     string name;
     string storage;
+    bool canInsert, canUpdate, canDelete, canDrop; // Rolle im Mandanten oder Freigabe der Tabelle
     ColumnInfo[] columns;
     RowView[] rows;
     size_t live, deleted, matching;
@@ -136,12 +138,35 @@ struct TableView {
 
 struct UsersView {
     UserRow[] users;
-    string[] roles;
+    string[] roles; // Namen aller Rollen des Bereichs
+    bool tables; // Tabellenfreigaben gibt es nur in Mandanten
 }
 
 struct UserRow {
     string name, role;
     bool active, self;
+    size_t grants;
+}
+
+struct RoleRow {
+    string name, description;
+    string[] permissions;
+    string permissionList; // durch Leerzeichen getrennt, für das Bearbeiten im Dialog
+    bool builtin;
+    size_t users;
+}
+
+struct RolesView {
+    RoleRow[] roles;
+    string[] allowed; // Rechte, die in diesem Bereich vergeben werden können
+    string tableOnly; // Rechte, die auch je Tabelle gelten, als Text
+}
+
+struct GrantsView {
+    string user, role;
+    TableGrant[] grants;
+    string[] roles; // Rollen mit Tabellenrechten
+    string[] tables; // bekannte Tabellen, als Vorschläge
 }
 
 struct TenantRow {
@@ -217,6 +242,11 @@ final class SqlAdminUi {
         router.post("/admin/users/:user/update", &updateUser);
         router.post("/admin/users/:user/password", &resetPassword);
         router.post("/admin/users/:user/delete", &deleteUser);
+        router.get("/admin/users/:user/grants", &grantsPage);
+        router.post("/admin/users/:user/grants", &changeGrants);
+        router.get("/admin/roles", &rolesPage);
+        router.post("/admin/roles", &saveRole);
+        router.post("/admin/roles/:role/delete", &deleteRole);
         router.get("/admin/tenants", &tenantList);
         router.post("/admin/tenants", &createTenant);
         router.post("/admin/tenants/:tenant/update", &updateTenant);
@@ -266,18 +296,22 @@ final class SqlAdminUi {
         p.err = req.query.get("err", "");
         auto me = currentPrincipal();
         p.userName = me.name;
-        p.roleLabel = roleName(me.role);
+        p.roleLabel = me.role.length ? me.role : "table access only";
         p.tenant = me.tenant;
         p.isSystem = me.isSystem;
-        p.canWrite = !p.isSystem && me.role >= HdbRole.editor;
-        p.isAdmin = me.role == HdbRole.admin;
+        p.canCreate = me.can(Permission.create);
+        p.canMaintain = me.can(Permission.maintain);
+        p.canManageAccess = me.can(Permission.manageAccess);
+        p.canManageBackups = me.can(Permission.manageBackups);
+        p.canManageReplication = me.can(Permission.manageReplication);
+        p.canViewTenants = me.can(Permission.viewTenants);
         if (p.isSystem)
             return p;
         try
             p.tables = sql.listTables();
         catch (Exception)
             p.locked = true;
-        if (p.isAdmin)
+        if (p.canManageReplication)
             try {
                 auto status = replication.replicationStatus();
                 if (status.replica)
@@ -407,10 +441,11 @@ final class SqlAdminUi {
         UsersView view;
         try {
             foreach (u; access.listUsers(me))
-                view.users ~= UserRow(u.name, roleName(u.role), u.active, u.name == me.name);
+                view.users ~= UserRow(u.name, u.role, u.active, u.name == me.name, u.grants.length);
+            view.roles = access.listRoles(me).map!(r => r.name).array;
         } catch (AccessDenied e)
             return renderError(req, res, HTTPStatus.forbidden, e.msg);
-        view.roles = [roleName(HdbRole.viewer), roleName(HdbRole.editor), roleName(HdbRole.admin)];
+        view.tables = !me.isSystem;
         auto page = pageFor(req, "Users", "users");
         res.render!("users.dt", page, view);
     }
@@ -418,16 +453,16 @@ final class SqlAdminUi {
     private void createUser(HTTPServerRequest req, HTTPServerResponse res) {
         act(req, res, "/admin/users", {
             auto u = access.createUser(currentPrincipal(), req.form.get("user", ""), matchingPasswords(req),
-                parseRole(req.form.get("role", "")));
-            return "HdbUser " ~ u.name ~ " created";
+                req.form.get("role", ""));
+            return "User " ~ u.name ~ " created";
         });
     }
 
     private void updateUser(HTTPServerRequest req, HTTPServerResponse res) {
         act(req, res, "/admin/users", {
-            auto u = access.updateUser(currentPrincipal(), req.params["user"], parseRole(req.form.get("role", "")),
+            auto u = access.updateUser(currentPrincipal(), req.params["user"], req.form.get("role", ""),
                 req.form.get("active", "") == "1");
-            return "HdbUser " ~ u.name ~ " updated";
+            return "User " ~ u.name ~ " updated";
         });
     }
 
@@ -441,7 +476,86 @@ final class SqlAdminUi {
     private void deleteUser(HTTPServerRequest req, HTTPServerResponse res) {
         act(req, res, "/admin/users", {
             access.deleteUser(currentPrincipal(), req.params["user"]);
-            return "HdbUser " ~ req.params["user"] ~ " deleted";
+            return "User " ~ req.params["user"] ~ " deleted";
+        });
+    }
+
+    private void grantsPage(HTTPServerRequest req, HTTPServerResponse res) {
+        auto me = currentPrincipal();
+        GrantsView view;
+        try {
+            enforce!AccessDenied(!me.isSystem, "The system area has no tables");
+            auto name = req.params["user"].toLower;
+            bool found;
+            foreach (u; access.listUsers(me))
+                if (u.name == name) {
+                    view = GrantsView(u.name, u.role, u.grants);
+                    found = true;
+                }
+            if (!found)
+                return renderError(req, res, HTTPStatus.notFound, "User not found: " ~ name);
+            foreach (r; access.listRoles(me))
+                if (!(PermissionSet.parse(r.permissions) & tablePermissions).empty)
+                    view.roles ~= r.name;
+        } catch (AccessDenied e)
+            return renderError(req, res, HTTPStatus.forbidden, e.msg);
+        try
+            view.tables = sql.listTables(); // nur Vorschläge: Freigaben dürfen auch noch fehlende Tabellen nennen
+        catch (Exception) {
+        }
+        auto page = pageFor(req, "Table access: " ~ view.user, "users");
+        res.render!("grants.dt", page, view);
+    }
+
+    /// Hinzufügen oder Entfernen einer Freigabe; gespeichert wird immer die ganze Liste.
+    private void changeGrants(HTTPServerRequest req, HTTPServerResponse res) {
+        auto name = req.params["user"].toLower;
+        act(req, res, "/admin/users/" ~ name ~ "/grants", {
+            auto me = currentPrincipal();
+            TableGrant[] grants;
+            foreach (u; access.listUsers(me))
+                if (u.name == name)
+                    grants = u.grants;
+            auto table = req.form.get("table", "").strip.toLower;
+            auto role = req.form.get("role", "").strip.toLower;
+            if (req.form.get("action", "") == "remove") {
+                grants = grants.filter!(g => !(g.table == table && g.role == role)).array;
+                access.setGrants(me, name, grants);
+                return "Removed role " ~ role ~ " on table " ~ table;
+            }
+            access.setGrants(me, name, grants ~ TableGrant(table, role));
+            return "Granted role " ~ role ~ " on table " ~ table;
+        });
+    }
+
+    private void rolesPage(HTTPServerRequest req, HTTPServerResponse res) {
+        auto me = currentPrincipal();
+        RolesView view;
+        try {
+            foreach (r; access.listRoles(me))
+                view.roles ~= RoleRow(r.name, r.description, r.permissions, r.permissions.join(" "), r.builtin, r.users);
+        } catch (AccessDenied e)
+            return renderError(req, res, HTTPStatus.forbidden, e.msg);
+        view.allowed = allowedPermissions(me.tenant).names;
+        view.tableOnly = tablePermissions.names.join(", ");
+        auto page = pageFor(req, "Roles", "roles");
+        res.render!("roles.dt", page, view);
+    }
+
+    private void saveRole(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/roles", {
+            string[] permissions;
+            foreach (p; req.form.getAll("permission"))
+                permissions ~= p;
+            auto r = access.saveRole(currentPrincipal(), req.form.get("role", ""), req.form.get("description", ""), permissions);
+            return "Role " ~ r.name ~ " saved";
+        });
+    }
+
+    private void deleteRole(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/roles", {
+            access.deleteRole(currentPrincipal(), req.params["role"]);
+            return "Role " ~ req.params["role"] ~ " deleted";
         });
     }
 
@@ -512,7 +626,7 @@ final class SqlAdminUi {
 
     private void uploadBackup(HTTPServerRequest req, HTTPServerResponse res) {
         act(req, res, "/admin/backups", {
-            requireRole(currentPrincipal(), HdbRole.admin); // vor dem Lesen der Datei
+            requirePermission(currentPrincipal(), Permission.manageBackups); // vor dem Lesen der Datei
             auto file = "file" in req.files;
             enforce(file !is null, "Choose a backup file");
             return "Backup " ~ backups.upload(readText(file.tempPath.toString)).name ~ " uploaded";
@@ -635,6 +749,11 @@ final class SqlAdminUi {
             view.rows = r.rows.map!(rowView).array;
         } catch (Exception e)
             view.queryError = e.msg;
+        auto me = currentPrincipal();
+        view.canInsert = me.can(Permission.insert, view.name);
+        view.canUpdate = me.can(Permission.update, view.name);
+        view.canDelete = me.can(Permission.delete_, view.name);
+        view.canDrop = me.can(Permission.drop, view.name);
         res.render!("table_view.dt", page, view);
     }
 

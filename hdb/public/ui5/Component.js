@@ -21,7 +21,8 @@ sap.ui.define([
 		init: function () {
 			UIComponent.prototype.init.apply(this, arguments);
 			this.setModel(new JSONModel({
-				authenticated: false, busy: true, user: "", role: "", userTenant: "", canWrite: false, isAdmin: false,
+				authenticated: false, busy: true, user: "", role: "", userTenant: "", permissions: [], tablePermissions: {},
+				canBackups: false, canInsert: false, canUpdate: false, canDelete: false,
 				layout: "OneColumn", navKey: "home", sets: [], loginError: "", tenant: this._rememberedTenant()
 			}), "app");
 			this._viewsReady = new Promise(function (resolve) {
@@ -142,10 +143,40 @@ sap.ui.define([
 				}));
 				app.setData(Object.assign(app.getData(), {
 					authenticated: true, busy: false, user: me.name, role: me.role, userTenant: me.tenant, tenant: me.tenant,
-					canWrite: me.role !== "viewer", isAdmin: me.role === "admin", loginError: ""
+					permissions: me.permissions || [], tablePermissions: this._byTable(me.tables),
+					canBackups: (me.permissions || []).indexOf("manageBackups") >= 0, loginError: ""
 				}));
 				return this.loadEntitySets();
 			}.bind(this)).then(this._startRouting.bind(this));
+		},
+
+		_byTable: function (tables) {
+			const result = {};
+			(tables || []).forEach(function (entry) {
+				result[entry.table] = entry.permissions;
+			});
+			return result;
+		},
+
+		/**
+		 * Recht auf einer Tabelle: aus der Rolle im Mandanten oder aus einer Freigabe der Tabelle. Nur für die
+		 * Anzeige; der Server prüft jede Anfrage selbst.
+		 */
+		can: function (permission, table) {
+			const app = this.getModel("app");
+			if (app.getProperty("/permissions").indexOf(permission) >= 0) {
+				return true;
+			}
+			const granted = app.getProperty("/tablePermissions")[(table || "").toLowerCase()];
+			return Boolean(granted && granted.indexOf(permission) >= 0);
+		},
+
+		/** Schaltflächen der geöffneten Tabelle an ihre Rechte anpassen. */
+		showTableRights: function (table) {
+			const app = this.getModel("app");
+			app.setProperty("/canInsert", this.can("insert", table));
+			app.setProperty("/canUpdate", this.can("update", table));
+			app.setProperty("/canDelete", this.can("delete", table));
 		},
 
 		/** Entity Sets und ihre Spalten kommen aus $metadata: neue Tabellen brauchen keine Änderung am Client. */
@@ -195,7 +226,8 @@ sap.ui.define([
 			}
 			const app = this.getModel("app");
 			app.setData(Object.assign(app.getData(), {
-				authenticated: false, busy: false, user: "", role: "", userTenant: "", canWrite: false, isAdmin: false,
+				authenticated: false, busy: false, user: "", role: "", userTenant: "", permissions: [], tablePermissions: {},
+				canBackups: false, canInsert: false, canUpdate: false, canDelete: false,
 				layout: "OneColumn", navKey: "home", sets: [], loginError: message || ""
 			}));
 			sap.ui.getCore().getEventBus().publish("hdb", "sessionEnded");

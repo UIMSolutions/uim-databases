@@ -143,7 +143,7 @@ final class AuthRestApi : IAuthRestApi {
 @trusted:
     RestLogin login(string user, string password, string tenant) {
         auto r = access.login(tenant, user, password);
-        return RestLogin(r.token, r.expiresInSeconds, RestUser(r.principal.name, roleName(r.principal.role), true, r.principal.tenant));
+        return RestLogin(r.token, r.expiresInSeconds, RestUser(r.principal.name, r.principal.role, true, r.principal.tenant));
     }
 
     RestStatus logout(string authorization) {
@@ -151,10 +151,10 @@ final class AuthRestApi : IAuthRestApi {
         return RestStatus("LOGGED_OUT");
     }
 
-    RestUser me() {
+    RestMe me() {
         auto p = current();
-        requireRole(p, HdbRole.viewer);
-        return RestUser(p.name, roleName(p.role), true, p.tenant);
+        requireAuthenticated(p);
+        return toRestMe(p);
     }
 
     RestStatus changePassword(string oldPassword, string replacement) {
@@ -178,11 +178,11 @@ final class UserRestApi : IUserRestApi {
     }
 
     RestUser create(string name, string password, string role) {
-        return toRest(access.createUser(current(), name, password, parseRole(role)));
+        return toRest(access.createUser(current(), name, password, role));
     }
 
     RestUser update(string _name, string role, bool active) {
-        return toRest(access.updateUser(current(), _name, parseRole(role), active));
+        return toRest(access.updateUser(current(), _name, role, active));
     }
 
     RestStatus resetPassword(string _name, string password) {
@@ -192,6 +192,23 @@ final class UserRestApi : IUserRestApi {
 
     RestStatus remove(string _name) {
         access.deleteUser(current(), _name);
+        return RestStatus("DELETED");
+    }
+
+    RestUser setGrants(string _name, RestGrant[] grants) {
+        return toRest(access.setGrants(current(), _name, grants.map!(g => TableGrant(g.table, g.role)).array));
+    }
+
+    RestRole[] roles() {
+        return access.listRoles(current()).map!(r => toRest(r)).array;
+    }
+
+    RestRole saveRole(string _name, string[] permissions, string description) {
+        return toRest(access.saveRole(current(), _name, description, permissions));
+    }
+
+    RestStatus removeRole(string _name) {
+        access.deleteRole(current(), _name);
         return RestStatus("DELETED");
     }
 }
@@ -371,7 +388,7 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
     registerReplicationRoutes(router, replication);
     router.post("/api/v1/backups/import", (HTTPServerRequest req, HTTPServerResponse res) {
         try {
-            requireRole(current(), HdbRole.admin); // vor dem Lesen des Rumpfs
+            requirePermission(current(), Permission.manageBackups); // vor dem Lesen des Rumpfs
             res.statusCode = HTTPStatus.created;
             res.writeJsonBody(serializeToJson(toRest(backups.upload(req.bodyReader.readAllUTF8()))));
         } catch (Exception e)
@@ -599,6 +616,39 @@ unittest {
             assert(statusOf({ backups.restore("missing.hdbbak"); }) == 404);
             assert(statusOf({ backups.remove("../x.hdbbak"); }) == 404);
             assert(backups.remove(saved.name).status == "DELETED");
+
+            // RBAC über die API: eigene Rolle, Benutzer ohne Rolle, Zugriff nur auf freigegebene Tabellen
+            tables.create("hidden", [RestColumnDef("x", "INTEGER")]);
+            auto clerk = users.saveRole("clerk", ["select", "insert"], "Enters rows");
+            assert(clerk.permissions == ["select", "insert"] && !clerk.builtin);
+            assert(users.roles().map!(r => r.name).array == ["viewer", "editor", "admin", "clerk"]);
+            assert(statusOf({ users.saveRole("admin", ["select"]); }) == 400);
+            assert(statusOf({ users.saveRole("bad", ["manageTenants"]); }) == 400);
+            users.create("tina", "correct-horse-tina", "");
+            auto granted = users.setGrants("tina", [RestGrant("T", "clerk")]);
+            assert(granted.grants == [RestGrant("t", "clerk")] && granted.role == "");
+            auto tinaToken = client!IAuthRestApi("").login("tina", "correct-horse-tina").token;
+            auto tinaMe = client!IAuthRestApi(tinaToken).me();
+            assert(tinaMe.permissions.length == 0 && tinaMe.tables == [RestTableAccess("t", ["select", "insert"])]);
+            auto tinaTables = client!ITableRestApi(tinaToken);
+            assert(tinaTables.list() == ["t"]); // hidden bleibt verborgen
+            assert(tinaTables.insert("t", [Json(50), Json("tina"), Json(1)]).affected == 1);
+            // verborgen wie nicht vorhanden: 404, die Existenz wird nicht verraten
+            assert(statusOf({ tinaTables.rows("hidden", "", "", false, 10, 0); }) == 404);
+            assert(statusOf({ tinaTables.rows("nothere", "", "", false, 10, 0); }) == 404);
+            assert(statusOf({ tinaTables.drop("t"); }) == 403);
+            assert(statusOf({ client!ISqlRestApi(tinaToken).execute("SELECT * FROM t JOIN hidden h ON t.id = h.x", "", ""); }) == 403);
+            assert(statusOf({ client!ISqlRestApi(tinaToken).execute("DELETE FROM t", "", ""); }) == 403);
+            assert(statusOf({ client!IUserRestApi(tinaToken).roles(); }) == 403);
+            assert(client!IAuthRestApi(token).me().permissions.length == 12); // admin: alle Mandantenrechte
+            assert(statusOf({ users.removeRole("clerk"); }) == 400); // noch verwendet
+            users.setGrants("tina", []);
+            assert(tinaTables.list().length == 0); // ohne Freigaben sieht sie nichts
+            users.remove("tina");
+            assert(users.removeRole("clerk").status == "DELETED");
+            tables.drop("hidden");
+            tables.rows("t", "id = 50", "", false, 10, 0); // die Zeile von tina ist da
+            sql.execute("DELETE FROM t WHERE id = 50", "", "");
 
             // Mandanten: nur der Systemadministrator verwaltet sie und sieht keine Daten
             assert(statusOf({ client!ITenantRestApi(token).list(); }) == 403);

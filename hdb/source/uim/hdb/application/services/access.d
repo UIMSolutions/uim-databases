@@ -2,7 +2,8 @@ module uim.hdb.application.services.access;
 
 import uim.hdb;
 import core.time : Duration, hours, minutes, MonoTime;
-import std.algorithm : all, canFind, count, filter, map, sort;
+import std.algorithm : all, any, canFind, count, filter, map, sort;
+import std.conv : to;
 import std.array : array;
 import std.ascii : isAlphaNum;
 import std.digest : toHexString;
@@ -37,20 +38,26 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
     private MonoTime delegate() now;
     private bool delegate(string) tenantActive;
     private HdbUser[string] users; // Schlüssel: userKey
+    private IRoleStore roleStore;
+    private RoleDef[string] customRoles; // Schlüssel: userKey(Bereich, Rollenname)
     private Session[string] sessions; // Schlüssel: SHA-256 des Tokens
     private Failures[string] failures;
     private string dummyHash; // unbekannte Namen kosten dieselbe Zeit wie bekannte
     private int loginsInFlight;
 
     /// `tenantActive` sagt, ob ein Mandant existiert und aktiv ist; ohne gelten alle als aktiv.
+    /// Ohne `roleStore` gibt es eigene Rollen nur bis zum Neustart.
     this(IUserStore store, ICredentialCrypto crypto, MonoTime delegate() now = null,
-        bool delegate(string) tenantActive = null) {
+        bool delegate(string) tenantActive = null, IRoleStore roleStore = null) {
         this.store = store;
         this.crypto = crypto;
         this.now = now !is null ? now : () => MonoTime.currTime;
         this.tenantActive = tenantActive !is null ? tenantActive : (string) => true;
+        this.roleStore = roleStore !is null ? roleStore : new MemoryRoleStore;
         foreach (u; store.load())
             users[userKey(u.tenant, u.name)] = u;
+        foreach (r; this.roleStore.load())
+            customRoles[userKey(r.tenant, r.name)] = r;
         dummyHash = crypto.hashPassword(crypto.randomSecret());
     }
 
@@ -68,7 +75,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
             return "";
         auto generated = password.length ? "" : crypto.randomSecret();
         auto normalized = validName(name);
-        commit(HdbUser(normalized, crypto.hashPassword(password.length ? password : generated), HdbRole.admin, true, tenant));
+        commit(HdbUser(normalized, crypto.hashPassword(password.length ? password : generated), "admin", true, tenant));
         return generated;
     }
 
@@ -153,7 +160,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @param replacement The new password to set.
     **/
     void changeOwnPassword(Principal actor, string current, string replacement) {
-        requireRole(actor, HdbRole.viewer);
+        requireAuthenticated(actor);
         auto user = userKey(actor.tenant, actor.name) in users;
         enforce!AuthenticationRequired(user !is null);
         enforce(crypto.verifyPassword(current, user.passwordHash), "Current password is wrong");
@@ -167,7 +174,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @return An array of user information for all users of the actor's tenant.
     **/
     UserInfo[] listUsers(Principal actor) {
-        requireRole(actor, HdbRole.admin);
+        requirePermission(actor, Permission.manageAccess);
         auto result = users.values.filter!(u => u.tenant == actor.tenant).map!(u => info(u)).array;
         result.sort!((a, b) => a.name < b.name);
         return result;
@@ -182,9 +189,14 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @param role The role to assign to the new user.
      *  @return The information of the newly created user.
     **/
+    UserInfo createUser(Principal actor, string name, string password, string role) {
+        requirePermission(actor, Permission.manageAccess);
+        return info(addUser(actor.tenant, name, password, assignableRole(actor.tenant, role)));
+    }
+
+    /// Mit einer vordefinierten Rolle.
     UserInfo createUser(Principal actor, string name, string password, HdbRole role) {
-        requireRole(actor, HdbRole.admin);
-        return info(addUser(actor.tenant, name, password, role));
+        return createUser(actor, name, password, roleName(role));
     }
 
     /** 
@@ -196,17 +208,93 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @param active The new active status of the user.
      *  @return The updated user information.
     **/
-    UserInfo updateUser(Principal actor, string name, HdbRole role, bool active) {
-        requireRole(actor, HdbRole.admin);
+    UserInfo updateUser(Principal actor, string name, string role, bool active) {
+        requirePermission(actor, Permission.manageAccess);
         auto user = find(actor.tenant, name);
-        if (role != HdbRole.admin || !active)
-            requireOtherAdmin(user);
-        user.role = role;
+        user.role = assignableRole(actor.tenant, role);
         user.active = active;
+        auto next = users.dup;
+        next[userKey(user.tenant, user.name)] = user;
+        requireManager(user.tenant, next, customRoles);
         commit(user);
         if (!active)
             revokeSessions(userKey(user.tenant, user.name));
         return info(user);
+    }
+
+    /// Mit einer vordefinierten Rolle.
+    UserInfo updateUser(Principal actor, string name, HdbRole role, bool active) {
+        return updateUser(actor, name, roleName(role), active);
+    }
+
+    /// Ersetzt die Tabellenfreigaben. Jede Freigabe nennt eine Tabelle und eine Rolle des Mandanten, von der nur die
+    /// Tabellenrechte gelten. Ob die Tabelle existiert, wird nicht geprüft: Freigaben dürfen vor dem Anlegen
+    /// entstehen und gelten für eine später gleichnamig angelegte Tabelle wieder.
+    UserInfo setGrants(Principal actor, string name, TableGrant[] grants) {
+        requirePermission(actor, Permission.manageAccess);
+        enforce(actor.tenant != systemTenant, "The system area has no tables");
+        auto user = find(actor.tenant, name);
+        TableGrant[] clean;
+        bool[string] seen;
+        foreach (g; grants) {
+            auto table = g.table.strip.toLower;
+            enforce(table.length && table.all!(c => isAlphaNum(c) || c == '_'), "Invalid table name: " ~ g.table);
+            auto role = assignableRole(actor.tenant, g.role);
+            enforce(role.length, "Choose a role for table " ~ table);
+            enforce(!(rolePermissions(actor.tenant, role) & tablePermissions).empty,
+                "Role " ~ role ~ " has no table permissions (select, insert, update, delete, drop)");
+            auto key = table ~ "/" ~ role;
+            if (key in seen)
+                continue;
+            seen[key] = true;
+            clean ~= TableGrant(table, role);
+        }
+        clean.sort!((a, b) => a.table != b.table ? a.table < b.table : a.role < b.role);
+        user.grants = clean;
+        commit(user);
+        return info(user);
+    }
+
+    /// Vordefinierte und eigene Rollen des Bereichs, mit der Zahl der Benutzer, die sie verwenden.
+    RoleInfo[] listRoles(Principal actor) {
+        requirePermission(actor, Permission.manageAccess);
+        RoleInfo[] result;
+        foreach (r; rolesOf(actor.tenant))
+            result ~= RoleInfo(r.name, r.description, r.permissions.names, r.builtin, usersOfRole(actor.tenant, r.name));
+        return result;
+    }
+
+    /// Legt eine eigene Rolle an oder ändert sie. Erlaubt sind nur Rechte des Bereichs: Serverrechte im Bereich
+    /// system, sonst Mandantenrechte. Änderungen wirken sofort in allen Sitzungen.
+    RoleInfo saveRole(Principal actor, string name, string description, string[] permissions) {
+        requirePermission(actor, Permission.manageAccess);
+        auto normalized = validRoleName(name);
+        foreach (b; builtinRoles(actor.tenant))
+            enforce(b.name != normalized, "Built-in roles can't be changed: " ~ normalized);
+        auto set = PermissionSet.parse(permissions);
+        enforce(set.subsetOf(allowedPermissions(actor.tenant)), actor.tenant == systemTenant
+                ? "System roles can only contain viewTenants, manageTenants and manageAccess"
+                : "Tenant roles can't contain viewTenants or manageTenants");
+        enforce(description.strip.length <= 200, "Role descriptions have at most 200 characters");
+        auto role = RoleDef(actor.tenant, normalized, description.strip, set, false);
+        auto next = customRoles.dup;
+        next[userKey(actor.tenant, normalized)] = role;
+        requireManager(actor.tenant, users, next);
+        roleStore.save(next.values);
+        customRoles = next;
+        return RoleInfo(role.name, role.description, set.names, false, usersOfRole(actor.tenant, normalized));
+    }
+
+    void deleteRole(Principal actor, string name) {
+        requirePermission(actor, Permission.manageAccess);
+        auto key = userKey(actor.tenant, name.strip.toLower);
+        enforce((key in customRoles) !is null, "Role not found or built in: " ~ name);
+        immutable inUse = usersOfRole(actor.tenant, name.strip.toLower);
+        enforce(inUse == 0, "Role " ~ name ~ " is still used by " ~ inUse.to!string ~ " user(s)");
+        auto next = customRoles.dup;
+        next.remove(key);
+        roleStore.save(next.values);
+        customRoles = next;
     }
 
     /** 
@@ -217,7 +305,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @param replacement The new password to set.
     **/
     void resetPassword(Principal actor, string name, string replacement) {
-        requireRole(actor, HdbRole.admin);
+        requirePermission(actor, Permission.manageAccess);
         setPassword(find(actor.tenant, name), replacement);
     }
 
@@ -228,12 +316,12 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @param name The name of the user to delete.
     **/
     void deleteUser(Principal actor, string name) {
-        requireRole(actor, HdbRole.admin);
+        requirePermission(actor, Permission.manageAccess);
         auto user = find(actor.tenant, name);
-        requireOtherAdmin(user);
         auto key = userKey(user.tenant, user.name);
         auto remaining = users.dup;
         remaining.remove(key);
+        requireManager(user.tenant, remaining, customRoles);
         store.save(remaining.values);
         users = remaining;
         revokeSessions(key);
@@ -242,7 +330,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
     // ITenantAccounts: ohne Rollenprüfung, die macht TenantService
 
     void provisionAdmin(string tenant, string name, string password) {
-        addUser(tenant, name, password, HdbRole.admin);
+        addUser(tenant, name, password, "admin");
     }
 
     void revokeTenant(string tenant) {
@@ -263,13 +351,19 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
                 remaining[key] = u;
         store.save(remaining.values);
         users = remaining;
+        RoleDef[string] roles;
+        foreach (key, r; customRoles)
+            if (r.tenant != tenant)
+                roles[key] = r;
+        roleStore.save(roles.values);
+        customRoles = roles;
     }
 
     size_t userCount(string tenant) {
         return users.values.count!(u => u.tenant == tenant);
     }
 
-    private HdbUser addUser(string tenant, string name, string password, HdbRole role) {
+    private HdbUser addUser(string tenant, string name, string password, string role) {
         auto normalized = validName(name);
         enforce((userKey(tenant, normalized) in users) is null, "User already exists: " ~ normalized);
         validPassword(password);
@@ -305,12 +399,73 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
         return *user;
     }
 
-    /// Without an active administrator, the tenant could no longer be managed.
-    private void requireOtherAdmin(HdbUser user) {
-        if (user.role != HdbRole.admin || !user.active)
-            return;
-        enforce(users.values.count!(u => u.tenant == user.tenant && u.role == HdbRole.admin && u.active) > 1,
-            "Cannot remove the last active admin");
+    /// Ohne aktiven Benutzer mit manageAccess ließe sich der Bereich nicht mehr verwalten. Geprüft wird der Stand nach
+    /// der Änderung; nur die Rolle im Bereich zählt, Tabellenfreigaben geben dieses Recht nie.
+    private void requireManager(string tenant, HdbUser[string] nextUsers, RoleDef[string] nextRoles) {
+        foreach (u; nextUsers)
+            if (u.tenant == tenant && u.active && resolve(tenant, u.role, nextRoles).has(Permission.manageAccess))
+                return;
+        throw new Exception("At least one active user must keep the manageAccess permission");
+    }
+
+    /// Rollen eines Bereichs: erst die vordefinierten, dann die eigenen nach Namen.
+    private RoleDef[] rolesOf(string tenant) {
+        RoleDef[] own;
+        foreach (r; customRoles)
+            if (r.tenant == tenant)
+                own ~= r;
+        own.sort!((a, b) => a.name < b.name);
+        return builtinRoles(tenant) ~ own;
+    }
+
+    /// Rechte einer Rolle; eine unbekannte oder leere Rolle gibt keine.
+    private PermissionSet rolePermissions(string tenant, string role) {
+        return resolve(tenant, role, customRoles);
+    }
+
+    private static PermissionSet resolve(string tenant, string role, RoleDef[string] roles) {
+        if (role.length == 0)
+            return PermissionSet.init;
+        foreach (b; builtinRoles(tenant))
+            if (b.name == role)
+                return b.permissions;
+        auto custom = userKey(tenant, role) in roles;
+        return custom !is null ? custom.permissions : PermissionSet.init;
+    }
+
+    /// Normalisierter Rollenname, der im Bereich existiert; leer bleibt leer (keine Rolle).
+    private string assignableRole(string tenant, string role) {
+        auto name = role.strip.toLower;
+        if (name.length == 0)
+            return "";
+        foreach (r; rolesOf(tenant))
+            if (r.name == name)
+                return name;
+        throw new Exception("Unknown role: " ~ role);
+    }
+
+    private size_t usersOfRole(string tenant, string role) {
+        size_t n;
+        foreach (u; users)
+            if (u.tenant == tenant && (u.role == role || u.grants.any!(g => g.role == role)))
+                ++n;
+        return n;
+    }
+
+    /// Aufgelöste Rechte eines Benutzers: Rolle im Bereich plus Tabellenrechte aus den Freigaben.
+    private Principal principalOf(HdbUser user) {
+        Principal p;
+        p.name = user.name;
+        p.authenticated = true;
+        p.tenant = user.tenant;
+        p.role = user.role;
+        p.permissions = rolePermissions(user.tenant, user.role) & allowedPermissions(user.tenant);
+        foreach (g; user.grants) {
+            auto granted = rolePermissions(user.tenant, g.role) & tablePermissions;
+            if (!granted.empty)
+                p.tables[g.table] = p.tables.get(g.table, PermissionSet.init) | granted;
+        }
+        return p;
     }
 
     private void revokeSessions(string key) {
@@ -359,12 +514,8 @@ private string userKey(string tenant, string name) {
     return tenant ~ "/" ~ name;
 }
 
-private Principal principalOf(HdbUser user) {
-    return Principal(user.name, user.role, true, user.tenant);
-}
-
 private UserInfo info(HdbUser user) {
-    return UserInfo(user.name, user.role, user.active, user.tenant);
+    return UserInfo(user.name, user.role, user.active, user.tenant, user.grants.dup);
 }
 
 private string digest(string token) {
@@ -430,7 +581,7 @@ unittest {
 
     auto session = a.login("ADMIN", generated);
     auto root = a.authenticate(session.token);
-    assert(root.authenticated && root.role == HdbRole.admin);
+    assert(root.authenticated && root.role == "admin");
     assert(!a.authenticate("forged").authenticated);
     assert(!a.authenticate("").authenticated);
 
@@ -439,7 +590,7 @@ unittest {
     auto long2 = "correct-horse-2";
     a.createUser(root, "ed", long1, HdbRole.editor);
     auto ed = a.authenticate(a.login("ed", long1).token);
-    assert(ed.role == HdbRole.editor);
+    assert(ed.role == "editor");
     assertThrown!AccessDenied(a.listUsers(ed));
     assertThrown!AccessDenied(a.createUser(ed, "x", long1, HdbRole.admin));
     assertThrown!AccessDenied(a.updateUser(ed, "ed", HdbRole.admin, true)); // keine Selbstbeförderung
@@ -455,7 +606,7 @@ unittest {
     // Rollenänderung wirkt in laufenden Sitzungen sofort
     auto edSession = a.login("ed", long1).token;
     a.updateUser(root, "ed", HdbRole.viewer, true);
-    assert(a.authenticate(edSession).role == HdbRole.viewer);
+    assert(a.authenticate(edSession).role == "viewer");
 
     // Deaktivieren beendet Sitzungen und verhindert die Anmeldung
     a.updateUser(root, "ed", HdbRole.viewer, false);
@@ -506,7 +657,7 @@ unittest {
     token = a.login("ed", long2).token;
     auto restarted = new AccessService(store, new FakeCrypto, () => clock);
     assert(!restarted.authenticate(token).authenticated);
-    assert(restarted.login("ed", long2).principal.role == HdbRole.admin);
+    assert(restarted.login("ed", long2).principal.role == "admin");
 }
 
 /// Mandanten: gleiche Namen in verschiedenen Mandanten, Verwaltung nur im eigenen, inaktive Mandanten gesperrt.
@@ -553,7 +704,7 @@ unittest {
 
     // Gleicher Name, verschiedene Mandanten: das Passwort des einen öffnet nicht den anderen
     auto acme = a.authenticate(a.login("ACME", "admin", "acme-password-1").token);
-    assert(acme.tenant == "acme" && acme.role == HdbRole.admin);
+    assert(acme.tenant == "acme" && acme.role == "admin");
     assertThrown!AuthenticationRequired(a.login("acme", "admin", pw));
     assert(a.authenticate(a.login("", "admin", pw).token).tenant == defaultTenant);
     assert(a.authenticate(a.login("admin", pw).token).tenant == defaultTenant);
@@ -568,8 +719,8 @@ unittest {
     assertThrown(a.resetPassword(globex, "ed", "stolen-password"));
     assertThrown(a.deleteUser(globex, "ed"));
     a.createUser(globex, "ed", "globex-ed-password", HdbRole.viewer); // gleicher Name, anderer Mandant
-    assert(a.authenticate(a.login("acme", "ed", pw).token).role == HdbRole.editor);
-    assert(a.authenticate(a.login("globex", "ed", "globex-ed-password").token).role == HdbRole.viewer);
+    assert(a.authenticate(a.login("acme", "ed", pw).token).role == "editor");
+    assert(a.authenticate(a.login("globex", "ed", "globex-ed-password").token).role == "viewer");
 
     // Der letzte Administrator zählt je Mandant
     assertThrown(a.deleteUser(globex, "admin"));
@@ -593,4 +744,139 @@ unittest {
     auto restarted = new AccessService(store, new FakeCrypto);
     assert(restarted.userCount("acme") == 0 && restarted.userCount("globex") == 2);
     assert(restarted.login("globex", "ed", "globex-ed-password").principal.tenant == "globex");
+}
+
+/// Eigene Rollen nur im Speicher.
+final class MemoryRoleStore : IRoleStore {
+    private RoleDef[] roles;
+
+    RoleDef[] load() {
+        return roles.dup;
+    }
+
+    void save(RoleDef[] next) {
+        roles = next.dup;
+    }
+}
+
+/// RBAC: eigene Rollen je Bereich, Tabellenfreigaben, Serverrollen und die Regel, dass jemand verwalten können muss.
+unittest {
+    import std.exception : assertThrown;
+
+    static class MemStore : IUserStore {
+        HdbUser[] saved;
+        HdbUser[] load() {
+            return saved;
+        }
+
+        void save(HdbUser[] users) {
+            saved = users.dup;
+        }
+    }
+
+    static class FakeCrypto : ICredentialCrypto {
+        string hashPassword(string p) {
+            return "h:" ~ p;
+        }
+
+        bool verifyPassword(string p, string stored) {
+            return stored == "h:" ~ p;
+        }
+
+        string randomSecret() {
+            return "secret";
+        }
+    }
+
+    auto users = new MemStore;
+    auto roles = new MemoryRoleStore;
+    auto a = new AccessService(users, new FakeCrypto, null, null, roles);
+    auto pw = "correct-horse-1";
+    a.bootstrap(defaultTenant, "admin", pw);
+    a.bootstrap(systemTenant, "root", pw);
+    auto admin = a.authenticate(a.login("", "admin", pw).token);
+    auto root = a.authenticate(a.login("system", "root", pw).token);
+
+    // Vordefinierte Rollen sind da und unveränderlich
+    assert(a.listRoles(admin).map!(r => r.name).array == ["viewer", "editor", "admin"]);
+    assertThrown(a.saveRole(admin, "admin", "", ["select"]));
+    assertThrown(a.deleteRole(admin, "viewer"));
+
+    // Eigene Rolle: nur Rechte des Bereichs
+    auto clerk = a.saveRole(admin, "Clerk", "Enters orders", ["select", "insert"]);
+    assert(clerk.name == "clerk" && clerk.permissions == ["select", "insert"] && !clerk.builtin);
+    assertThrown(a.saveRole(admin, "boss", "", ["manageTenants"]));
+    assertThrown(a.saveRole(admin, "x", "", ["fly"]));
+    assertThrown(a.saveRole(root, "ops", "", ["select"]));
+    a.saveRole(root, "ops", "Sees tenants", ["viewTenants"]);
+    assert(roles.load().length == 2);
+
+    // Benutzer mit eigener Rolle: Rechte gelten im ganzen Mandanten
+    a.createUser(admin, "carl", pw, "clerk");
+    auto carl = a.authenticate(a.login("", "carl", pw).token);
+    assert(carl.role == "clerk" && carl.can(Permission.insert) && !carl.can(Permission.delete_));
+    assertThrown(a.createUser(admin, "x", pw, "nope"));
+    assertThrown(a.createUser(admin, "x", pw, "ops")); // Rolle eines anderen Bereichs
+
+    // Ohne Rolle, nur mit Tabellenfreigaben
+    a.createUser(admin, "tina", pw, "");
+    auto tina = a.authenticate(a.login("", "tina", pw).token);
+    assert(!tina.can(Permission.select) && tina.tables.length == 0 && tina.role == "");
+    a.setGrants(admin, "tina", [TableGrant("Orders", "clerk"), TableGrant("audit", "viewer"), TableGrant("orders", "clerk")]);
+    tina = a.authenticate(a.login("", "tina", pw).token);
+    assert(tina.can(Permission.insert, "orders") && tina.can(Permission.select, "audit") && !tina.can(Permission.insert, "audit"));
+    assert(!tina.can(Permission.select, "secret") && !tina.can(Permission.select));
+    assert(!tina.tables["audit"].has(Permission.replicate)); // nur Tabellenrechte gelten
+    assert(a.listUsers(admin).filter!(u => u.name == "tina").front.grants.length == 2); // doppelte entfernt
+
+    // Nur Tabellenrechte: eine Rolle ohne solche ist als Freigabe sinnlos
+    a.saveRole(admin, "maint", "", ["maintain"]);
+    assertThrown(a.setGrants(admin, "tina", [TableGrant("orders", "maint")]));
+    assertThrown(a.setGrants(admin, "tina", [TableGrant("a;b", "clerk")]));
+    assertThrown(a.setGrants(admin, "tina", [TableGrant("orders", "")]));
+    assertThrown(a.setGrants(root, "root", [TableGrant("orders", "admin")])); // keine Tabellen im Bereich system
+
+    // Rollenänderung wirkt sofort in laufenden Sitzungen
+    auto tinaSession = a.login("", "tina", pw).token;
+    a.saveRole(admin, "clerk", "Enters and fixes orders", ["select", "insert", "update"]);
+    assert(a.authenticate(tinaSession).can(Permission.update, "orders"));
+
+    // Löschen nur ungenutzter Rollen
+    assertThrown(a.deleteRole(admin, "clerk"));
+    assert(a.listRoles(admin).filter!(r => r.name == "clerk").front.users == 2);
+    a.deleteRole(admin, "maint");
+
+    // Jemand muss den Bereich verwalten können: auch eine Rollenänderung darf das nicht verhindern
+    a.saveRole(admin, "access", "", ["manageAccess"]);
+    a.createUser(admin, "ann", pw, "access");
+    a.updateUser(admin, "admin", "viewer", true);
+    auto ann = a.authenticate(a.login("", "ann", pw).token);
+    assertThrown(a.saveRole(ann, "access", "", ["select"])); // letzter Weg zu manageAccess
+    assertThrown(a.updateUser(ann, "ann", "viewer", true));
+    assertThrown(a.deleteUser(ann, "ann"));
+    a.updateUser(ann, "admin", "admin", true);
+    a.saveRole(ann, "access", "", ["select"]);
+
+    // Rechte ohne manageAccess: keine Verwaltung
+    assertThrown!AccessDenied(a.listRoles(carl));
+    assertThrown!AccessDenied(a.setGrants(carl, "carl", [TableGrant("orders", "admin")]));
+
+    // Serverrollen: eigene Rolle mit viewTenants, aber ohne manageTenants
+    a.createUser(root, "olga", pw, "ops");
+    auto olga = a.authenticate(a.login("system", "olga", pw).token);
+    assert(olga.can(Permission.viewTenants) && !olga.can(Permission.manageTenants) && !olga.can(Permission.manageAccess));
+
+    // Mandanten sehen ihre Rollen gegenseitig nicht; Entfernen eines Mandanten entfernt seine Rollen
+    a.provisionAdmin("acme", "admin", pw);
+    auto acme = a.authenticate(a.login("acme", "admin", pw).token);
+    assert(!a.listRoles(acme).canFind!(r => r.name == "clerk"));
+    a.saveRole(acme, "clerk", "", ["select"]);
+    a.removeTenant("acme");
+    assert(roles.load().all!(r => r.tenant != "acme"));
+    assert(a.listRoles(admin).canFind!(r => r.name == "clerk"));
+
+    // Alles übersteht einen Neustart
+    auto restarted = new AccessService(users, new FakeCrypto, null, null, roles);
+    auto again = restarted.authenticate(restarted.login("", "tina", pw).token);
+    assert(again.can(Permission.update, "orders") && !again.can(Permission.select, "secret"));
 }

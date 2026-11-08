@@ -36,11 +36,34 @@ interface IAccessUseCase {
     Principal authenticate(string token);
     void changeOwnPassword(Principal actor, string current, string replacement);
 
+    // Benutzer, Rollen und Tabellenfreigaben, alles mit dem Recht manageAccess und nur im Bereich des actors.
+    // `role` ist ein Rollenname des Bereichs, leer bedeutet keine Rolle (dann gelten nur Tabellenfreigaben).
     UserInfo[] listUsers(Principal actor);
-    UserInfo createUser(Principal actor, string name, string password, HdbRole role);
-    UserInfo updateUser(Principal actor, string name, HdbRole role, bool active);
+    UserInfo createUser(Principal actor, string name, string password, string role);
+    UserInfo updateUser(Principal actor, string name, string role, bool active);
+    /// Ersetzt alle Tabellenfreigaben des Benutzers.
+    UserInfo setGrants(Principal actor, string name, TableGrant[] grants);
     void resetPassword(Principal actor, string name, string replacement);
     void deleteUser(Principal actor, string name);
+
+    RoleInfo[] listRoles(Principal actor);
+    /// Legt eine eigene Rolle an oder ändert sie; vordefinierte Rollen sind unveränderlich.
+    RoleInfo saveRole(Principal actor, string name, string description, string[] permissions);
+    /// Nur Rollen, die niemand mehr verwendet.
+    void deleteRole(Principal actor, string name);
+}
+
+struct RoleInfo {
+    string name, description;
+    string[] permissions;
+    bool builtin;
+    size_t users; // Benutzer mit dieser Rolle im Bereich oder in einer Tabellenfreigabe
+}
+
+/// Ausgehender Port: eigene Rollen aller Bereiche. Vordefinierte Rollen werden nicht gespeichert.
+interface IRoleStore {
+    RoleDef[] load();
+    void save(RoleDef[] roles);
 }
 
 /// Was die Mandantenverwaltung von der Benutzerverwaltung braucht. Ohne Rollenprüfung: nur TenantService sieht das,

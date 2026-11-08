@@ -28,6 +28,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private string lastMergeError;
     private bool recovering; // beim Einspielen des Logs keine Hintergrund-Merges starten
     private IChangeSink sink; // erfährt bestätigte Änderungen (Replikation); null: niemand
+    private void delegate(Permission, string) authorizer; // nur während executeAuthorized gesetzt
 
     /// Empfänger aller bestätigten Änderungen, für alle Speicherarten. Das Einspielen des Logs beim Start meldet nichts.
     void changeSink(IChangeSink sink) {
@@ -296,12 +297,32 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
         return executeIn("", sql);
     }
 
+    /// Wie executeIn, aber jeder Zugriff auf eine Tabelle wird vorher geprüft: `authorize(recht, tabelle)` wirft,
+    /// wenn er nicht erlaubt ist. Geprüft wird an den Stellen, an denen die Anweisung ihre Tabellen holt, also genau
+    /// für die Tabellen, die sie tatsächlich liest oder ändert, und vor jeder Änderung. `tabelle` ist leer bei
+    /// Rechten für den ganzen Mandanten (create mit Tabellenname, transact ohne).
+    QueryResult executeAuthorized(string txId, string sql, scope void delegate(Permission, string) authorize) {
+        synchronized (this) {
+            authorizer = authorize;
+            scope (exit)
+                authorizer = null;
+            return executeIn(txId, sql);
+        }
+    }
+
+    private void authorizeAccess(Permission p, string table) {
+        if (authorizer !is null)
+            authorizer(p, table);
+    }
+
     QueryResult executeIn(string txId, string sql) {
         auto s = sql.strip.chomp(";").strip;
         enforce(s.length, "Leeres Statement");
         synchronized (this) {
             expireIfIdle();
             auto verb = s.split()[0].toUpper;
+            if (verb == "BEGIN" || verb == "COMMIT" || verb == "ROLLBACK")
+                authorizeAccess(Permission.transact, "");
             if (verb == "BEGIN")
                 return beginTx();
             if (verb == "COMMIT" || verb == "ROLLBACK") {
@@ -444,6 +465,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private QueryResult createTable(string s) {
         auto m = matchFirst(s, ctRegex!(`^CREATE\s+TABLE\s+(\w+)\s*\((.*)\)(?:\s+USING\s+(\w+))?$`, "is"));
         enforce(!m.empty, "Syntax: CREATE TABLE name (spalte TYP, ...) [USING MEMORY|FILE|JSON|BINARY|BSON]");
+        authorizeAccess(Permission.create, m[1]);
         immutable storage = m[3].length ? parseStorage(m[3]) : TableStorage.memory;
         enforce(storage == TableStorage.memory || durable !is null, "Dieses Repository unterstützt nur MEMORY");
         enforce(!repo.exists(m[1]), "Tabelle existiert bereits");
@@ -463,6 +485,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private QueryResult dropTable(string s) {
         auto m = matchFirst(s, ctRegex!(`^DROP\s+TABLE\s+(\w+)$`, "i"));
         enforce(!m.empty, "Syntax: DROP TABLE name");
+        authorizeAccess(Permission.drop, m[1]);
         enforce(repo.exists(m[1]), "Tabelle nicht gefunden: " ~ m[1]);
         touch(repo.get(m[1]));
         repo.remove(m[1]);
@@ -472,6 +495,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private QueryResult insertInto(string s) {
         auto m = matchFirst(s, ctRegex!(`^INSERT\s+INTO\s+(\w+)\s+VALUES\s*\((.*)\)$`, "is"));
         enforce(!m.empty, "Syntax: INSERT INTO name VALUES (...)");
+        authorizeAccess(Permission.insert, m[1]);
         auto t = repo.get(m[1]);
         touch(t);
         auto lits = splitList(m[2]);
@@ -490,6 +514,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
         auto m = originalCaptures(matchFirst(masked, ctRegex!(
                 `^UPDATE\s+(\w+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$`, "is")), masked, s);
         enforce(m.length, "Syntax: UPDATE name SET spalte = wert [, ...] [WHERE bedingung (AND/OR, Klammern)]");
+        authorizeAccess(Permission.update, m[1]);
         auto t = repo.get(m[1]);
         touch(t);
 
@@ -523,6 +548,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
         auto m = matchFirst(s, ctRegex!(
                 `^DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?$`, "is"));
         enforce(!m.empty, "Syntax: DELETE FROM name [WHERE bedingung (AND/OR, Klammern)]");
+        authorizeAccess(Permission.delete_, m[1]);
         auto t = repo.get(m[1]);
         touch(t);
         auto hits = rowsFor(t, whereCond(m[2]));
@@ -555,10 +581,12 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
         enforce(!first.empty, "Ungültige FROM-Klausel: " ~ fromClause);
         if (parts.length == 1 && first[2].length == 0) {
             residual = cond; // einfache Tabelle: die Bedingung läuft direkt darauf
+            authorizeAccess(Permission.select, first[1]);
             return repo.get(first[1]);
         }
 
         FromItem[] items;
+        authorizeAccess(Permission.select, first[1]);
         items ~= FromItem(repo.get(first[1]), first[2].length ? first[2] : first[1], "", "", false);
         foreach (pi, part; parts[1 .. $]) {
             auto jm = matchFirst(part.strip, ctRegex!(
@@ -567,6 +595,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
             auto al = jm[2].length ? jm[2] : jm[1];
             foreach (it; items)
                 enforce(icmp(it.al, al) != 0, "Alias doppelt (bei Self-Join Alias vergeben): " ~ al);
+            authorizeAccess(Permission.select, jm[1]);
             items ~= FromItem(repo.get(jm[1]), al, jm[3], jm[4], isLeft[pi]);
         }
 

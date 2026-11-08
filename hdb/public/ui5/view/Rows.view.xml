@@ -18,7 +18,7 @@
 						<OverflowToolbar>
 							<SearchField id="search" placeholder="{i18n>search}" width="16rem" search=".onSearch"/>
 							<ToolbarSpacer/>
-							<Button id="add" text="{i18n>add}" icon="sap-icon://add" type="Transparent" visible="{app>/canWrite}" press=".onAdd"/>
+							<Button id="add" text="{i18n>add}" icon="sap-icon://add" type="Transparent" visible="{app>/canInsert}" press=".onAdd"/>
 							<Button icon="sap-icon://sort" tooltip="{i18n>sort}" type="Transparent" press=".onSort"/>
 							<Button icon="sap-icon://refresh" tooltip="{i18n>refresh}" type="Transparent" press=".onRefresh"/>
 						</OverflowToolbar>

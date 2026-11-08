@@ -24,8 +24,9 @@ void main() {
     if (!registry.has(defaultTenant) && (firstStart || migrated || legacyUsers))
         registry.put(Tenant(defaultTenant, "Default", true));
 
-    auto access = new AccessService(userStore, new OpensslCredentialCrypto, null, &registry
-            .isActive);
+    // Eigene Rollen aller Mandanten und des Bereichs system; die vordefinierten stehen nicht in der Datei
+    auto access = new AccessService(userStore, new OpensslCredentialCrypto, null, &registry.isActive,
+        new FileRoleStore(environment.get("ROLES_FILE", "data/hdb-roles.json")));
     void announce(string tenant, string name, string generated) {
         if (generated.length)
             logWarn("Erster Start: Benutzer '%s' im Mandanten '%s' mit Passwort '%s' angelegt. Bitte unter /admin/account ändern.",

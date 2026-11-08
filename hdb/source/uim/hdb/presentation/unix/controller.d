@@ -59,9 +59,9 @@ final class UnixController : IUnixController {
             auto tenant = input["tenant"].type == Json.Type.string ? input["tenant"].get!string : "";
             auto r = access.login(tenant, textOf(input, "user"), textOf(input, "password"));
             return reply(RestLogin(r.token, r.expiresInSeconds,
-                RestUser(r.principal.name, roleName(r.principal.role), true, r.principal.tenant)));
+                RestUser(r.principal.name, r.principal.role, true, r.principal.tenant)));
         case "POST /auth/logout":
-            requireRole(currentPrincipal(), HdbRole.viewer);
+            requireAuthenticated(currentPrincipal());
             access.logout(tokenOf(request));
             return reply(RestStatus("LOGGED_OUT"));
         case "POST /sql":

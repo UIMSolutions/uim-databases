@@ -34,6 +34,20 @@
       document.getElementById('reset-title').textContent = `Reset password for ${name}`;
       document.getElementById('reset_modal').showModal();
     }
+    // Rollen: Anlegen und Bearbeiten teilen sich einen Dialog; der Name einer bestehenden Rolle bleibt fest
+    if (target.dataset.roleNew !== undefined || target.dataset.roleEdit) {
+      const editing = Boolean(target.dataset.roleEdit);
+      const granted = editing ? target.dataset.rolePermissions.split(' ') : [];
+      const name = document.getElementById('role-name');
+      name.value = editing ? target.dataset.roleEdit : '';
+      name.readOnly = editing;
+      document.getElementById('role-description').value = editing ? target.dataset.roleDescription : '';
+      document.getElementById('role-title').textContent = editing ? `Edit role ${target.dataset.roleEdit}` : 'New role';
+      document.querySelectorAll('#role-form [data-permission]').forEach((box) => {
+        box.checked = granted.includes(box.dataset.permission);
+      });
+      document.getElementById('role_modal').showModal();
+    }
     if (target.dataset.rowInsert) openRowDialog(null, '');
     if (target.dataset.rowEdit) {
       const json = target.closest('tr').dataset.values;

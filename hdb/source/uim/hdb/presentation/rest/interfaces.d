@@ -85,8 +85,9 @@ interface IAuthRestApi {
     @headerParam("authorization", "Authorization")
     RestStatus logout(string authorization);
 
+    /// Die angemeldete Identität mit ihren aufgelösten Rechten.
     @method(HTTPMethod.GET) @path("/me")
-    RestUser me();
+    RestMe me();
 
     /// Ändert das eigene Passwort und beendet alle eigenen Sitzungen.
     @method(HTTPMethod.POST) @path("/password")
@@ -115,6 +116,24 @@ interface IUserRestApi {
 
     @method(HTTPMethod.DELETE) @path("/users/:name")
     RestStatus remove(string _name);
+
+    /// Ersetzt alle Tabellenfreigaben des Benutzers.
+    @method(HTTPMethod.PUT) @path("/users/:name/grants")
+    @bodyParam("grants", "grants")
+    RestUser setGrants(string _name, RestGrant[] grants);
+
+    /// Vordefinierte und eigene Rollen des Mandanten (bzw. des Bereichs system).
+    @method(HTTPMethod.GET) @path("/roles")
+    RestRole[] roles();
+
+    /// Legt eine eigene Rolle an oder ändert sie.
+    @method(HTTPMethod.PUT) @path("/roles/:name")
+    @bodyParam("permissions", "permissions") @bodyParam("description", "description")
+    RestRole saveRole(string _name, string[] permissions, string description = "");
+
+    /// Nur Rollen, die niemand mehr verwendet.
+    @method(HTTPMethod.DELETE) @path("/roles/:name")
+    RestStatus removeRole(string _name);
 }
 
 /// Mandantenverwaltung, nur für Administratoren des Mandanten system. Sie sehen keine Daten der Mandanten.
