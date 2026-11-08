@@ -1,12 +1,12 @@
+/****************************************************************************************************************
+* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
+* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file.
+* Authors: Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
+*****************************************************************************************************************/
 module uim.hdb.presentation.unix.controller;
 
 import uim.hdb;
-import uim.hdb.adapters.inbound.security : bearerToken, bindPrincipal, currentPrincipal;
-import uim.hdb.application.ports : IAccessUseCase, ISqlUseCase;
-import uim.hdb.domain.entities.user;
-import uim.hdb.presentation.rest.models;
-import uim.hdb.presentation.unix.interfaces;
-import uim.hdb.presentation.unix.message;
+
 import std.algorithm : map, startsWith;
 import std.array : array;
 import std.exception : enforce;

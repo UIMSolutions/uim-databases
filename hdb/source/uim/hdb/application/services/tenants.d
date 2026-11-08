@@ -291,25 +291,6 @@ unittest {
         }
     }
 
-    static class MemStorage : ITenantStorage {
-        TenantStorage[string] opened;
-        string[] purged;
-        TenantStorage open(string tenant) {
-            if (auto s = tenant in opened)
-                return *s;
-            return opened[tenant] = TenantStorage(new MemoryTableRepository, null, new MemBackups);
-        }
-
-        bool exists(string tenant) {
-            return (tenant in opened) !is null;
-        }
-
-        void purge(string tenant) {
-            opened.remove(tenant);
-            purged ~= tenant;
-        }
-    }
-
     static class MemBackups : IBackupStore {
         BackupInfo[] items;
         BackupSchedule plan;
@@ -344,6 +325,25 @@ unittest {
 
         void saveSchedule(BackupSchedule s) {
             plan = s;
+        }
+    }
+
+    static class MemStorage : ITenantStorage {
+        TenantStorage[string] opened;
+        string[] purged;
+        TenantStorage open(string tenant) {
+            if (auto s = tenant in opened)
+                return *s;
+            return opened[tenant] = TenantStorage(new MemoryTableRepository, null, new MemBackups);
+        }
+
+        bool exists(string tenant) {
+            return (tenant in opened) !is null;
+        }
+
+        void purge(string tenant) {
+            opened.remove(tenant);
+            purged ~= tenant;
         }
     }
 

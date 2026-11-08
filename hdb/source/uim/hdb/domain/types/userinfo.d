@@ -7,11 +7,13 @@ struct UserInfo {
     string name;
     HdbRole role;
     bool active;
+    string tenant;
 
     Json toJson() const {
         return Json.emptyObject
             .set("name", name)
             .set("role", role.to!string)
-            .set("active", active);
+            .set("active", active)
+            .set("tenant", tenant);
     }
 }

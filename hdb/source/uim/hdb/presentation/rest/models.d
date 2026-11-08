@@ -1,3 +1,8 @@
+/****************************************************************************************************************
+* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
+* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file.
+* Authors: Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
+*****************************************************************************************************************/
 module uim.hdb.presentation.rest.models;
 
 import uim.hdb;
@@ -103,7 +108,7 @@ RestTenant toRest(TenantInfo t) {
 }
 
 RestUser toRest(UserInfo u) {
-    return RestUser(u.name, roleName(u.role), u.active);
+    return RestUser(u.name, roleName(u.role), u.active, u.tenant);
 }
 
 Json toRestJson(Value v) {

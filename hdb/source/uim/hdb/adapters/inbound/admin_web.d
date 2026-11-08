@@ -28,7 +28,9 @@ struct AdminPage {
     string[] tables;
     bool locked; // eine offene Transaktion sperrt die Datenbank
     string userName, roleLabel;
+    string tenant; // Mandant des Benutzers
     bool canWrite, isAdmin;
+    bool isSystem; // Systemadministrator: nur Mandanten, Benutzer des Systembereichs und das eigene Konto
     string ok;
     string err;
 }
@@ -141,6 +143,12 @@ struct UserRow {
     bool active, self;
 }
 
+struct TenantRow {
+    string name, label;
+    bool active;
+    size_t users;
+}
+
 struct BackupRow {
     string name, label, created, size;
     long tables, rows;
@@ -181,14 +189,19 @@ final class SqlAdminUi {
     private ISqlUseCase sql;
     private IAccessUseCase access;
     private IBackupUseCase backups;
+    private ITenantUseCase tenants;
 
-    this(ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups) {
+    this(ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups, ITenantUseCase tenants) {
         this.sql = sql;
         this.access = access;
         this.backups = backups;
+        this.tenants = tenants;
     }
 
     void register(URLRouter router) {
+        // Systemadministratoren haben keine Daten: ihre Startseite ist die Mandantenliste
+        router.any("/admin", &systemGuard);
+        router.any("/admin/*", &systemGuard);
         router.get("/", &home);
         router.get("/admin/login", &loginPage);
         router.post("/admin/login", &login);
@@ -200,6 +213,10 @@ final class SqlAdminUi {
         router.post("/admin/users/:user/update", &updateUser);
         router.post("/admin/users/:user/password", &resetPassword);
         router.post("/admin/users/:user/delete", &deleteUser);
+        router.get("/admin/tenants", &tenantList);
+        router.post("/admin/tenants", &createTenant);
+        router.post("/admin/tenants/:tenant/update", &updateTenant);
+        router.post("/admin/tenants/:tenant/delete", &deleteTenant);
         router.get("/admin/backups", &backupList);
         router.post("/admin/backups", &createBackup);
         router.post("/admin/backups/upload", &uploadBackup);
@@ -228,6 +245,11 @@ final class SqlAdminUi {
         res.redirect("/admin");
     }
 
+    private void systemGuard(HTTPServerRequest req, HTTPServerResponse res) {
+        if (currentPrincipal().isSystem && isTenantDataPath(req.requestPath.toString))
+            res.redirect("/admin/tenants");
+    }
+
     private AdminPage pageFor(HTTPServerRequest req, string title, string active) {
         AdminPage p;
         p.title = title;
@@ -237,8 +259,12 @@ final class SqlAdminUi {
         auto me = currentPrincipal();
         p.userName = me.name;
         p.roleLabel = roleName(me.role);
-        p.canWrite = me.role >= HdbRole.editor;
+        p.tenant = me.tenant;
+        p.isSystem = me.isSystem;
+        p.canWrite = !p.isSystem && me.role >= HdbRole.editor;
         p.isAdmin = me.role == HdbRole.admin;
+        if (p.isSystem)
+            return p;
         try
             p.tables = sql.listTables();
         catch (Exception)
@@ -276,19 +302,28 @@ final class SqlAdminUi {
         // feste Texte statt Query-Inhalt: die Seite ist öffentlich und soll keine fremden Nachrichten anzeigen
         string loginError;
         string loginNotice = "changed" in req.query ? "Password changed. Please sign in again." : "";
-        res.render!("login.dt", loginError, loginNotice);
+        string tenantValue = req.cookies.get(tenantCookie, "");
+        if (!isPlainTenant(tenantValue))
+            tenantValue = "";
+        res.render!("login.dt", loginError, loginNotice, tenantValue);
     }
 
     private void login(HTTPServerRequest req, HTTPServerResponse res) {
         LoginResult session;
+        string tenantValue = req.form.get("tenant", "").strip;
         try
-            session = access.login(req.form.get("user", ""), req.form.get("password", ""));
+            session = access.login(tenantValue, req.form.get("user", ""), req.form.get("password", ""));
         catch (AuthenticationRequired e) {
             string loginError = e.msg;
             string loginNotice;
             res.statusCode = HTTPStatus.unauthorized;
-            return res.render!("login.dt", loginError, loginNotice);
+            return res.render!("login.dt", loginError, loginNotice, tenantValue);
         }
+        // Nur zum Vorausfüllen des Formulars, kein Geheimnis
+        auto remembered = res.setCookie(tenantCookie, session.principal.tenant, "/admin", Cookie.Encoding.none);
+        remembered.httpOnly = true;
+        remembered.sameSite = Cookie.SameSite.strict;
+        remembered.maxAge = 365 * 24 * 3600;
         auto cookie = res.setCookie(sessionCookie, session.token, "/admin", Cookie.Encoding.none);
         cookie.httpOnly = true;
         cookie.sameSite = Cookie.SameSite.strict;
@@ -316,6 +351,40 @@ final class SqlAdminUi {
             return res.redirect("/admin/account?err=" ~ urlEncode(e.msg));
         res.setCookie(sessionCookie, null, "/admin");
         res.redirect("/admin/login?changed=1");
+    }
+
+    private void tenantList(HTTPServerRequest req, HTTPServerResponse res) {
+        TenantRow[] rows;
+        try {
+            foreach (t; tenants.listTenants(currentPrincipal()))
+                rows ~= TenantRow(t.name, t.label, t.active, t.users);
+        } catch (AccessDenied e)
+            return renderError(req, res, HTTPStatus.forbidden, e.msg);
+        auto page = pageFor(req, "Tenants", "tenants");
+        res.render!("tenants.dt", page, rows);
+    }
+
+    private void createTenant(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/tenants", {
+            auto t = tenants.createTenant(currentPrincipal(), req.form.get("tenant", ""), req.form.get("label", ""),
+                req.form.get("user", ""), matchingPasswords(req));
+            return "Tenant " ~ t.name ~ " created";
+        });
+    }
+
+    private void updateTenant(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/tenants", {
+            auto t = tenants.updateTenant(currentPrincipal(), req.params["tenant"], req.form.get("label", ""),
+                req.form.get("active", "") == "1");
+            return "Tenant " ~ t.name ~ (t.active ? " updated" : " deactivated. All its sessions have ended.");
+        });
+    }
+
+    private void deleteTenant(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/tenants", {
+            tenants.deleteTenant(currentPrincipal(), req.params["tenant"]);
+            return "Tenant " ~ req.params["tenant"] ~ " deleted";
+        });
     }
 
     private void users(HTTPServerRequest req, HTTPServerResponse res) {
@@ -626,6 +695,26 @@ final class SqlAdminUi {
     }
 }
 
+private enum tenantCookie = "hdb_tenant";
+
+/// Seiten mit Mandantendaten. Systemadministratoren werden von dort zur Mandantenliste geleitet.
+bool isTenantDataPath(string path) @safe {
+    import std.algorithm : any;
+
+    if (path == "/admin")
+        return true;
+    return ["/admin/stats", "/admin/sql", "/admin/merge", "/admin/checkpoint", "/admin/tables", "/admin/backups"]
+        .any!(p => path == p || path.startsWith(p ~ "/"));
+}
+
+/// Was aus dem Cookie ins Formular darf: nur, was ein Mandantenname sein kann.
+private bool isPlainTenant(string value) {
+    try
+        return value.length == 0 || validTenantName(value) == value;
+    catch (Exception)
+        return false;
+}
+
 private string matchingPasswords(HTTPServerRequest req) {
     auto password = req.form.get("password", "");
     enforce(password == req.form.get("confirm", ""), "Passwords do not match");
@@ -845,4 +934,10 @@ unittest {
     assert(selectSql("t", "", "", false, 0, 0) == "SELECT * FROM t");
 
     assert(humanSize(512) == "512 B" && humanSize(2048) == "2.0 KB");
+
+    assert(isTenantDataPath("/admin") && isTenantDataPath("/admin/sql") && isTenantDataPath("/admin/tables/t/rows"));
+    assert(isTenantDataPath("/admin/backups/x.hdbbak/download") && isTenantDataPath("/admin/merge"));
+    assert(!isTenantDataPath("/admin/tenants") && !isTenantDataPath("/admin/users") && !isTenantDataPath("/admin/account"));
+    assert(!isTenantDataPath("/admin/login") && !isTenantDataPath("/admin/help") && !isTenantDataPath("/admin/sqlx"));
+    assert(isPlainTenant("") && isPlainTenant("acme") && !isPlainTenant("<x>") && !isPlainTenant("ACME"));
 }

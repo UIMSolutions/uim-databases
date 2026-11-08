@@ -1,35 +1,58 @@
+/****************************************************************************************************************
+* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
+* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file.
+* Authors: Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
+*****************************************************************************************************************/
 module app;
 
 import uim.hdb;
 
 /// Composition Root: einziger Ort, an dem Adapter und Kern verdrahtet werden.
-void main()
-{
-    auto tablesDir = environment.get("TABLES_DIR", "data/tables");
-    auto repo = new RoutingTableRepository(new MemoryTableRepository,
-        new FileTableRepository(buildPath(tablesDir, "file")), new JsonTableRepository(buildPath(tablesDir, "json")));
-    auto log = new FileStatementLog(environment.get("DATA_FILE", "data/hdb.log"));
-    auto service = new SqlService(repo, log);
-    service.recover();    // Zustand aus dem Protokoll wiederherstellen, bevor HTTP startet
-    service.mergeDelta(); // eingespielte Daten sofort in den komprimierten Main-Store
+void main() {
+    // Eine Datenbank je Mandant unter TENANTS_DIR. Daten aus der Zeit vor den Mandanten (TABLES_DIR, DATA_FILE,
+    // BACKUP_DIR) ziehen beim ersten Start in den Mandanten default.
+    auto tenantsDir = environment.get("TENANTS_DIR", "data/tenants");
+    immutable migrated = migrateLegacyData(tenantsDir, environment.get("TABLES_DIR", "data/tables"),
+        environment.get("DATA_FILE", "data/hdb.log"), environment.get("BACKUP_DIR", "data/backups"));
+    auto registry = new TenantRegistry(new FileTenantStore(environment.get("TENANTS_FILE", "data/hdb-tenants.json")));
+    auto userStore = new FileUserStore(environment.get("USERS_FILE", "data/hdb-users.json"));
+    // default entsteht beim ersten Start und bei der Umstellung, wenn es bisherige Daten oder Benutzer gibt
+    // (Benutzer ohne Mandant gehören zu default, siehe FileUserStore). Wurde er gelöscht, bleibt er weg.
+    auto knownUsers = userStore.load();
+    immutable firstStart = registry.all().length == 0 && knownUsers.length == 0;
+    immutable legacyUsers = knownUsers.canFind!(u => u.tenant == defaultTenant);
+    if (!registry.has(defaultTenant) && (firstStart || migrated || legacyUsers))
+        registry.put(Tenant(defaultTenant, "Default", true));
 
-    auto access = new AccessService(new FileUserStore(environment.get("USERS_FILE", "data/hdb-users.json")),
-        new OpensslCredentialCrypto);
-    auto adminName = environment.get("ADMIN_USER", "admin");
-    auto generated = access.bootstrap(adminName, environment.get("ADMIN_PASSWORD", ""));
-    if (generated.length)
-        logWarn("Erster Start: Benutzer '%s' mit Passwort '%s' angelegt. Bitte unter /admin/account ändern.", adminName, generated);
+    auto access = new AccessService(userStore, new OpensslCredentialCrypto, null, &registry
+            .isActive);
+    void announce(string tenant, string name, string generated) {
+        if (generated.length)
+            logWarn("Erster Start: Benutzer '%s' im Mandanten '%s' mit Passwort '%s' angelegt. Bitte unter /admin/account ändern.",
+                name, tenant, generated);
+    }
 
-    // Alle eingehenden Adapter sehen nur die abgesicherte Sicht auf den Kern.
-    auto secured = new SecuredSqlUseCase(service, toDelegate(&currentPrincipal));
+    if (registry.has(defaultTenant)) {
+        auto adminName = environment.get("ADMIN_USER", "admin");
+        announce(defaultTenant, adminName, access.bootstrap(defaultTenant, adminName, environment.get("ADMIN_PASSWORD", "")));
+    }
+    auto systemAdmin = environment.get("SYSTEM_ADMIN_USER", "sysadmin");
+    announce(systemTenant, systemAdmin, access.bootstrap(systemTenant, systemAdmin, environment.get(
+            "SYSTEM_ADMIN_PASSWORD", "")));
 
-    auto backups = new BackupService(service, new FileBackupStore(environment.get("BACKUP_DIR", "data/backups")),
-        toDelegate(&currentPrincipal));
+    // Alle eingehenden Adapter sehen nur die abgesicherte, nach Mandanten getrennte Sicht auf den Kern.
+    auto storage = new FileTenantStorage(tenantsDir);
+    auto databases = new TenantDatabases(storage, toDelegate(&currentPrincipal));
+    foreach (t; registry.all())
+        databases.open(t.name); // Zustand aus dem Protokoll wiederherstellen, bevor HTTP startet
+    auto tenants = new TenantService(registry, access, databases, storage);
+    ISqlUseCase secured = databases;
+    IBackupUseCase backups = databases;
 
     // Fällige Sicherungen anlegen; der Takt legt nur fest, wie schnell eine fällige Sicherung bemerkt wird
-    setTimer(environment.get("BACKUP_TICK_SECONDS", "60").to!long.seconds, () nothrow {
+    setTimer(environment.get("BACKUP_TICK_SECONDS", "60").to!long.seconds, () nothrow{
         try {
-            if (auto error = backups.tick())
+            if (auto error = databases.tick())
                 logWarn("Geplante Sicherung fehlgeschlagen: %s", error);
         } catch (Exception e) {
             try
@@ -42,10 +65,10 @@ void main()
     auto router = new URLRouter;
     new SecurityGate(access).register(router); // muss vor allen anderen Routen stehen
     new SqlRestApi(secured).register(router);
-    registerHdbRestApi(router, secured, access, backups, toDelegate(&currentPrincipal));
+    registerHdbRestApi(router, secured, access, backups, tenants, toDelegate(&currentPrincipal));
     new ODataController(secured).register(router);
-    new SqlAdminUi(secured, access, backups).register(router);
-    
+    new SqlAdminUi(secured, access, backups, tenants).register(router);
+
     // Fiori-Frontend: OData-Client, der nur /odata/v4 und die Anmeldung nutzt
     router.get("/ui5", staticRedirect("/ui5/"));
     router.get("/ui5/", serveStaticFile("public/ui5/index.html"));
@@ -63,7 +86,9 @@ void main()
     UnixServer unixServer;
     auto socketPath = environment.get("UNIX_SOCKET", "");
     if (socketPath.length) {
-        unixServer = new UnixServer(socketPath, [new UnixController(secured, access)]);
+        unixServer = new UnixServer(socketPath, [
+                new UnixController(secured, access)
+            ]);
         unixServer.start();
     }
 

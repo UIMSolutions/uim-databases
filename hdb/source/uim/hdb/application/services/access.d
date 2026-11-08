@@ -364,7 +364,7 @@ private Principal principalOf(HdbUser user) {
 }
 
 private UserInfo info(HdbUser user) {
-    return UserInfo(user.name, user.role, user.active);
+    return UserInfo(user.name, user.role, user.active, user.tenant);
 }
 
 private string digest(string token) {

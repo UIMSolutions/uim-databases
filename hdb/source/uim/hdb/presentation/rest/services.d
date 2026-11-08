@@ -406,7 +406,7 @@ unittest {
         }
 
         void save(Tenant[] tenants) {
-            saved = tenants.dup;
+            saved = tenants.map!"a".array;
         }
     }
 
@@ -495,7 +495,10 @@ unittest {
             assert(statusOf({ tables.rows("t", "", "", false, 100_000, 0); }) == 400);
             assert(statusOf({ tables.create("a;b", [RestColumnDef("x", "INTEGER")]); }) == 400);
             assert(statusOf({ tables.create("b", [RestColumnDef("x", "INTEGER")], "DISK"); }) == 400);
-            assert(statusOf({ tables.create("b", [RestColumnDef("x", "INTEGER")], "FILE"); }) == 400); // Repository ohne Dateien
+            // Der Mandant hat eine echte Dateiablage: FILE-Tabellen gehen
+            assert(tables.create("b", [RestColumnDef("x", "INTEGER")], "FILE").storage == "FILE");
+            assert(exists(buildPath(dataDir, "default", "tables", "file")));
+            tables.drop("b");
 
             // Rollen über dieselben Endpunkte
             assert(users.create("vera", "correct-horse-vera", "viewer").role == "viewer");
@@ -549,7 +552,7 @@ unittest {
             acmeTables.insert("t", [Json(42)]);
             assert(acmeTables.rows("t", "", "", false, 10, 0).total == 1);
             assert(tables.rows("t", "", "", false, 10, 0).total == 3);
-            assert(client!IUserRestApi(acmeToken).list().map!(u => u.name).array == ["boss"]);
+            assert(client!IUserRestApi(acmeToken).list().map!(u => u.name ~ "@" ~ u.tenant).array == ["boss@acme"]);
             assert(statusOf({ client!IUserRestApi(acmeToken).remove("root"); }) == 400); // nicht gefunden
             assert(statusOf({ client!IAuthRestApi("").login("root", "correct-horse-root", "acme"); }) == 401);
             assert(statusOf({ client!IAuthRestApi("").login("boss", "correct-horse-acme"); }) == 401); // default
