@@ -8,6 +8,8 @@ sap.ui.define([
 
 	const TOKEN_KEY = "hdb.token";
 	const LANGUAGE_KEY = "hdb.language";
+	const TENANT_KEY = "hdb.tenant";
+	const SYSTEM_TENANT = "system";
 	const LANGUAGES = [{ key: "en", name: "English" }, { key: "de", name: "Deutsch" }];
 
 	return UIComponent.extend("hdb.client.Component", {
@@ -19,8 +21,8 @@ sap.ui.define([
 		init: function () {
 			UIComponent.prototype.init.apply(this, arguments);
 			this.setModel(new JSONModel({
-				authenticated: false, busy: true, user: "", role: "", canWrite: false, isAdmin: false,
-				layout: "OneColumn", navKey: "home", sets: [], loginError: ""
+				authenticated: false, busy: true, user: "", role: "", userTenant: "", canWrite: false, isAdmin: false,
+				layout: "OneColumn", navKey: "home", sets: [], loginError: "", tenant: this._rememberedTenant()
 			}), "app");
 			this._viewsReady = new Promise(function (resolve) {
 				this.viewsLoaded = resolve;
@@ -78,11 +80,12 @@ sap.ui.define([
 			}.bind(this));
 		},
 
-		login: function (user, password) {
+		/** Ein leerer Mandant meldet im Mandanten default an. */
+		login: function (user, password, tenant) {
 			return fetch("/api/v1/auth/login", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ user: user, password: password })
+				body: JSON.stringify({ user: user, password: password, tenant: (tenant || "").trim() })
 			}).then(function (response) {
 				return response.json().then(function (body) {
 					if (!response.ok) {
@@ -91,6 +94,21 @@ sap.ui.define([
 					return this._startSession(body.token);
 				}.bind(this));
 			}.bind(this));
+		},
+
+		/** Nur zum Vorausfüllen der Anmeldung: der Mandant ist kein Geheimnis. */
+		_rememberedTenant: function () {
+			try {
+				return window.localStorage.getItem(TENANT_KEY) || "";
+			} catch (e) {
+				return "";
+			}
+		},
+
+		_rememberTenant: function (tenant) {
+			try {
+				window.localStorage.setItem(TENANT_KEY, tenant);
+			} catch (e) { /* dann eben nicht vorausgefüllt */ }
 		},
 
 		/**
@@ -105,7 +123,13 @@ sap.ui.define([
 				}
 				return response.json();
 			}).then(function (me) {
+				// Systemadministratoren haben keine Daten: dieser Client hat für sie nichts zu zeigen
+				if (me.tenant === SYSTEM_TENANT) {
+					fetch("/api/v1/auth/logout", { method: "POST", headers: { Authorization: "Bearer " + token } }).catch(function () {});
+					throw new Error(this.getModel("i18n").getResourceBundle().getText("systemNoData"));
+				}
 				this._token = token;
+				this._rememberTenant(me.tenant);
 				try {
 					window.sessionStorage.setItem(TOKEN_KEY, token);
 				} catch (e) { /* die Sitzung gilt dann nur bis zum Neuladen */ }
@@ -117,7 +141,7 @@ sap.ui.define([
 					httpHeaders: { Authorization: "Bearer " + token }
 				}));
 				app.setData(Object.assign(app.getData(), {
-					authenticated: true, busy: false, user: me.name, role: me.role,
+					authenticated: true, busy: false, user: me.name, role: me.role, userTenant: me.tenant, tenant: me.tenant,
 					canWrite: me.role !== "viewer", isAdmin: me.role === "admin", loginError: ""
 				}));
 				return this.loadEntitySets();
@@ -154,9 +178,10 @@ sap.ui.define([
 			});
 		},
 
-		endSession: function (message) {
+		/** revoked: der Server hat das Token schon verworfen (etwa nach einem Passwortwechsel), kein Logout nötig. */
+		endSession: function (message, revoked) {
 			const token = this._token;
-			if (token) {
+			if (token && !revoked) {
 				fetch("/api/v1/auth/logout", { method: "POST", headers: { Authorization: "Bearer " + token } }).catch(function () {});
 			}
 			this._token = null;
@@ -170,7 +195,7 @@ sap.ui.define([
 			}
 			const app = this.getModel("app");
 			app.setData(Object.assign(app.getData(), {
-				authenticated: false, busy: false, user: "", role: "", canWrite: false, isAdmin: false,
+				authenticated: false, busy: false, user: "", role: "", userTenant: "", canWrite: false, isAdmin: false,
 				layout: "OneColumn", navKey: "home", sets: [], loginError: message || ""
 			}));
 			sap.ui.getCore().getEventBus().publish("hdb", "sessionEnded");

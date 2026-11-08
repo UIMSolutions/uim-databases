@@ -63,7 +63,8 @@
     if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) event.preventDefault();
     if (form.dataset.confirmName) {
       const name = form.dataset.confirmName;
-      if (window.prompt(`This permanently removes the table. Type "${name}" to confirm.`) !== name) {
+      const what = form.dataset.confirmWhat || 'the table';
+      if (window.prompt(`This permanently removes ${what}. Type "${name}" to confirm.`) !== name) {
         event.preventDefault();
       }
     }

@@ -7,6 +7,7 @@ block content
         h2.card-title On this page
         ul.flex.flex-wrap.gap-x-4.gap-y-1
           li: a.link(href="#start") Getting started
+          li: a.link(href="#tenants") Tenants
           li: a.link(href="#roles") Roles
           li: a.link(href="#sql") SQL
           li: a.link(href="#types") Data types
@@ -30,6 +31,17 @@ block content
             | .
         p.text-sm.opacity-70 Tables have no primary key. Editing or deleting a row here affects every row with identical values, and the result message reports how many.
 
+    section#tenants.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Tenants
+        p You are signed in to tenant #{page.tenant}.
+        ul.list-disc.pl-5.space-y-1
+          li Each tenant has its own tables, users, backups and backup schedule. Nothing is shared between tenants, and an open transaction only locks its own tenant.
+          li Users sign in with the tenant name. Leave the field empty for the default tenant.
+          li Admins of a tenant manage the users of that tenant only.
+          li System administrators sign in to the tenant system. They create, disable and delete tenants, but they can't see tenant data.
+          li Disabling a tenant signs out all of its users. You can delete a tenant only after you disable it, and deleting removes its users, tables and backups for good.
+
     section#roles.card.bg-base-100.shadow.scroll-mt-4
       div.card-body
         h2.card-title Roles
@@ -50,7 +62,7 @@ block content
               tr
                 td.font-mono admin
                 td Also CREATE, DROP, merge, checkpoint, users and backups
-        p.text-sm.opacity-70 Roles apply to the whole database, not to single tables.
+        p.text-sm.opacity-70 Roles apply to the whole database of your tenant, not to single tables.
 
     section#sql.card.bg-base-100.shadow.scroll-mt-4
       div.card-body

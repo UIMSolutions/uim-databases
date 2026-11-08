@@ -58,7 +58,7 @@ block content
       form(action="/admin/tenants", method="POST")
         label.block.mb-3
           span.block.text-sm.mb-1 Tenant name
-          input.input.w-full.font-mono(type="text", name="tenant", required=true, maxlength="32", pattern="[a-z0-9][a-z0-9_\-]*", autocomplete="off", autocapitalize="none", spellcheck="false")
+          input.input.w-full.font-mono(type="text", name="tenant", required=true, maxlength="32", pattern="[a-z0-9][a-z0-9_\\-]*", autocomplete="off", autocapitalize="none", spellcheck="false")
           span.block.text-xs.opacity-60.mt-1 Lowercase letters, digits, '_' and '-'. Users type it when they sign in, and it can't be changed later.
         label.block.mb-3
           span.block.text-sm.mb-1 Label (optional)

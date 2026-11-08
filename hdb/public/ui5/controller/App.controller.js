@@ -1,9 +1,18 @@
 sap.ui.define([
 	"sap/ui/core/mvc/Controller",
 	"sap/m/ActionSheet",
-	"sap/m/Button"
-], function (Controller, ActionSheet, Button) {
+	"sap/m/Button",
+	"sap/m/Dialog",
+	"sap/m/Input",
+	"sap/m/Label",
+	"sap/m/MessageStrip",
+	"sap/m/MessageToast",
+	"sap/ui/layout/form/SimpleForm"
+], function (Controller, ActionSheet, Button, Dialog, Input, Label, MessageStrip, MessageToast, SimpleForm) {
 	"use strict";
+
+	/** Wie AccessService.minPasswordLength: der Server prüft es ohnehin, so kommt die Meldung früher und übersetzt. */
+	const MIN_PASSWORD_LENGTH = 12;
 
 	return Controller.extend("hdb.client.controller.App", {
 		onInit: function () {
@@ -53,13 +62,16 @@ sap.ui.define([
 			const current = component.getLanguages().find(function (language) {
 				return language.key === component.getLanguage();
 			});
-			this._openSheet(app.getProperty("/user") + " (" + app.getProperty("/role") + ")", avatar, [
+			this._openSheet(bundle.getText("profileTitle", [app.getProperty("/user"), app.getProperty("/role"), app.getProperty("/userTenant")]), avatar, [
 				new Button({ text: bundle.getText("backups"), icon: "sap-icon://product", visible: app.getProperty("/isAdmin"), press: function () {
 					component.getRouter().navTo("backups");
 				} }),
 				new Button({ text: bundle.getText("adminConsole"), icon: "sap-icon://action-settings", press: function () {
 					window.location.href = "/admin";
 				} }),
+				new Button({ text: bundle.getText("changePassword"), icon: "sap-icon://key", press: function () {
+					this._menu.attachEventOnce("afterClose", this._openPasswordDialog.bind(this));
+				}.bind(this) }),
 				new Button({ text: bundle.getText("languageCurrent", [current.name]), icon: "sap-icon://world", press: function () {
 					// Ein zweites Blatt öffnet sich erst, wenn das erste zu ist
 					this._menu.attachEventOnce("afterClose", this._openLanguages.bind(this, avatar));
@@ -84,6 +96,97 @@ sap.ui.define([
 					}
 				});
 			}));
+		},
+
+		/**
+		 * Der Server beendet nach dem Wechsel alle Sitzungen des Benutzers, auch diese. Deshalb gleich mit dem neuen
+		 * Passwort neu anmelden; scheitert das, bleibt die Anmeldeseite mit einem Hinweis.
+		 */
+		_openPasswordDialog: function () {
+			const component = this.getOwnerComponent();
+			const bundle = component.getModel("i18n").getResourceBundle();
+			const text = bundle.getText.bind(bundle);
+			const user = component.getModel("app").getProperty("/user");
+			const tenant = component.getModel("app").getProperty("/userTenant");
+			const field = function (autocomplete) {
+				const input = new Input({ type: "Password", width: "100%" });
+				input.addEventDelegate({
+					onAfterRendering: function () {
+						input.getFocusDomRef().setAttribute("autocomplete", autocomplete);
+					}
+				});
+				return input;
+			};
+			const current = field("current-password");
+			const replacement = field("new-password");
+			const confirm = field("new-password");
+			const error = new MessageStrip({ type: "Error", showIcon: true, visible: false }).addStyleClass("sapUiSmallMargin");
+			const showError = function (message) {
+				error.setText(message);
+				error.setVisible(true);
+			};
+			const submit = function () {
+				error.setVisible(false);
+				if (!current.getValue()) {
+					showError(text("passwordCurrentMissing"));
+					return;
+				}
+				if (replacement.getValue().length < MIN_PASSWORD_LENGTH) {
+					showError(text("passwordTooShort", [MIN_PASSWORD_LENGTH]));
+					return;
+				}
+				if (replacement.getValue() !== confirm.getValue()) {
+					showError(text("passwordMismatch"));
+					return;
+				}
+				const newPassword = replacement.getValue();
+				dialog.setBusy(true);
+				component.authFetch("/api/v1/auth/password", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ current: current.getValue(), replacement: newPassword })
+				}).then(function () {
+					dialog.close();
+					component.endSession("", true);
+					return component.login(user, newPassword, tenant).then(function () {
+						MessageToast.show(text("passwordChanged"));
+					}, function () {
+						component.getModel("app").setProperty("/loginError", text("passwordChangedSignIn"));
+					});
+				}, function (failure) {
+					dialog.setBusy(false);
+					if (component.handleError(failure)) {
+						dialog.close();
+						return;
+					}
+					showError(failure.message);
+				});
+			};
+			[current, replacement, confirm].forEach(function (input) {
+				input.attachSubmit(submit);
+			});
+			const dialog = new Dialog({
+				title: text("changePassword"),
+				contentWidth: "26rem",
+				initialFocus: current,
+				content: [
+					error,
+					new SimpleForm({ editable: true, layout: "ColumnLayout", content: [
+						new Label({ text: text("passwordCurrent"), labelFor: current, required: true }), current,
+						new Label({ text: text("passwordNew"), labelFor: replacement, required: true }), replacement,
+						new Label({ text: text("passwordConfirm"), labelFor: confirm, required: true }), confirm
+					] })
+				],
+				beginButton: new Button({ text: text("save"), type: "Emphasized", press: submit }),
+				endButton: new Button({ text: text("cancel"), press: function () {
+					dialog.close();
+				} }),
+				afterClose: function () {
+					dialog.destroy();
+				}
+			});
+			this.getView().addDependent(dialog);
+			dialog.open();
 		},
 
 		_openSheet: function (title, opener, buttons) {

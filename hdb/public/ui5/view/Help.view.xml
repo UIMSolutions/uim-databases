@@ -22,6 +22,8 @@
 				<Text text="{i18n>helpStatsText}" class="sapUiSmallMarginBottom"/>
 				<Title text="{i18n>helpSessionTitle}" titleStyle="H4" class="sapUiSmallMarginTop sapUiTinyMarginBottom"/>
 				<Text text="{i18n>helpSessionText}" class="sapUiSmallMarginBottom"/>
+				<Title text="{i18n>helpTenantTitle}" titleStyle="H4" class="sapUiSmallMarginTop sapUiTinyMarginBottom"/>
+				<Text text="{i18n>helpTenantText}" class="sapUiSmallMarginBottom"/>
 				<Link text="{i18n>helpAdminLink}" href="/admin/help" class="sapUiSmallMarginTop"/>
 			</VBox>
 		</f:content>

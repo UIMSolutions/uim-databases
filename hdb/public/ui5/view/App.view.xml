@@ -7,7 +7,7 @@
 			</VBox>
 			<tnt:ToolPage id="toolPage" visible="{app>/authenticated}">
 				<tnt:header>
-					<f:ShellBar title="{i18n>appTitle}" showNavButton="false" showMenuButton="true" menuButtonPressed=".onToggleSideNav" avatarPressed=".onProfile">
+					<f:ShellBar title="{i18n>appTitle}" secondTitle="{app>/userTenant}" showNavButton="false" showMenuButton="true" menuButtonPressed=".onToggleSideNav" avatarPressed=".onProfile">
 						<f:profile>
 							<Avatar id="profile" initials="{path: 'app>/user', formatter: '.initials'}"/>
 						</f:profile>

@@ -94,7 +94,8 @@ Typisierte vibe.d-Schnittstellen in `presentation/rest` (`interfaces.d`, `models
 
 Fehler: `{"statusMessage": "..."}` mit 400 (ungültiges SQL, gesperrte Datenbank) oder 404 (Tabelle unbekannt).
 Dazu `POST /api/v1/auth/login|logout|password`, `GET /api/v1/auth/me` und `GET|POST /api/v1/users`,
-`PUT|DELETE /api/v1/users/:name`, `POST /api/v1/users/:name/password`. Fehlende Anmeldung ergibt 401, fehlende Rechte 403.
+`PUT|DELETE /api/v1/users/:name`, `POST /api/v1/users/:name/password`, für Systemadministratoren `GET|POST /api/v1/tenants`
+und `PUT|DELETE /api/v1/tenants/:name` (siehe Mandanten). Fehlende Anmeldung ergibt 401, fehlende Rechte 403.
 Die Endpunkte ohne `/api/v1` (`adapters/inbound/rest_api.d`) bestehen weiter und verlangen ebenfalls ein Bearer-Token.
 
 ## OData v4
@@ -186,6 +187,53 @@ Antwort: Zeile `STATUS 200`, Header mit `Content-Length`, Leerzeile, Body. Eine 
 - Ein verwaister Socket nach einem Absturz wird beim Start ersetzt. Antwortet er noch oder liegt dort etwas anderes als ein
   Socket, bricht der Start ab; es wird nichts gelöscht.
 
+## Mandanten
+
+Jeder Mandant hat seine eigene Datenbank: Tabellen, Anweisungsprotokoll, Sicherungen, Zeitplan und Benutzer. Nichts davon
+wird geteilt, auch nicht eine offene Transaktion. Zwei Mandanten können dieselben Tabellen- und Benutzernamen haben.
+
+    data/hdb-tenants.json          Liste der Mandanten (TENANTS_FILE)
+    data/hdb-users.json            Benutzer aller Mandanten (USERS_FILE)
+    data/tenants/<mandant>/        Daten eines Mandanten (TENANTS_DIR)
+        hdb.log                    Anweisungsprotokoll
+        tables/file, tables/json   Tabellen mit Speicher FILE und JSON
+        backups/                   Sicherungen und schedule.json
+
+Anmeldung mit Mandant: in den Formularen im Feld „Mandant“, per API im Feld `tenant`. Ohne Angabe gilt `default`,
+bestehende Skripte laufen also unverändert weiter.
+
+    curl -s localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+      -d '{"tenant":"acme","user":"admin","password":"..."}'
+
+Mandanten verwalten nur Systemadministratoren, also Administratoren im Bereich `system`. Sie melden sich mit dem
+Mandanten `system` an, legen Mandanten mit ihrem ersten Administrator an, ändern Anzeigenamen und deaktivieren oder
+löschen Mandanten. Auf Daten der Mandanten haben sie keinen Zugriff: SQL, OData, Tabellen und Sicherungen antworten mit 403,
+und die Administrationsoberfläche zeigt ihnen nur Mandanten, Systembenutzer und ihr Konto. Alles andere verwalten die
+Administratoren eines Mandanten selbst, und nur in ihrem Mandanten.
+
+    curl localhost:8080/api/v1/tenants -H "Authorization: Bearer $SYSTOKEN" -H 'Content-Type: application/json' \
+      -d '{"name":"acme","label":"Acme Corp","adminName":"admin","adminPassword":"..."}'
+    curl -X PUT localhost:8080/api/v1/tenants/acme -H "Authorization: Bearer $SYSTOKEN" -H 'Content-Type: application/json' \
+      -d '{"label":"Acme Corp","active":false}'
+    curl -X DELETE localhost:8080/api/v1/tenants/acme -H "Authorization: Bearer $SYSTOKEN"
+
+- Mandantennamen: 1 bis 32 Kleinbuchstaben, Ziffern, `_` und `-`, beginnend mit Buchstabe oder Ziffer. Sie sind Teil der
+  Anmeldung und der Verzeichnisname, deshalb nicht änderbar. `system` ist reserviert.
+- Deaktivieren beendet sofort alle Sitzungen des Mandanten und verhindert neue Anmeldungen. Daten und Benutzer bleiben.
+- Löschen geht nur bei deaktivierten Mandanten und entfernt Benutzer, Daten und Sicherungen endgültig.
+- Liegen beim Anlegen noch Daten eines früheren Mandanten gleichen Namens auf der Platte, wird abgelehnt, statt sie zu übernehmen.
+- Die Anmeldung meldet einen unbekannten oder deaktivierten Mandanten genauso wie ein falsches Passwort.
+- Alle Mandanten werden beim Start geladen und liegen im Speicher, wie bisher die eine Datenbank.
+
+Erster Start: Es entstehen der Mandant `default` mit `ADMIN_USER` (Standard `admin`, Passwort `ADMIN_PASSWORD`) und der
+Systemadministrator `SYSTEM_ADMIN_USER` (Standard `sysadmin`, Passwort `SYSTEM_ADMIN_PASSWORD`). Ohne Passwort wird eines
+erzeugt und einmalig ins Log geschrieben. Der Systemadministrator wird auch angelegt, wenn der Bereich `system` noch
+keine Benutzer hat, etwa beim ersten Start nach der Umstellung.
+
+Umstellung einer bestehenden Installation: Beim ersten Start ziehen `DATA_FILE`, `TABLES_DIR` und `BACKUP_DIR` nach
+`TENANTS_DIR/default` um (verschoben, nicht kopiert), und alle bisherigen Benutzer gehören zu `default`. Anmeldungen
+ohne Mandant funktionieren wie vorher. Das geschieht nur, solange `TENANTS_DIR/default` noch nicht existiert.
+
 ## Benutzer und Rechte
 
 Außer `GET /health`, `GET /api/v1/health` und den Anmeldeseiten verlangt jede Route eine Anmeldung.
@@ -196,12 +244,12 @@ Außer `GET /health`, `GET /api/v1/health` und den Anmeldeseiten verlangt jede R
 | `editor` | zusätzlich `INSERT`, `UPDATE`, `DELETE`, Transaktionen |
 | `admin` | zusätzlich `CREATE`, `DROP`, Merge, Checkpoint, Benutzerverwaltung (`/admin/users`) |
 
-Rechte gelten für die ganze Datenbank, nicht je Tabelle. Rollenänderungen wirken sofort, auch in laufenden Sitzungen.
+Rollen gelten im eigenen Mandanten (siehe Mandanten). Rechte gelten für die ganze Datenbank des Mandanten, nicht je Tabelle. Rollenänderungen wirken sofort, auch in laufenden Sitzungen.
 Eine offene Transaktion kann nur ihr Besitzer verwenden. Der letzte aktive Administrator lässt sich nicht entfernen.
 
-Erster Start: Gibt es keine Benutzer, wird `ADMIN_USER` (Standard `admin`) mit `ADMIN_PASSWORD` angelegt. Ohne
-Passwort wird eines erzeugt und einmalig ins Log geschrieben; bitte unter `/admin/account` ändern. Danach werden beide
-Variablen ignoriert. Administrator-Passwort verloren: `USERS_FILE` löschen und neu starten (alle Benutzer sind dann weg).
+Erster Start: siehe Mandanten. Erzeugte Passwörter bitte unter `/admin/account` ändern; danach werden die Variablen
+ignoriert. Administrator-Passwort eines Mandanten verloren: ein anderer Administrator des Mandanten setzt es zurück.
+Gibt es keinen mehr, lässt sich der Mandant nur noch über `USERS_FILE` reparieren.
 
     TOKEN=$(curl -s localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
       -d '{"user":"admin","password":"..."}' | jq -r .token)
@@ -212,13 +260,14 @@ Variablen ignoriert. Administrator-Passwort verloren: `USERS_FILE` löschen und 
   12 Stunden, liegen nur als Hash im Speicher und enden bei Neustart, Passwortwechsel, Deaktivieren oder Löschen.
 - Passwörter: mindestens 12 Zeichen, PBKDF2-HMAC-SHA256 mit 600 000 Runden. Nach 5 Fehlversuchen ist der Name 1 Minute
   gesperrt, auch wenn er nicht existiert. Dadurch kann ein Angreifer die Anmeldung eines Namens zeitweise blockieren.
-- Benutzer liegen in `USERS_FILE` (Standard `data/hdb-users.json`, Rechte 0600), nicht im Anweisungsprotokoll.
+- Benutzer aller Mandanten liegen in `USERS_FILE` (Standard `data/hdb-users.json`, Rechte 0600), nicht im Anweisungsprotokoll.
   Eine beschädigte Datei bricht den Start ab. Sicherungen müssen die Datei einschließen.
 - Das Log enthält weiterhin alle Daten im Klartext; die Rechte gelten nur für den Zugriff über HTTP.
 - Tokens, Cookies und Passwörter gehen im Klartext über HTTP: im Netz nur hinter TLS betreiben. Das Cookie erhält
   `Secure`, wenn der Proxy `X-Forwarded-Proto: https` setzt.
 
-Durchgesetzt wird an einer Stelle: `SecuredSqlUseCase` umschließt den Kern, alle eingehenden Adapter sehen nur ihn.
+Durchgesetzt wird an einer Stelle: `TenantDatabases` wählt die Datenbank des angemeldeten Mandanten, und dort umschließt
+`SecuredSqlUseCase` den Kern. Alle eingehenden Adapter sehen nur `TenantDatabases`.
 `SecurityGate` setzt je Anfrage die Identität und lässt nur die öffentlichen Pfade ohne Anmeldung durch.
 
 ## Tabellenspeicher
@@ -232,10 +281,10 @@ Der Speicher lässt sich später nicht ändern; dafür Tabelle neu anlegen und D
 | Speicher | Repository | Dauerhaft durch | Schreiben kostet |
 |---|---|---|---|
 | `MEMORY` | `MemoryTableRepository` | Anweisungsprotokoll (siehe Persistenz) | eine Zeile im Log |
-| `FILE` | `FileTableRepository` | `TABLES_DIR/file/<name>.tbl` (Text, tabulatorgetrennt) | ganze Datei neu |
-| `JSON` | `JsonTableRepository` | `TABLES_DIR/json/<name>.json` | ganze Datei neu |
+| `FILE` | `FileTableRepository` | `tables/file/<name>.tbl` (Text, tabulatorgetrennt) | ganze Datei neu |
+| `JSON` | `JsonTableRepository` | `tables/json/<name>.json` | ganze Datei neu |
 
-`TABLES_DIR` ist standardmäßig `data/tables`. `RoutingTableRepository` verteilt die Tabellen, Namen sind über alle Speicher
+Die Pfade liegen im Verzeichnis des Mandanten (`TENANTS_DIR/<mandant>`, siehe Mandanten). `RoutingTableRepository` verteilt die Tabellen, Namen sind über alle Speicher
 eindeutig. `GET /stats` und `GET /api/v1/stats` zeigen `storage`.
 
 - `FILE`- und `JSON`-Tabellen stehen nie im Anweisungsprotokoll: jede Tabelle hat genau eine dauerhafte Quelle.
@@ -245,7 +294,7 @@ eindeutig. `GET /stats` und `GET /api/v1/stats` zeigen `storage`.
 - Eine Transaktion über mehrere Dateien oder über Datei und Log ist bei einem Absturz mitten im `COMMIT` nicht atomar:
   Dateien werden nacheinander geschrieben, das Log zuletzt.
 - Eine beschädigte Datei, oder derselbe Tabellenname in zwei Speichern, bricht den Start ab.
-- Die Dateien sind Klartext. Sicherungen müssen `TABLES_DIR` einschließen.
+- Die Dateien sind Klartext. Sicherungen des Servers müssen `TENANTS_DIR` einschließen.
 
 ## Sichern und Wiederherstellen
 
@@ -259,7 +308,9 @@ Nur für die Rolle `admin`, in der Administrationsoberfläche (`/admin/backups`)
       -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/octet-stream'
     curl -X POST localhost:8080/api/v1/backups/<name>/restore -H "Authorization: Bearer $TOKEN"
 
-- Eine Sicherung ist eine Datei (`*.hdbbak`, Rechte 0600) in `BACKUP_DIR` (Standard `data/backups`). Sie enthält alle Tabellen
+- Sicherungen gehören zum Mandanten: Administratoren sehen und erzeugen nur Sicherungen ihres Mandanten, eine Wiederherstellung
+  ersetzt nur dessen Tabellen, und jeder Mandant hat seinen eigenen Zeitplan.
+- Eine Sicherung ist eine Datei (`*.hdbbak`, Rechte 0600) in `TENANTS_DIR/<mandant>/backups`. Sie enthält alle Tabellen
   aller Speicher mit Schema, Speicherart und exakten Werten und endet mit einer SHA-256-Prüfsumme. Sie ist nicht verschlüsselt.
 - Sichern braucht einen ruhenden Stand: bei einer offenen Transaktion wird abgelehnt. Die Datenbank bleibt sonst benutzbar,
   ist aber während des Kopierens gesperrt. Eine Sicherung liegt vollständig im Speicher, auch beim Hoch- und Herunterladen.
@@ -276,7 +327,7 @@ Nur für die Rolle `admin`, in der Administrationsoberfläche (`/admin/backups`)
   einen anderen Ort kopiert werden.
 
 Zeitplan und Aufbewahrung sind standardmäßig aktiv: alle 24 Stunden eine Sicherung, 7 geplante und 5 Sicherheitskopien bleiben.
-Einstellbar in beiden Oberflächen und per `GET|PUT /api/v1/backups/schedule`, gespeichert in `BACKUP_DIR/schedule.json`.
+Einstellbar in beiden Oberflächen und per `GET|PUT /api/v1/backups/schedule`, gespeichert in `backups/schedule.json` des Mandanten.
 
     curl -X PUT localhost:8080/api/v1/backups/schedule -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
       -d '{"enabled": true, "intervalHours": 6, "keepScheduled": 28, "keepSafety": 5}'
@@ -296,7 +347,7 @@ Einstellbar in beiden Oberflächen und per `GET|PUT /api/v1/backups/schedule`, g
 Command-Log (Write-Ahead-Log) über den Port `IStatementLog`, Adapter `FileStatementLog`.
 Jede erfolgreiche Änderung an `MEMORY`-Tabellen (`CREATE`, `DROP`, `INSERT`, `UPDATE`, `DELETE`) wird angehängt, beim Start spielt `recover()` das Log ein.
 Nach 1000 Anweisungen oder per `POST /checkpoint` wird das Log kompakt neu geschrieben.
-Datei: Umgebungsvariable `DATA_FILE` (Standard `data/hana-lite.log`).
+Datei: `TENANTS_DIR/<mandant>/hdb.log`, je Mandant eine (siehe Mandanten). `DATA_FILE` nennt nur noch den bisherigen Ort für die Umstellung.
 
 ## Spaltenspeicher: Dictionary + Delta-Merge
 

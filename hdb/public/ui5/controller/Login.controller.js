@@ -9,7 +9,7 @@ sap.ui.define(["sap/ui/core/mvc/Controller"], function (Controller) {
 			const password = this.byId("password");
 			app.setProperty("/busy", true);
 			app.setProperty("/loginError", "");
-			component.login(this.byId("user").getValue(), password.getValue()).then(function () {
+			component.login(this.byId("user").getValue(), password.getValue(), app.getProperty("/tenant")).then(function () {
 				password.setValue("");
 			}).catch(function (error) {
 				app.setProperty("/busy", false);
