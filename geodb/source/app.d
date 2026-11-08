@@ -1,61 +1,50 @@
 /****************************************************************************************************************
-* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UIManufaktur) 
-* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file. 
+* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UIManufaktur)
+* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file.
 * Authors: Ozan Nurettin Süel (aka UIManufaktur)
 *****************************************************************************************************************/
+/// Composition root: the only place where adapters and the application core are wired together.
+///
+/// Environment:
+///   GEODB_NAME          database name reported by /geo/stats (default "locations")
+///   GEODB_HOST          bind address (default "127.0.0.1")
+///   GEODB_PORT          HTTP port (default 8082)
+///   GEODB_GRID_DEGREES  spatial index cell size in degrees (default 1.0)
 module app;
 
 import uim.databases.geodb;
-import vibe.d;
-import std.stdio;
+import std.conv : to;
+import std.process : environment;
+import vibe.core.core : runApplication;
+import vibe.core.log : logInfo;
+import vibe.http.router : URLRouter;
+import vibe.http.server : HTTPServerSettings, listenHTTP;
 
 @safe:
 
-shared static this() {
-  // Create geographic database
-  auto db = new GeoDatabase("locations");
+int main() {
+  immutable name = environment.get("GEODB_NAME", "locations");
+  immutable host = environment.get("GEODB_HOST", "127.0.0.1");
+  immutable port = environment.get("GEODB_PORT", "8082").to!ushort;
+  immutable gridDegrees = environment.get("GEODB_GRID_DEGREES", "1.0").to!double;
 
-  // Create REST API handler
-  auto api = new GeoDatabaseAPI(db);
+  // Outbound adapter
+  ILocationRepository repository = new InMemoryLocationRepository(gridDegrees);
 
-  // Setup router
+  // Application core
+  ILocationUseCase locations = new LocationService(repository);
+  IGeoQueryUseCase queries = new GeoQueryService(repository, name);
+
+  // Inbound adapter
   auto router = new URLRouter;
-  router.registerRestInterface(api);
+  registerGeoRoutes(router, new GeoRestController(locations, queries));
 
-  // Add root endpoint
-  router.get("/", (HTTPServerRequest req, HTTPServerResponse res) {
-    res.writeJsonBody([
-      "name": Json("Geographic Database API"),
-      "version": Json("1.0.0"),
-      "description": Json("High-performance geospatial database"),
-      "endpoints": Json([
-        "POST /geo/location - Add location",
-        "GET /geo/location - Get all locations",
-        "GET /geo/location/:id - Get location by ID",
-        "DELETE /geo/location/:id - Remove location",
-        "POST /geo/nearby - Find nearby locations (radius)",
-        "POST /geo/bounds - Find locations in bounding box",
-        "POST /geo/nearest - Find N nearest locations",
-        "POST /geo/distance - Calculate distance between two points",
-        "GET /geo/stats - Database statistics"
-      ])
-    ]);
-  });
-
-  router.any("*", (HTTPServerRequest req, HTTPServerResponse res) {
-    res.statusCode = 404;
-    res.writeJsonBody([
-      "error": Json("Not found"),
-      "path": Json(req.path)
-    ]);
-  });
-
-  // Setup and start server
   auto settings = new HTTPServerSettings;
-  settings.port = 8082;
-  settings.bindAddresses = ["127.0.0.1"];
+  settings.port = port;
+  settings.bindAddresses = [host];
+  auto listener = listenHTTP(settings, router);
+  scope (exit) listener.stopListening();
 
-  listenHTTP(settings, router);
-  writeln("Geographic Database API server running on http://127.0.0.1:8082");
-  runEventLoop();
+  logInfo("Geographic Database API '%s' running on http://%s:%s", name, host, port);
+  return runApplication();
 }
