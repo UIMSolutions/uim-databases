@@ -27,6 +27,7 @@ struct AdminPage {
     string active; // "dashboard", "sql" oder der Tabellenname
     string[] tables;
     bool locked; // eine offene Transaktion sperrt die Datenbank
+    string replicaOf; // Quelle, wenn der Mandant ein schreibgeschütztes Ziel ist (nur für Administratoren ermittelt)
     string userName, roleLabel;
     string tenant; // Mandant des Benutzers
     bool canWrite, isAdmin;
@@ -190,8 +191,11 @@ final class SqlAdminUi {
     private IAccessUseCase access;
     private IBackupUseCase backups;
     private ITenantUseCase tenants;
+    private IReplicationUseCase replication;
 
-    this(ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups, ITenantUseCase tenants) {
+    this(ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups, ITenantUseCase tenants,
+        IReplicationUseCase replication) {
+        this.replication = replication;
         this.sql = sql;
         this.access = access;
         this.backups = backups;
@@ -217,6 +221,10 @@ final class SqlAdminUi {
         router.post("/admin/tenants", &createTenant);
         router.post("/admin/tenants/:tenant/update", &updateTenant);
         router.post("/admin/tenants/:tenant/delete", &deleteTenant);
+        router.get("/admin/replication", &replicationPage);
+        router.post("/admin/replication", &configureReplica);
+        router.post("/admin/replication/stop", &stopReplica);
+        router.post("/admin/replication/resync", &resyncReplica);
         router.get("/admin/backups", &backupList);
         router.post("/admin/backups", &createBackup);
         router.post("/admin/backups/upload", &uploadBackup);
@@ -269,6 +277,13 @@ final class SqlAdminUi {
             p.tables = sql.listTables();
         catch (Exception)
             p.locked = true;
+        if (p.isAdmin)
+            try {
+                auto status = replication.replicationStatus();
+                if (status.replica)
+                    p.replicaOf = status.url;
+            } catch (Exception) {
+            }
         return p;
     }
 
@@ -427,6 +442,46 @@ final class SqlAdminUi {
         act(req, res, "/admin/users", {
             access.deleteUser(currentPrincipal(), req.params["user"]);
             return "HdbUser " ~ req.params["user"] ~ " deleted";
+        });
+    }
+
+    private void replicationPage(HTTPServerRequest req, HTTPServerResponse res) {
+        ReplicationStatus status;
+        try
+            status = replication.replicationStatus();
+        catch (AccessDenied e)
+            return renderError(req, res, HTTPStatus.forbidden, e.msg);
+        auto page = pageFor(req, "Replication", "replication");
+        res.render!("replication.dt", page, status);
+    }
+
+    private void configureReplica(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/replication", {
+            ReplicationConfig config;
+            config.url = req.form.get("url", "");
+            config.tenant = req.form.get("tenant", "");
+            config.user = req.form.get("user", "");
+            config.password = req.form.get("password", "");
+            try
+                config.intervalSeconds = req.form.get("interval", "2").to!int;
+            catch (Exception)
+                throw new Exception("The interval must be a whole number of seconds");
+            replication.configureReplica(config);
+            return "Replication started. The first run replaces all tables of this tenant.";
+        });
+    }
+
+    private void stopReplica(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/replication", {
+            replication.stopReplica();
+            return "Replication stopped. This tenant keeps its data and accepts changes again.";
+        });
+    }
+
+    private void resyncReplica(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/replication", {
+            replication.resyncReplica();
+            return "A full sync starts with the next run";
         });
     }
 
@@ -703,7 +758,8 @@ bool isTenantDataPath(string path) @safe {
 
     if (path == "/admin")
         return true;
-    return ["/admin/stats", "/admin/sql", "/admin/merge", "/admin/checkpoint", "/admin/tables", "/admin/backups"]
+    return ["/admin/stats", "/admin/sql", "/admin/merge", "/admin/checkpoint", "/admin/tables", "/admin/backups",
+        "/admin/replication"]
         .any!(p => path == p || path.startsWith(p ~ "/"));
 }
 

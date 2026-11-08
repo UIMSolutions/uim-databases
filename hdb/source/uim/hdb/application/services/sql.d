@@ -443,7 +443,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
 
     private QueryResult createTable(string s) {
         auto m = matchFirst(s, ctRegex!(`^CREATE\s+TABLE\s+(\w+)\s*\((.*)\)(?:\s+USING\s+(\w+))?$`, "is"));
-        enforce(!m.empty, "Syntax: CREATE TABLE name (spalte TYP, ...) [USING MEMORY|FILE|JSON]");
+        enforce(!m.empty, "Syntax: CREATE TABLE name (spalte TYP, ...) [USING MEMORY|FILE|JSON|BINARY|BSON]");
         immutable storage = m[3].length ? parseStorage(m[3]) : TableStorage.memory;
         enforce(storage == TableStorage.memory || durable !is null, "Dieses Repository unterstützt nur MEMORY");
         enforce(!repo.exists(m[1]), "Tabelle existiert bereits");

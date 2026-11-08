@@ -42,7 +42,12 @@ void main() {
 
     // Alle eingehenden Adapter sehen nur die abgesicherte, nach Mandanten getrennte Sicht auf den Kern.
     auto storage = new FileTenantStorage(tenantsDir);
-    auto databases = new TenantDatabases(storage, toDelegate(&currentPrincipal));
+    // Replikation: jeder Mandant kann Quelle und Ziel sein. REPLICATION_ALLOWED_HOSTS (durch Komma getrennt) begrenzt,
+    // welche Quellen Mandanten-Admins eintragen dürfen; REPLICATION_RETAIN, wie viele Änderungen abrufbar bleiben.
+    auto replicationClient = new HttpReplicationClient(environment.get("REPLICATION_ALLOWED_HOSTS", "").split(",")
+        .map!(h => h.strip).array);
+    auto databases = new TenantDatabases(storage, toDelegate(&currentPrincipal), replicationClient,
+        environment.get("REPLICATION_RETAIN", "10000").to!size_t);
     foreach (t; registry.all())
         databases.open(t.name); // Zustand aus dem Protokoll wiederherstellen, bevor HTTP startet
     auto tenants = new TenantService(registry, access, databases, storage);
@@ -62,12 +67,31 @@ void main() {
         }
     }, true);
 
+    // Ziele holen Änderungen ihrer Quelle; jedes Ziel hat seinen eigenen Abstand, der Takt prüft nur, wer fällig ist
+    bool replicating;
+    setTimer(1.seconds, () nothrow {
+        if (replicating)
+            return; // ein Lauf wartet noch auf eine Quelle
+        replicating = true;
+        scope (exit)
+            replicating = false;
+        try {
+            foreach (error; databases.replicationTick())
+                logWarn("Replikation fehlgeschlagen: %s", error);
+        } catch (Exception e) {
+            try
+                logWarn("Replikation fehlgeschlagen: %s", e.msg);
+            catch (Exception) {
+            }
+        }
+    }, true);
+
     auto router = new URLRouter;
     new SecurityGate(access).register(router); // muss vor allen anderen Routen stehen
     new SqlRestApi(secured).register(router);
-    registerHdbRestApi(router, secured, access, backups, tenants, toDelegate(&currentPrincipal));
+    registerHdbRestApi(router, secured, access, backups, tenants, databases, toDelegate(&currentPrincipal));
     new ODataController(secured).register(router);
-    new SqlAdminUi(secured, access, backups, tenants).register(router);
+    new SqlAdminUi(secured, access, backups, tenants, databases).register(router);
 
     // Fiori-Frontend: OData-Client, der nur /odata/v4 und die Anmeldung nutzt
     router.get("/ui5", staticRedirect("/ui5/"));

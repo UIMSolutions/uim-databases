@@ -7,7 +7,9 @@ import std.string : strip, toUpper;
 enum TableStorage {
     memory, // Hauptspeicher, Wiederherstellung über das Anweisungsprotokoll
     file, // eigene Textdatei je Tabelle
-    json // eigene JSON-Datei je Tabelle
+    json, // eigene JSON-Datei je Tabelle
+    binary, // eigene kompakte Binärdatei je Tabelle, mit Prüfsumme
+    bson // eigenes BSON-Dokument je Tabelle, lesbar mit bsondump und MongoDB-Treibern
 }
 
 string storageName(TableStorage storage) {
@@ -18,6 +20,10 @@ string storageName(TableStorage storage) {
         return "FILE";
     case TableStorage.json:
         return "JSON";
+    case TableStorage.binary:
+        return "BINARY";
+    case TableStorage.bson:
+        return "BSON";
     }
 }
 
@@ -29,15 +35,19 @@ TableStorage parseStorage(string name) {
         return TableStorage.file;
     case "JSON":
         return TableStorage.json;
+    case "BINARY":
+        return TableStorage.binary;
+    case "BSON":
+        return TableStorage.bson;
     default:
-        throw new Exception("Unbekannter Speicher: " ~ name ~ " (MEMORY, FILE oder JSON)");
+        throw new Exception("Unbekannter Speicher: " ~ name ~ " (MEMORY, FILE, JSON, BINARY oder BSON)");
     }
 }
 
 unittest {
     import std.exception : assertThrown;
 
-    foreach (s; [TableStorage.memory, TableStorage.file, TableStorage.json])
+    foreach (s; [TableStorage.memory, TableStorage.file, TableStorage.json, TableStorage.binary, TableStorage.bson])
         assert(parseStorage(storageName(s)) == s);
     assert(parseStorage(" json ") == TableStorage.json);
     assertThrown(parseStorage("disk"));

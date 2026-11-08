@@ -10,7 +10,7 @@ import uim.hdb.domain.table;
 import std.algorithm : sort;
 import std.array : array;
 import std.exception : enforce;
-import std.file : dirEntries, exists, mkdirRecurse, readText, remove, rename, SpanMode;
+import std.file : dirEntries, exists, mkdirRecurse, read, remove, rename, SpanMode;
 import std.path : baseName, buildPath, stripExtension;
 import std.stdio : File;
 import std.string : toLower;
@@ -30,13 +30,15 @@ abstract class SnapshotTableRepository : ITableRepository, IDurableTableReposito
             mkdirRecurse(directory);
     }
 
-    protected abstract string encode(ColumnTable table);
-    protected abstract ColumnTable decode(string content);
+    /// Inhalt der Datei einer Tabelle. Textformate leiten von TextTableRepository ab.
+    protected abstract immutable(ubyte)[] encodeBytes(ColumnTable table);
+    /// Liest den Inhalt einer Datei vollständig und prüft ihn; wirft bei jedem Fehler.
+    protected abstract ColumnTable decodeBytes(immutable(ubyte)[] content);
 
     /// Liest alle Tabellen; die abgeleitete Klasse ruft das am Ende ihres Konstruktors auf.
     protected final void loadAll() {
         foreach (entry; dirEntries(directory, "*." ~ extension, SpanMode.shallow)) {
-            auto table = decode(readText(entry.name));
+            auto table = decodeBytes(cast(immutable(ubyte)[]) read(entry.name));
             enforce(table.name.toLower == baseName(entry.name).stripExtension,
                 "Tabellenname passt nicht zur Datei: " ~ entry.name);
             store[table.name.toLower] = table;
@@ -76,10 +78,32 @@ abstract class SnapshotTableRepository : ITableRepository, IDurableTableReposito
         }
         auto tmp = path ~ ".tmp";
         auto f = File(tmp, "w");
-        f.write(encode(*table));
+        f.rawWrite(encodeBytes(*table));
         f.flush();
         f.sync(); // sonst könnte rename nach einem Absturz auf eine leere Datei zeigen
         f.close();
         rename(tmp, path);
+    }
+}
+
+/// Für Textformate: die Datei ist UTF-8, ungültiger Text bricht den Start ab.
+abstract class TextTableRepository : SnapshotTableRepository {
+    protected this(string directory, string extension) {
+        super(directory, extension);
+    }
+
+    protected abstract string encode(ColumnTable table);
+    protected abstract ColumnTable decode(string content);
+
+    protected override immutable(ubyte)[] encodeBytes(ColumnTable table) {
+        return cast(immutable(ubyte)[]) encode(table);
+    }
+
+    protected override ColumnTable decodeBytes(immutable(ubyte)[] content) {
+        import std.utf : validate;
+
+        auto text = cast(string) content;
+        validate(text);
+        return decode(text);
     }
 }

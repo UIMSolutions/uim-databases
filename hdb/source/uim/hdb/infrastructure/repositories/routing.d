@@ -15,8 +15,14 @@ import std.exception : enforce;
 final class RoutingTableRepository : ITableRepository, IDurableTableRepository {
     private ITableRepository[TableStorage] backends;
 
-    this(ITableRepository memory, ITableRepository file, ITableRepository json) {
+    /// binary und bson sind optional: ohne sie lehnt das Anlegen solcher Tabellen ab.
+    this(ITableRepository memory, ITableRepository file, ITableRepository json, ITableRepository binary = null,
+        ITableRepository bson = null) {
         backends = [TableStorage.memory: memory, TableStorage.file: file, TableStorage.json: json];
+        if (binary !is null)
+            backends[TableStorage.binary] = binary;
+        if (bson !is null)
+            backends[TableStorage.bson] = bson;
         bool[string] seen;
         foreach (b; backends)
             foreach (name; b.list()) {
@@ -40,7 +46,9 @@ final class RoutingTableRepository : ITableRepository, IDurableTableRepository {
     }
 
     void save(ColumnTable table) {
-        backends[table.storage].save(table);
+        auto backend = table.storage in backends;
+        enforce(backend !is null, "Storage " ~ storageName(table.storage) ~ " is not available here");
+        backend.save(table);
     }
 
     void remove(string name) {

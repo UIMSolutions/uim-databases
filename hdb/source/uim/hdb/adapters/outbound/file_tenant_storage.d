@@ -9,6 +9,8 @@ import std.path : buildPath;
 /// Ausgehender Adapter: ein Verzeichnis je Mandant unter `root`:
 ///   <root>/<mandant>/tables/file   Tabellen mit Speicher FILE
 ///   <root>/<mandant>/tables/json   Tabellen mit Speicher JSON
+///   <root>/<mandant>/tables/binary Tabellen mit Speicher BINARY
+///   <root>/<mandant>/tables/bson   Tabellen mit Speicher BSON
 ///   <root>/<mandant>/hdb.log       Anweisungsprotokoll
 ///   <root>/<mandant>/backups       Sicherungen und Zeitplan
 ///   <root>/<mandant>/replication.json  Quelle, falls der Mandant ein Ziel ist (Rechte 0600)
@@ -27,7 +29,8 @@ final class FileTenantStorage : ITenantStorage {
         auto tables = buildPath(dir, "tables");
         return TenantStorage(
             new RoutingTableRepository(new MemoryTableRepository,
-                new FileTableRepository(buildPath(tables, "file")), new JsonTableRepository(buildPath(tables, "json"))),
+                new FileTableRepository(buildPath(tables, "file")), new JsonTableRepository(buildPath(tables, "json")),
+                new BinaryTableRepository(buildPath(tables, "binary")), new BsonTableRepository(buildPath(tables, "bson"))),
             new FileStatementLog(buildPath(dir, "hdb.log")),
             new FileBackupStore(buildPath(dir, "backups")),
             new FileReplicationConfigStore(buildPath(dir, "replication.json")));

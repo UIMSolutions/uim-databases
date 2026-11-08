@@ -2,7 +2,10 @@ module uim.hdb.presentation.rest.services;
 
 import uim.hdb.adapters.inbound.admin_web : createTableSql, isIdentifier, selectSql;
 import uim.hdb.adapters.inbound.security : bearerToken;
-import uim.hdb.application.ports : BackupNotFound, IAccessUseCase, IBackupUseCase, ISqlUseCase, ITenantUseCase;
+import uim.hdb.application.ports : BackupNotFound, IAccessUseCase, IBackupUseCase, IReplicationUseCase, ISqlUseCase,
+    ITenantUseCase, ReplicationConfig;
+import uim.hdb.adapters.outbound.replication_http : changeBatchJson;
+import uim.hdb.infrastructure.repositories.backups : encodeSnapshot;
 import uim.hdb.domain.entities.user;
 import uim.hdb;
 import uim.hdb.domain.value;
@@ -335,7 +338,7 @@ private void writeRestError(HTTPServerResponse res, Exception e) @trusted {
 /// Registers all REST interfaces. Input errors (invalid SQL, locked database) result in a 400
 /// as with POST /sql; the HTTPStatusException retains its status. Stack traces are not included in the response.
 void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups,
-    ITenantUseCase tenants, Principal delegate() current) {
+    ITenantUseCase tenants, IReplicationUseCase replication, Principal delegate() current) {
     auto settings = new RestInterfaceSettings;
     settings.errorHandler = (HTTPServerRequest req, HTTPServerResponse res, RestErrorInformation error) @trusted {
         writeRestError(res, error.exception);
@@ -365,6 +368,7 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
         } catch (Exception e)
             writeRestError(res, e);
     });
+    registerReplicationRoutes(router, replication);
     router.post("/api/v1/backups/import", (HTTPServerRequest req, HTTPServerResponse res) {
         try {
             requireRole(current(), HdbRole.admin); // vor dem Lesen des Rumpfs
@@ -374,6 +378,73 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
             writeRestError(res, e);
     });
 }
+/// Replikation. Quelle: Stand im Sicherungsformat (Position in X-Hdb-Epoch und X-Hdb-Sequence) und Änderungen ab
+/// einer Position, beides für jeden Benutzer des Mandanten. Ziel: Einstellungen und Zustand, nur für admin.
+/// Das Passwort der Quelle wird angenommen, aber nie ausgegeben.
+private void registerReplicationRoutes(URLRouter router, IReplicationUseCase replication) {
+    static void handle(HTTPServerResponse res, scope void delegate() work) @trusted {
+        try
+            work();
+        catch (Exception e)
+            writeRestError(res, e);
+    }
+
+    router.get("/api/v1/replication/snapshot", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+        handle(res, {
+            auto snap = replication.replicationSnapshot();
+            res.headers["X-Hdb-Epoch"] = snap.epoch;
+            res.headers["X-Hdb-Sequence"] = snap.sequence.to!string;
+            res.writeBody(encodeSnapshot("replication", snap.tables), "application/octet-stream");
+        });
+    });
+    router.get("/api/v1/replication/changes", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+        handle(res, {
+            ulong since;
+            size_t limit;
+            try {
+                since = req.query.get("since", "0").to!ulong;
+                limit = req.query.get("max", "500").to!size_t;
+            } catch (Exception)
+                throw new HTTPStatusException(HTTPStatus.badRequest, "since and max must be whole numbers");
+            res.writeJsonBody(changeBatchJson(replication.replicationChanges(req.query.get("epoch", ""), since, limit)));
+        });
+    });
+    router.get("/api/v1/replication", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+        handle(res, { res.writeJsonBody(serializeToJson(replication.replicationStatus())); });
+    });
+    router.put("/api/v1/replication/source", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+        handle(res, {
+            auto j = req.json;
+            enforce(j.type == Json.Type.object, "JSON object expected");
+            string text(string key) {
+                auto v = j[key];
+                if (v.type == Json.Type.undefined || v.type == Json.Type.null_)
+                    return "";
+                enforce(v.type == Json.Type.string, key ~ " must be text");
+                return v.get!string;
+            }
+
+            ReplicationConfig config;
+            config.url = text("url");
+            config.tenant = text("tenant");
+            config.user = text("user");
+            config.password = text("password");
+            auto interval = j["intervalSeconds"];
+            if (interval.type == Json.Type.int_)
+                config.intervalSeconds = interval.get!int;
+            else
+                enforce(interval.type == Json.Type.undefined, "intervalSeconds must be a whole number");
+            res.writeJsonBody(serializeToJson(replication.configureReplica(config)));
+        });
+    });
+    router.delete_("/api/v1/replication/source", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+        handle(res, { res.writeJsonBody(serializeToJson(replication.stopReplica())); });
+    });
+    router.post("/api/v1/replication/resync", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+        handle(res, { res.writeJsonBody(serializeToJson(replication.resyncReplica())); });
+    });
+}
+
 ///
 /// Actual run over HTTP using the clients generated from the interfaces, including the gateway and roles.
 unittest {
@@ -427,7 +498,7 @@ unittest {
     auto tenantService = new TenantService(registry, access, databases, storage);
     auto router = new URLRouter;
     new SecurityGate(access).register(router);
-    registerHdbRestApi(router, databases, access, databases, tenantService, principal);
+    registerHdbRestApi(router, databases, access, databases, tenantService, databases, principal);
     auto http = new HTTPServerSettings;
     http.port = 0;
     http.bindAddresses = ["127.0.0.1"];
@@ -578,6 +649,149 @@ unittest {
     });
     runEventLoop();
     listener.stopListening();
+    if (failure !is null)
+        throw failure;
+}
+
+/// Replikation über echtes HTTP: zwei vollständige Server, das Ziel holt Stand und Änderungen über die REST-API.
+unittest {
+    import uim.hdb;
+    import std.exception : collectException;
+    import std.file : exists, rmdirRecurse, tempDir;
+    import std.functional : toDelegate;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+    import vibe.core.core : exitEventLoop, runEventLoop, runTask;
+    import vibe.http.server : HTTPServerSettings, listenHTTP;
+
+    static class MemUsers : IUserStore {
+        HdbUser[] saved;
+        HdbUser[] load() {
+            return saved;
+        }
+
+        void save(HdbUser[] users) {
+            saved = users.map!"a".array;
+        }
+    }
+
+    static class MemTenants : ITenantStore {
+        Tenant[] saved;
+        Tenant[] load() {
+            return saved;
+        }
+
+        void save(Tenant[] tenants) {
+            saved = tenants.map!"a".array;
+        }
+    }
+
+    struct Server {
+        AccessService access;
+        TenantDatabases databases;
+        string url;
+        typeof(listenHTTP(HTTPServerSettings.init, URLRouter.init)) listener;
+    }
+
+    auto dataDir = buildPath(tempDir, "hdb-replication-" ~ randomUUID().toString);
+    scope (exit)
+        if (exists(dataDir))
+            rmdirRecurse(dataDir);
+    auto principal = toDelegate(&currentPrincipal);
+
+    Server start(string name) {
+        Server s;
+        auto registry = new TenantRegistry(new MemTenants);
+        registry.put(Tenant(defaultTenant, "Default", true));
+        s.access = new AccessService(new MemUsers, new OpensslCredentialCrypto, null, &registry.isActive);
+        s.access.bootstrap("root", "correct-horse-root");
+        auto storage = new FileTenantStorage(buildPath(dataDir, name));
+        s.databases = new TenantDatabases(storage, principal, new HttpReplicationClient);
+        s.databases.open(defaultTenant);
+        auto router = new URLRouter;
+        new SecurityGate(s.access).register(router);
+        registerHdbRestApi(router, s.databases, s.access, s.databases,
+            new TenantService(registry, s.access, s.databases, storage), s.databases, principal);
+        auto http = new HTTPServerSettings;
+        http.port = 0;
+        http.bindAddresses = ["127.0.0.1"];
+        s.listener = listenHTTP(http, router);
+        s.url = "http://127.0.0.1:" ~ s.listener.bindAddresses[0].port.to!string;
+        return s;
+    }
+
+    auto primary = start("primary");
+    auto replica = start("replica");
+    scope (exit) {
+        primary.listener.stopListening();
+        replica.listener.stopListening();
+    }
+
+    Throwable failure;
+    runTask(() nothrow {
+        try {
+            auto admin = Principal("root", HdbRole.admin, true, defaultTenant);
+            // Auf der Quelle: Daten in allen Speicherarten und ein Benutzer nur zum Lesen für das Ziel
+            bindPrincipal(admin);
+            primary.databases.execute("CREATE TABLE m (id INTEGER, n VARCHAR)");
+            primary.databases.execute("CREATE TABLE f (id INTEGER) USING FILE");
+            primary.databases.execute("INSERT INTO m VALUES (1, 'it''s')");
+            primary.databases.execute("INSERT INTO f VALUES (10)");
+            primary.access.createUser(admin, "repl", "replication-pw1", HdbRole.viewer);
+
+            // Ein Betrachter liest den Strom, darf aber nichts einstellen
+            auto viewer = Principal("repl", HdbRole.viewer, true, defaultTenant);
+            bindPrincipal(viewer);
+            assert(primary.databases.replicationSnapshot().tables.length == 2);
+            assert(collectException!AccessDenied(primary.databases.replicationStatus()) !is null);
+
+            // Das Ziel einrichten und abrufen
+            bindPrincipal(admin);
+            replica.databases.execute("CREATE TABLE stale (x INTEGER)"); // wird vom Stand der Quelle ersetzt
+            replica.databases.configureReplica(ReplicationConfig(true, primary.url, "", "repl", "replication-pw1", 1));
+            assert(replica.databases.replicationTick().length == 0);
+            auto status = replica.databases.replicationStatus();
+            assert(status.state == "streaming" && status.replica, status.lastError);
+            assert(replica.databases.listTables().sort.array == ["f", "m"]);
+            assert(replica.databases.execute("SELECT n FROM m").rows[0][0].get!string == "it's");
+
+            // Das Ziel ist schreibgeschützt, Lesen geht
+            assert(collectException!AccessDenied(replica.databases.execute("INSERT INTO m VALUES (2, 'x')")) !is null);
+            assert(collectException!AccessDenied(replica.databases.execute("BEGIN")) !is null);
+
+            // Änderungen der Quelle kommen an, auch Transaktionen und Dateitabellen
+            primary.databases.execute("INSERT INTO m VALUES (2, 'b')");
+            auto tx = primary.databases.execute("BEGIN").transaction;
+            primary.databases.executeIn(tx, "UPDATE f SET id = 11 WHERE id = 10");
+            primary.databases.executeIn(tx, "DELETE FROM m WHERE id = 1");
+            primary.databases.executeIn(tx, "COMMIT");
+            primary.databases.execute("DROP TABLE f");
+            import core.time : seconds;
+            import vibe.core.core : sleep;
+
+            sleep(1.seconds);
+            assert(replica.databases.replicationTick().length == 0);
+            assert(replica.databases.listTables() == ["m"]);
+            assert(replica.databases.execute("SELECT id FROM m").rows.map!(r => r[0].get!long).array == [2]);
+            assert(replica.databases.replicationStatus().appliedSequence == primary.databases.replicationChanges(
+                    primary.databases.replicationStatus().epoch, 0, 500).sequence);
+
+            // Falsches Passwort wird gemeldet; nach dem Stoppen ist das Ziel wieder beschreibbar
+            replica.databases.configureReplica(ReplicationConfig(true, primary.url, "", "repl", "wrong-password1", 1));
+            auto errors = replica.databases.replicationTick();
+            assert(errors.length == 1 && errors[0].canFind("rejected the login"), errors.join);
+            replica.databases.stopReplica();
+            replica.databases.execute("INSERT INTO m VALUES (3, 'local')");
+            assert(replica.databases.execute("SELECT COUNT(*) FROM m").rows[0][0].get!long == 2);
+            bindPrincipal(Principal.init);
+        } catch (Throwable t)
+            failure = t;
+        try
+            exitEventLoop();
+        catch (Exception) {
+        }
+    });
+    runEventLoop();
     if (failure !is null)
         throw failure;
 }

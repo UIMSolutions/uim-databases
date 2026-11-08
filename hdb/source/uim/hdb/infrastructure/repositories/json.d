@@ -14,7 +14,7 @@ import vibe.data.json : Json, parseJsonString;
 /// Tabellen als lesbare JSON-Dateien (<name>.json):
 ///   {"name": "t", "columns": [{"name": "id", "type": "INTEGER"}], "rows": [[1, "a", null]]}
 /// Zahlen schreibt exactText: Json.toString hat nur 16 Stellen und würde manche double verändern.
-final class JsonTableRepository : SnapshotTableRepository {
+final class JsonTableRepository : TextTableRepository {
     this(string directory) {
         super(directory, "json");
         loadAll();

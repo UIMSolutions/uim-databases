@@ -17,7 +17,7 @@ import std.exception : enforce;
 ///   Zeile 3  spalte:TYP, durch Tabulatoren getrennt
 ///   danach   eine Zeile je Datensatz, Felder durch Tabulatoren getrennt; \N ist NULL,
 ///            in Text sind \\, \t, \n und \r maskiert
-final class FileTableRepository : SnapshotTableRepository {
+final class FileTableRepository : TextTableRepository {
     private enum header = "HDBTABLE 1";
 
     this(string directory) {
