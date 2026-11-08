@@ -34,3 +34,8 @@ geodb/dub.selections.json
 geodb/dub.selections.json
 .yamlink/health-snapshots.ndjson
 hdb/.yamlink/health-snapshots.ndjson
+hdb/libhdb.a
+hdb/hdb-test-library
+.yamlink/health-snapshots.ndjson
+geodb/dub.selections.json
+hdb/.yamlink/health-snapshots.ndjson
