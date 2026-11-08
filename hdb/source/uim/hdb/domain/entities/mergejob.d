@@ -48,7 +48,7 @@ final class MergeJob {
         auto all = (mainDict ~ frozenDict).dup
             .sort!valueLess
             .uniq!((a, b) => compareValues(a, b) == 0)
-            .array;
+            .toValues;
         auto sorted = all.assumeSorted!valueLess;
         uint codeOf(Value v) {
             return cast(uint)sorted.lowerBound(v).length;

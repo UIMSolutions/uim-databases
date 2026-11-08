@@ -76,7 +76,7 @@ final class CompactionJob {
             auto dict = vals.dup
                 .sort!valueLess
                 .uniq!((a, b) => compareValues(a, b) == 0)
-                .array;
+                .toValues;
             auto sorted = dict.assumeSorted!valueLess;
             auto codes = new uint[vals.length];
             foreach (i, x; vals)

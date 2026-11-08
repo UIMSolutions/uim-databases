@@ -116,27 +116,29 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
             mergeRunning = true;
         }
         auto worker = new Thread({
-            bool ok = true;
-            try
+            bool ok;
+            string error;
+            // scope(exit) läuft auch bei einem Error: der Merge-Zustand wird nie dauerhaft blockiert
+            scope (exit)
+                synchronized (this) {
+                    mergeRunning = false;
+                    if (ok)
+                        ++mergesCompleted;
+                    else
+                        lastMergeError = error.length ? error : "Merge aborted by an internal error";
+                }
+            try {
                 mergeCycle(force);
-            catch (Throwable e) {
-                ok = false;
-                synchronized (this)
-                    lastMergeError = e.msg;
-            }
-            synchronized (this) {
-                mergeRunning = false;
-                if (ok)
-                    ++mergesCompleted;
-            }
+                ok = true;
+            } catch (Exception e)
+                error = e.msg;
         });
         worker.isDaemon = true; // hält den Prozess beim Beenden nicht auf
-        try
-            worker.start();
-        catch (Throwable e) {
-            synchronized (this)
-                mergeRunning = false;
-            throw e;
+        {
+            scope (failure)
+                synchronized (this)
+                    mergeRunning = false;
+            startThread(worker);
         }
         return true;
     }
@@ -239,9 +241,9 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
                 auto t = repo.get(name);
                 TableSnapshot s = TableSnapshot(t.name, t.storage, t.defs.dup);
                 foreach (r; t.liveRows()) {
-                    auto row = new Value[t.defs.length];
+                    Value[] row;
                     foreach (c; 0 .. t.defs.length)
-                        row[c] = t.value(c, r);
+                        row ~= t.value(c, r);
                     s.rows ~= row;
                 }
                 result ~= s;
@@ -526,7 +528,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
             auto eq = part.indexOf('=');
             enforce(eq > 0, "Zuweisung erwartet: spalte = wert");
             auto ci = t.indexOf(part[0 .. eq].strip);
-            newVals[ci] = parseLiteral(t.defs[ci].type, part[eq + 1 .. $]);
+            assign(newVals[ci], parseLiteral(t.defs[ci].type, part[eq + 1 .. $]));
             isSet[ci] = true;
         }
 
@@ -748,7 +750,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
         QueryResult res;
         res.columns = cols.map!(i => t.defs[i].name).array;
         foreach (r; hits)
-            res.rows ~= cols.map!(c => t.value(c, r)).array;
+            res.rows ~= cols.map!(c => t.value(c, r)).toValues;
         return res;
     }
 
@@ -926,7 +928,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
                     sums[ii][g] += toDouble(v);
                 else if (it.kind == AggKind.min || it.kind == AggKind.max) {
                     if (!has[ii][g] || (it.kind == AggKind.min ? valueLess(v, best[ii][g]) : valueLess(best[ii][g], v))) {
-                        best[ii][g] = v;
+                        assign(best[ii][g], v);
                         has[ii][g] = true;
                     }
                 }
@@ -1123,7 +1125,7 @@ private string maskLiterals(string s) {
 private string[] originalCaptures(C)(C m, string masked, string original) {
     string[] result;
     foreach (i; 0 .. m.length) {
-        immutable start = m[i].ptr - masked.ptr;
+        immutable start = m[i].length ? offsetWithin(m[i], masked) : 0;
         result ~= m[i].length ? original[start .. start + m[i].length] : "";
     }
     return result;
@@ -2825,4 +2827,18 @@ unittest {
     assertThrown(s.execute("SELECT k FROM e WHERE du LIKE 'P%'"));
     assertThrown(s.execute("SELECT k FROM e WHERE x LIKE '1%'"));
     assertThrown(s.execute("CREATE TABLE z (a RAW)"));
+}
+
+/// Startet den Merge-Thread. @trusted: Thread.start ist @system, weil der Thread Daten mit dem Aufrufer teilen kann.
+/// Der Merge-Thread greift auf den Zustand des SqlService nur unter `synchronized (this)` zu (siehe mergeCycle).
+private void startThread(Thread worker) @trusted {
+    worker.start();
+}
+
+/// Lage eines Teilstrings in seinem Ursprungsstring. @trusted: Zeigerdifferenz ist @system; vorher wird geprüft,
+/// dass `part` wirklich innerhalb von `whole` liegt, sonst wirft die Funktion.
+private size_t offsetWithin(const(char)[] part, const(char)[] whole) @trusted {
+    enforce(part.ptr >= whole.ptr && part.ptr + part.length <= whole.ptr + whole.length,
+        "Internal error: capture is not part of the statement");
+    return part.ptr - whole.ptr;
 }

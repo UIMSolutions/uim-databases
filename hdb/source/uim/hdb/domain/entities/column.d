@@ -181,11 +181,10 @@ final class Column {
         auto job = beginMerge();
         if (job is null)
             return;
-        try
+        {
+            scope (failure)
+                abortMerge(job); // auch bei einem Error, wie zuvor
             job.run();
-        catch (Throwable e) {
-            abortMerge(job);
-            throw e;
         }
         finishMerge(job);
     }

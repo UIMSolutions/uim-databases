@@ -122,6 +122,15 @@ private int compareContent(X, Y)(X x, Y y) {
         throw new Exception("Werte vom Typ " ~ X.stringof ~ " und " ~ Y.stringof ~ " sind nicht vergleichbar");
 }
 
+/// Wie std.array.array für Werte, aber @safe: array wäre über die Zuweisung an SumType @system, Anhängen
+/// kopiert nur.
+Value[] toValues(R)(R range) {
+    Value[] result;
+    foreach (v; range)
+        result ~= v;
+    return result;
+}
+
 /// Überschreibt einen Wert in einem Feld oder einer Variablen.
 /// Phobos nennt die Zuweisung an einen SumType mit Text @system: zeigte gerade noch eine Referenz in den alten
 /// Inhalt (etwa von peek oder match mit ref), würde sie ungültig. @trusted, weil dieser Code solche Referenzen nie
