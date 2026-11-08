@@ -10,6 +10,8 @@ import std.algorithm : sort;
 import std.array : array;
 import std.exception : enforce;
 
+@safe:
+
 /// Verteilt Tabellen nach ColumnTable.storage auf die Repositories. Der Kern sieht nur dieses eine Repository,
 /// Tabellennamen sind über alle Speicher hinweg eindeutig.
 final class RoutingTableRepository : ITableRepository, IDurableTableRepository {

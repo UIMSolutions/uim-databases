@@ -11,6 +11,8 @@ import std.array : array;
 import vibe.data.json : Json;
 import vibe.data.serialization : optional;
 
+@safe:
+
 /// Response formats of the REST interfaces. They decouple the public API from the domain model.
 
 struct RestStatus {

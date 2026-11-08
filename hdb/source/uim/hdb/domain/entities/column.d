@@ -2,6 +2,8 @@ module uim.hdb.domain.entities.column;
 
 import uim.hdb;
 
+@safe:
+
 /// Dictionary-komprimierte Spalte (wie HANA):
 ///  - Main:  sortiertes Dictionary + bitgepackte Codes (read-optimiert)
 ///  - Delta: unsortiertes Dictionary + uint-Codes (write-optimiert)
@@ -87,7 +89,7 @@ final class Column {
     }
 
     /// Das Prädikat wird nur einmal pro DISTINCT-Wert ausgewertet, danach werden nur Codes gescannt.
-    size_t[] scan(scope bool delegate(Value) pred) {
+    size_t[] scan(scope bool delegate(Value) @safe pred) {
         auto mainOk = new bool[mainDict.length];
         foreach (i, v; mainDict)
             mainOk[i] = pred(v);

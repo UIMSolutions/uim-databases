@@ -7,6 +7,8 @@ import std.path : dirName;
 import std.stdio : File;
 import vibe.data.json : Json, parseJsonString;
 
+@safe:
+
 /// Ausgehender Adapter: Benutzer als JSON-Datei. Sie liegt getrennt vom Anweisungsprotokoll, damit Passwort-Hashes
 /// nicht in Checkpoints oder Sicherungen der Daten landen, und ist nur für den Besitzer lesbar.
 /// Eine beschädigte Datei bricht den Start ab, statt die Benutzer stillschweigend zu verlieren.
@@ -26,10 +28,10 @@ final class FileUserStore : IUserStore {
             return users;
         // Benutzer aus der Zeit vor den Mandanten gehören zu default
         // Benutzer ohne Tabellenfreigaben stammen aus der Zeit vor RBAC
-        foreach (j; parseJsonString(readText(path))["users"]) {
+        foreach (j; parseJsonString(readText(path))["users"].byValue) {
             TableGrant[] grants;
             if (j["grants"].type != Json.Type.undefined)
-                foreach (g; j["grants"])
+                foreach (g; j["grants"].byValue)
                     grants ~= TableGrant(g["table"].get!string, g["role"].get!string);
             users ~= HdbUser(j["name"].get!string, j["passwordHash"].get!string,
                 j["role"].get!string, j["active"].get!bool,
@@ -113,9 +115,9 @@ final class FileRoleStore : IRoleStore {
         RoleDef[] roles;
         if (!exists(path))
             return roles;
-        foreach (j; parseJsonString(readText(path))["roles"]) {
+        foreach (j; parseJsonString(readText(path))["roles"].byValue) {
             string[] permissions;
-            foreach (p; j["permissions"])
+            foreach (p; j["permissions"].byValue)
                 permissions ~= p.get!string;
             roles ~= RoleDef(j["tenant"].get!string, validRoleName(j["name"].get!string), j["description"].get!string,
                 PermissionSet.parse(permissions), false);

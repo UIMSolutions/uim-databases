@@ -25,6 +25,8 @@ import std.string : indexOf, lastIndexOf, strip;
 import std.utf : validate;
 import vibe.data.json : Json, parseJsonString;
 
+@safe:
+
 /// Sicherungen als eine Textdatei (*.hdbbak), Zeile für Zeile JSON:
 ///   Kopf     {"format":"hdb-backup","version":1,"created":...,"label":...,"tables":n,"rows":m}
 ///   je Tabelle  {"table":...,"storage":...,"columns":[...],"rows":k}, danach k Zeilen mit je einem Datensatz
@@ -323,7 +325,7 @@ private Decoded decode(string content) {
             t.name = meta["table"].get!string;
             enforce(isSqlName(t.name), "invalid table name");
             t.storage = parseStorage(meta["storage"].get!string);
-            foreach (c; meta["columns"]) {
+            foreach (c; meta["columns"].byValue) {
                 t.columns ~= ColumnDef(c["name"].get!string, parseTypeName(c["type"].get!string));
                 enforce(isSqlName(t.columns[$ - 1].name), "invalid column name");
             }

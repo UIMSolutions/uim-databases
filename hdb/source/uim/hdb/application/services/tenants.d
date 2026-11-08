@@ -5,6 +5,8 @@ import std.algorithm : map, sort;
 import std.array : array, join;
 import std.exception : enforce;
 
+@safe:
+
 /// Die bekannten Mandanten. Der Systembereich steht nicht darin und gilt immer als aktiv.
 final class TenantRegistry {
     private ITenantStore store;
@@ -88,14 +90,14 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
     }
 
     private ITenantStorage storage;
-    private Principal delegate() current;
+    private Principal delegate() @safe current;
     private IReplicationClient client;
     private size_t retain;
     private Engine[string] engines;
 
     /// `client` null: dieser Server kann Quelle sein, aber kein Ziel. `retain`: so viele Änderungen bleiben je
     /// Mandant abrufbar, ein Ziel mit größerem Rückstand holt einen vollständigen Stand.
-    this(ITenantStorage storage, Principal delegate() current, IReplicationClient client = null, size_t retain = 10_000) {
+    this(ITenantStorage storage, Principal delegate() @safe current, IReplicationClient client = null, size_t retain = 10_000) {
         this.storage = storage;
         this.current = current;
         this.client = client;

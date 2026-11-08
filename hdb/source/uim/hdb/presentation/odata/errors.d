@@ -5,6 +5,8 @@
 *****************************************************************************************************************/
 module uim.hdb.presentation.odata.errors;
 
+@safe:
+
 /// Error with HTTP status and OData code; returned as {“error”: {...}}.
 class ODataError : Exception {
     int status;

@@ -17,6 +17,8 @@ import std.string : toStringz;
 import vibe.core.log : logInfo, logWarn;
 import vibe.core.net : listenTCP, NetworkAddress, TCPConnection, TCPListener;
 
+@safe:
+
 /// Inbound adapter: accepts connections on a Unix domain socket and forwards requests to the controllers.
 final class UnixServer : IUnixServer {
     enum size_t defaultMaxBodyBytes = 16 * 1024 * 1024;

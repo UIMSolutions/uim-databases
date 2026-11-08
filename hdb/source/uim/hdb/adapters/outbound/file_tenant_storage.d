@@ -6,6 +6,8 @@ import std.file : mkdirRecurse, rename, rmdirRecurse;
 static import std.file;
 import std.path : buildPath;
 
+@safe:
+
 /// Ausgehender Adapter: ein Verzeichnis je Mandant unter `root`:
 ///   <root>/<mandant>/tables/file   Tabellen mit Speicher FILE
 ///   <root>/<mandant>/tables/json   Tabellen mit Speicher JSON

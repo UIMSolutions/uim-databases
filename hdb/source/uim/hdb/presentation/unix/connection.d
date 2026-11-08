@@ -13,6 +13,8 @@ import std.string : icmp, indexOf, representation, strip;
 import std.utf : UTFException, validate;
 import vibe.core.net : TCPConnection;
 
+@safe:
+
 /// Liest und schreibt Nachrichten auf einem Socket. vibe nennt jede Stream-Verbindung TCPConnection, auch AF_UNIX.
 final class UnixConnection : IUnixConnection {
     enum size_t maxHeaderBytes = 64 * 1024;

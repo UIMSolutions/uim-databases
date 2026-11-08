@@ -16,6 +16,8 @@ import vibe.inet.url : URL;
 import vibe.stream.operations : readAllUTF8;
 import vibe.textfilter.urlencode : urlEncode;
 
+@safe:
+
 /// Ausgehender Adapter: ein Ziel ruft seine Quelle über deren REST-API ab, wie jeder andere Client.
 /// Antworten gelten als nicht vertrauenswürdig: der Stand wird wie eine hochgeladene Sicherung vollständig geprüft.
 final class HttpReplicationClient : IReplicationClient {
@@ -89,8 +91,8 @@ final class HttpReplicationClient : IReplicationClient {
     }
 
     /// Fehler der Quelle: 401 wird zu AuthenticationRequired (neu anmelden), alles andere zu einer Meldung.
-    private void call(string target, string token, scope void delegate(scope HTTPClientRequest) prepare,
-        scope void delegate(string, scope HTTPClientResponse) read) {
+    private void call(string target, string token, scope void delegate(scope HTTPClientRequest) @safe prepare,
+        scope void delegate(string, scope HTTPClientResponse) @safe read) {
         requestHTTP(target, (scope HTTPClientRequest req) {
             if (token.length)
                 req.headers["Authorization"] = "Bearer " ~ token;
@@ -114,10 +116,10 @@ ChangeBatch parseChangeBatch(string text) {
     batch.epoch = j["epoch"].get!string;
     batch.sequence = j["sequence"].get!long.to!ulong;
     batch.resync = j["resync"].get!bool;
-    foreach (c; j["changes"]) {
+    foreach (c; j["changes"].byValue) {
         Change change;
         change.sequence = c["sequence"].get!long.to!ulong;
-        foreach (st; c["statements"])
+        foreach (st; c["statements"].byValue)
             change.statements ~= st.get!string;
         enforce(change.statements.length, "Empty change from the source");
         batch.changes ~= change;

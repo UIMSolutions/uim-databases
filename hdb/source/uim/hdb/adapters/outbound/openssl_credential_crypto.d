@@ -11,6 +11,8 @@ import std.string : toStringz;
 import vibe.core.concurrency : async;
 import vibe.core.task : Task;
 
+@safe:
+
 // libcrypto ist über vibe.d bereits gelinkt.
 private extern (C) nothrow @nogc {
     const(void)* EVP_sha256();
@@ -49,8 +51,9 @@ final class OpensslCredentialCrypto : ICredentialCrypto {
 }
 
 private immutable(ubyte)[] randomBytes(int count) {
+    enforce(count > 0, "Invalid length");
     auto buffer = new ubyte[count];
-    enforce(RAND_bytes(buffer.ptr, count) == 1, "No secure random numbers available");
+    enforce(RAND_bytes(&buffer[0], count) == 1, "No secure random numbers available");
     return buffer.idup;
 }
 
@@ -65,8 +68,9 @@ private immutable(ubyte)[] pbkdf2(string password, immutable(ubyte)[] salt, int 
     enum keyLength = 32;
     auto key = new ubyte[keyLength];
     // Das Passwort darf leer sein; ptr wäre dann null und OpenSSL würde daran scheitern.
-    enforce(PKCS5_PBKDF2_HMAC(password.toStringz, password.length.to!int, salt.ptr, salt.length.to!int,
-            rounds, EVP_sha256(), keyLength, key.ptr) == 1, "Password hashing failed");
+    enforce(salt.length > 0, "Empty salt");
+    enforce(PKCS5_PBKDF2_HMAC(password.toStringz, password.length.to!int, &salt[0], salt.length.to!int,
+            rounds, EVP_sha256(), keyLength, &key[0]) == 1, "Password hashing failed");
     return key.idup;
 }
 

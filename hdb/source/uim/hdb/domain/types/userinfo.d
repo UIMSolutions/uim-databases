@@ -2,6 +2,8 @@ module uim.hdb.domain.types.userinfo;
 
 import uim.hdb;
 
+@safe:
+
 /// Benutzer ohne Passwort-Hash: das, was Adapter sehen dürfen.
 struct UserInfo {
     string name;

@@ -24,6 +24,8 @@ import vibe.http.status : HTTPStatus;
 import vibe.stream.operations : readAllUTF8;
 import vibe.web.rest : registerRestInterface, RestErrorInformation, RestInterfaceSettings;
 
+@safe:
+
 private enum long maxRowLimit = 1000;
 
 final class SystemRestApi : ISystemRestApi {
@@ -132,9 +134,9 @@ final class TableRestApi : ITableRestApi {
 
 final class AuthRestApi : IAuthRestApi {
     private IAccessUseCase access;
-    private Principal delegate() current;
+    private Principal delegate() @safe current;
 
-    this(IAccessUseCase access, Principal delegate() current) {
+    this(IAccessUseCase access, Principal delegate() @safe current) {
         this.access = access;
         this.current = current;
     }
@@ -165,9 +167,9 @@ final class AuthRestApi : IAuthRestApi {
 
 final class UserRestApi : IUserRestApi {
     private IAccessUseCase access;
-    private Principal delegate() current;
+    private Principal delegate() @safe current;
 
-    this(IAccessUseCase access, Principal delegate() current) {
+    this(IAccessUseCase access, Principal delegate() @safe current) {
         this.access = access;
         this.current = current;
     }
@@ -215,9 +217,9 @@ final class UserRestApi : IUserRestApi {
 
 final class TenantRestApi : ITenantRestApi {
     private ITenantUseCase tenants;
-    private Principal delegate() current;
+    private Principal delegate() @safe current;
 
-    this(ITenantUseCase tenants, Principal delegate() current) {
+    this(ITenantUseCase tenants, Principal delegate() @safe current) {
         this.tenants = tenants;
         this.current = current;
     }
@@ -247,9 +249,9 @@ final class TenantRestApi : ITenantRestApi {
 
 final class NetworkRestApi : INetworkRestApi {
     private ITenantUseCase tenants;
-    private Principal delegate() current;
+    private Principal delegate() @safe current;
 
-    this(ITenantUseCase tenants, Principal delegate() current) {
+    this(ITenantUseCase tenants, Principal delegate() @safe current) {
         this.tenants = tenants;
         this.current = current;
     }
@@ -378,7 +380,7 @@ private void writeRestError(HTTPServerResponse res, Exception e) @trusted {
 /// Registers all REST interfaces. Input errors (invalid SQL, locked database) result in a 400
 /// as with POST /sql; the HTTPStatusException retains its status. Stack traces are not included in the response.
 void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups,
-    ITenantUseCase tenants, IReplicationUseCase replication, Principal delegate() current) {
+    ITenantUseCase tenants, IReplicationUseCase replication, Principal delegate() @safe current) {
     auto settings = new RestInterfaceSettings;
     settings.errorHandler = (HTTPServerRequest req, HTTPServerResponse res, RestErrorInformation error) @trusted {
         writeRestError(res, error.exception);
@@ -423,7 +425,7 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
 /// einer Position, beides für jeden Benutzer des Mandanten. Ziel: Einstellungen und Zustand, nur für admin.
 /// Das Passwort der Quelle wird angenommen, aber nie ausgegeben.
 private void registerReplicationRoutes(URLRouter router, IReplicationUseCase replication) {
-    static void handle(HTTPServerResponse res, scope void delegate() work) @trusted {
+    static void handle(HTTPServerResponse res, scope void delegate() @safe work) @trusted {
         try
             work();
         catch (Exception e)
@@ -558,7 +560,7 @@ unittest {
                 return c;
             }
 
-            int statusOf(void delegate() call) {
+            int statusOf(void delegate() @safe call) {
                 auto e = collectException!RestException(call());
                 assert(e !is null);
                 return e.status;

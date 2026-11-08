@@ -11,6 +11,8 @@ import std.array : array;
 import std.exception : enforce;
 import std.range : assumeSorted;
 
+@safe:
+
 /// Snapshot of a column: allows you to read individual values without modifying the column itself.
 struct ColumnView {
     /* private */

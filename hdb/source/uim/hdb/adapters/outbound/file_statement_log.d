@@ -2,6 +2,8 @@ module uim.hdb.adapters.outbound.file_statement_log;
 
 import uim.hdb;
 
+@safe:
+
 /// Outgoing adapter: line-by-line instruction log in a file.
 final class FileStatementLog : IStatementLog {
     private string path;
@@ -34,9 +36,10 @@ final class FileStatementLog : IStatementLog {
         string[] result;
         if (!exists(path))
             return result;
-        foreach (line; File(path, "r").byLine)
+        // Zeilenende ist nur '\n': escape maskiert \r und \n in Anweisungen, ein Zeilenumbruch trennt also immer
+        foreach (line; readText(path).splitter('\n'))
             if (line.length)
-                result ~= unescape(line.idup);
+                result ~= unescape(line);
         return result;
     }
 

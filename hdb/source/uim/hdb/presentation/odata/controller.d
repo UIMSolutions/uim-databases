@@ -17,6 +17,8 @@ import vibe.http.server : HTTPServerRequest, HTTPServerResponse;
 import vibe.stream.operations : readAllUTF8;
 import vibe.textfilter.urlencode : urlEncode;
 
+@safe:
+
 private enum jsonBase = "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=";
 private enum size_t maxPageSize = 1000;
 

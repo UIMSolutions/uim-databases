@@ -7,6 +7,8 @@ module uim.hdb.presentation.unix.interfaces;
 
 import vibe.data.json : Json;
 
+@safe:
+
 /// Anfrage über eine Unix-Domain-Socket-Verbindung.
 interface IUnixRequest {
     /// Methode in Großbuchstaben, z.B. "GET".

@@ -11,6 +11,8 @@ import std.conv : to;
 import std.exception : enforce;
 import vibe.data.json : Json, parseJsonString;
 
+@safe:
+
 /// Tabellen als lesbare JSON-Dateien (<name>.json):
 ///   {"name": "t", "columns": [{"name": "id", "type": "INTEGER"}], "rows": [[1, "a", null]]}
 /// Zahlen schreibt exactText: Json.toString hat nur 16 Stellen und würde manche double verändern.
@@ -47,11 +49,11 @@ final class JsonTableRepository : TextTableRepository {
     protected override ColumnTable decode(string content) {
         auto document = parseJsonString(content);
         ColumnDef[] defs;
-        foreach (c; document["columns"])
+        foreach (c; document["columns"].byValue)
             defs ~= ColumnDef(c["name"].get!string, parseTypeName(c["type"].get!string));
         auto name = document["name"].get!string;
         auto table = new ColumnTable(name, defs, TableStorage.json);
-        foreach (r; document["rows"]) {
+        foreach (r; document["rows"].byValue) {
             enforce(r.length == defs.length, "Ungültige Zeile in Tabelle " ~ name);
             Value[] row;
             foreach (i, d; defs)

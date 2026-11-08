@@ -15,6 +15,8 @@ import std.path : baseName, buildPath, stripExtension;
 import std.stdio : File;
 import std.string : toLower;
 
+@safe:
+
 /// Gemeinsame Grundlage für Repositories mit einer Datei je Tabelle. Tabellen liegen zum Abfragen im Speicher,
 /// flush schreibt die ganze Tabelle neu: Aufwand O(Tabelle) je Schreibvorgang. Die Datei wird über eine temporäre
 /// Datei und rename ersetzt, nach einem Absturz liegt also der alte oder der neue Stand vor, nie ein halber.

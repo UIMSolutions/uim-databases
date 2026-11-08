@@ -9,6 +9,8 @@ import std.exception : enforce;
 import std.string : startsWith, strip;
 import std.uuid : randomUUID;
 
+@safe:
+
 /// Änderungsstrom einer Quelle: jede bestätigte Änderung bekommt eine fortlaufende Nummer und bleibt eine Weile
 /// abrufbar. Er liegt nur im Speicher. Die Epoche wechselt bei jedem Start und jeder Wiederherstellung; ein Ziel mit
 /// einer anderen Epoche oder einer zu alten Nummer braucht deshalb einen vollständigen Stand.
@@ -88,7 +90,7 @@ final class TenantReplication {
     private ChangeFeed feed;
     private IReplicationConfigStore store;
     private IReplicationClient client;
-    private SysTime delegate() now;
+    private SysTime delegate() @safe now;
 
     private ReplicationConfig config;
     private string token;
@@ -101,7 +103,7 @@ final class TenantReplication {
     private SysTime nextRun;
 
     this(SqlService core, ChangeFeed feed, IReplicationConfigStore store, IReplicationClient client,
-        SysTime delegate() now = null) {
+        SysTime delegate() @safe now = null) {
         this.core = core;
         this.feed = feed;
         this.store = store;

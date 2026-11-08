@@ -10,6 +10,8 @@ import std.datetime.timezone : UTC;
 import std.exception : enforce;
 import std.string : strip, toLower;
 
+@safe:
+
 /// Sichern und Wiederherstellen. Die Rolle wird hier geprüft: jeder eingehende Adapter ist damit abgedeckt,
 /// ohne Identität wird abgelehnt. Benutzer gehören nicht zur Sicherung: eine Wiederherstellung soll weder aussperren
 /// noch alte Passwörter zurückbringen, und die Dateien bleiben frei von Passwort-Hashes.
@@ -20,11 +22,11 @@ final class BackupService : IBackupUseCase, IBackupScheduler {
 
     private IDatabaseSnapshots database;
     private IBackupStore store;
-    private Principal delegate() current;
-    private SysTime delegate() now;
+    private Principal delegate() @safe current;
+    private SysTime delegate() @safe now;
     private SysTime retryAfter;
 
-    this(IDatabaseSnapshots database, IBackupStore store, Principal delegate() current, SysTime delegate() now = null) {
+    this(IDatabaseSnapshots database, IBackupStore store, Principal delegate() @safe current, SysTime delegate() @safe now = null) {
         this.database = database;
         this.store = store;
         this.current = current;

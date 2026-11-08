@@ -20,6 +20,8 @@ import std.string : indexOf, replace, split, strip, stripLeft, stripRight, toLow
 import core.time : dur;
 import std.sumtype;
 
+@safe:
+
 /// Die einzige Zuordnung von SQL- zu EDM-Typen. Bei gleichem EDM-Typ gewinnt beim Lesen der erste Eintrag.
 static immutable TypeSpec[] typeSpecs = [
     TypeSpec(ColumnType.boolean, "BOOLEAN", "Edm.Boolean", ["BOOL"]),
@@ -90,7 +92,9 @@ int compareDecimalText(string a, string b) {
 alias Value = SumType!(long, double, string, Null, bool, Exact);
 
 /// Zeiger auf den Inhalt, wenn der Wert den Typ T hat, sonst null.
-T* peek(T)(ref Value v) {
+/// @trusted: der Zeiger zeigt in `v` und gilt nur, solange `v` lebt und nicht neu zugewiesen wird. `return ref` macht
+/// das für den Compiler sichtbar (mit -preview=dip1000 wird es geprüft); alle Aufrufer verwenden ihn sofort.
+T* peek(T)(return ref Value v) @trusted {
     return v.match!((ref x) {
         static if (is(typeof(x) == T))
             return &x;
@@ -116,6 +120,14 @@ private int compareContent(X, Y)(X x, Y y) {
         return x < y ? -1 : (x > y ? 1 : 0);
     else
         throw new Exception("Werte vom Typ " ~ X.stringof ~ " und " ~ Y.stringof ~ " sind nicht vergleichbar");
+}
+
+/// Überschreibt einen Wert in einem Feld oder einer Variablen.
+/// Phobos nennt die Zuweisung an einen SumType mit Text @system: zeigte gerade noch eine Referenz in den alten
+/// Inhalt (etwa von peek oder match mit ref), würde sie ungültig. @trusted, weil dieser Code solche Referenzen nie
+/// über eine Zuweisung hinweg hält: peek-Zeiger werden im selben Ausdruck verwendet und verworfen.
+void assign(ref Value slot, Value value) @trusted {
+    slot = value;
 }
 
 Value nullValue() {

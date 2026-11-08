@@ -2,6 +2,8 @@ module uim.hdb.domain.entities.compactionjob;
 
 import uim.hdb;
 
+@safe:
+
 /// Phase 2 der Kompaktierung: baut die Spalten nur aus den lebenden Zeilen neu auf. Arbeitet ausschließlich auf den
 /// eingefrorenen Momentaufnahmen und braucht keine Sperre.
 final class CompactionJob {

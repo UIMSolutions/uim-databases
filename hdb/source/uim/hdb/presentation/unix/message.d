@@ -11,6 +11,8 @@ import std.conv : to;
 import std.string : icmp, indexOf, strip, stripRight, toUpper;
 import vibe.data.json : Json, parseJsonString;
 
+@safe:
+
 /// Eine Nachricht verletzt das Protokoll; `status` geht an den Client, danach endet die Verbindung.
 class UnixProtocolError : Exception {
     int status;

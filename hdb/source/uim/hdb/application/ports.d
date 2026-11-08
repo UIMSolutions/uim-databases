@@ -2,6 +2,8 @@ module uim.hdb.application.ports;
 
 import uim.hdb;
 
+@safe:
+
 
 /// Eingehender Port: was die Anwendung anbietet.
 interface ISqlUseCase {

@@ -16,6 +16,8 @@ import std.exception : enforce;
 import std.utf : validate;
 import vibe.data.json : Json;
 
+@safe:
+
 /// Tabellen als BSON-Dokumente (<name>.bson), lesbar mit bsondump, mongosh und jedem MongoDB-Treiber:
 ///
 ///   { format: "hdb-table", version: 1, name: "t",
@@ -84,12 +86,12 @@ final class BsonTableRepository : SnapshotTableRepository {
             "Unsupported BSON table version");
         auto name = document["name"].get!string;
         ColumnDef[] defs;
-        foreach (c; document["columns"])
+        foreach (c; document["columns"].byValue)
             defs ~= ColumnDef(c["name"].get!string, parseTypeName(c["type"].get!string));
         enforce(defs.length, "BSON table without columns: " ~ name);
         auto table = new ColumnTable(name, defs, TableStorage.bson);
         auto row = new Value[defs.length];
-        foreach (values; document["rows"]) {
+        foreach (values; document["rows"].byValue) {
             enforce(values.type == Json.Type.array && values.length == defs.length, "Invalid row in BSON table " ~ name);
             foreach (i, d; defs)
                 row[i] = tableValueFromJson(d.type, values[i]);
@@ -298,7 +300,7 @@ unittest {
     write(path, good ~ cast(immutable(ubyte)[]) [0]);
     assertThrown(new BsonTableRepository(dir));
 
-    ubyte[] document(void delegate(ref BsonWriter) fill) {
+    ubyte[] document(void delegate(ref BsonWriter) @safe fill) {
         BsonWriter x;
         auto at = x.begin();
         fill(x);
@@ -306,7 +308,7 @@ unittest {
         return x.buffer;
     }
 
-    void table(ref BsonWriter x, string type, void delegate(ref BsonWriter) row) {
+    void table(ref BsonWriter x, string type, void delegate(ref BsonWriter) @safe row) {
         x.text("format", "hdb-table");
         x.int32("version", 1);
         x.text("name", "docs");

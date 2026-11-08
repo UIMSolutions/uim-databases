@@ -11,6 +11,8 @@ import std.array : appender, array, join, replace, split;
 import std.conv : to;
 import std.exception : enforce;
 
+@safe:
+
 /// Tabellen als kompakte Textdateien (<name>.tbl):
 ///   Zeile 1  HDBTABLE 1
 ///   Zeile 2  Tabellenname

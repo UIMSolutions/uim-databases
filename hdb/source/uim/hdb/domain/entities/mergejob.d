@@ -6,6 +6,8 @@ import std.array : array;
 import std.exception : enforce;
 import std.range : assumeSorted;
 
+@safe:
+
 /// Frozen portion of a column for Phase 2 of the merge: contains only read-only data and the result.
 final class MergeJob {
     protected Value[] _mainDict;

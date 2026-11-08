@@ -15,6 +15,8 @@ import std.format : format;
 import std.string : strip, stripRight;
 import vibe.data.json : Json;
 
+@safe:
+
 /// Formats in which OData transmits values that the core stores differently: Edm.Binary is Base64url instead of Hex,
 /// Edm.Geometry and Edm.Geography are GeoJSON instead of WKT.
 ubyte[] hexToBytes(string hex) {

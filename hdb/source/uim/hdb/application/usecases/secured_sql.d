@@ -5,16 +5,18 @@ import std.algorithm : filter;
 import std.array : array;
 import std.string : chomp, split, strip, toUpper;
 
+@safe:
+
 /// Prüft jede Operation gegen die Rechte der anfragenden Identität. Alle eingehenden Adapter arbeiten nur hierüber.
 /// Für Anweisungen prüft der Kern selbst an jeder Stelle, an der er eine Tabelle holt (siehe
 /// SqlService.executeAuthorized): Tabellenrechte gelten so genau für die Tabellen, die eine Anweisung wirklich liest
 /// oder ändert, auch bei Joins. Listen und Statistik zeigen nur Tabellen, auf denen die Identität ein Recht hat.
 final class SecuredSqlUseCase : ISqlUseCase {
     private SqlService inner;
-    private Principal delegate() current;
+    private Principal delegate() @safe current;
     private string openTransaction, transactionOwner; // der Kern erlaubt höchstens eine offene Transaktion
 
-    this(SqlService inner, Principal delegate() current) {
+    this(SqlService inner, Principal delegate() @safe current) {
         this.inner = inner;
         this.current = current;
     }

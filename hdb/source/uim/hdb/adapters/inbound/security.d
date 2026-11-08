@@ -12,6 +12,8 @@ import vibe.http.router : URLRouter;
 import vibe.http.server : HTTPServerRequest, HTTPServerResponse;
 import vibe.http.status : HTTPStatus;
 
+@safe:
+
 enum sessionCookie = "hdb_session";
 
 // Eine Verbindung bedient mehrere Anfragen im selben Task: das Gate setzt den Wert deshalb bei jeder Anfrage neu.

@@ -3,6 +3,8 @@ module uim.hdb.domain.enumerations.tablestorage;
 import uim.hdb;
 import std.string : strip, toUpper;
 
+@safe:
+
 /// Where a table is permanently stored. Queries are always performed in main memory.
 enum TableStorage {
     memory, // Hauptspeicher, Wiederherstellung über das Anweisungsprotokoll

@@ -3,6 +3,8 @@ module uim.hdb.domain.entities.user;
 import uim.hdb;
 import std.algorithm : any;
 
+@safe:
+
 /// Ein Benutzer gehört zu genau einem Mandanten; der Name ist nur innerhalb des Mandanten eindeutig.
 /// `role` ist seine Rolle im Mandanten (leer: keine), `grants` gibt ihm zusätzlich Rollen für einzelne Tabellen.
 struct HdbUser {

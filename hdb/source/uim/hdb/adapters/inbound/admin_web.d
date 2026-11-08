@@ -23,6 +23,8 @@ import vibe.http.server : HTTPServerRequest, HTTPServerResponse, render;
 import vibe.http.status : HTTPStatus;
 import vibe.textfilter.urlencode : urlEncode;
 
+@safe:
+
 /// Daten, die das Layout auf jeder Seite braucht.
 struct AdminPage {
     string title;
@@ -350,7 +352,7 @@ final class SqlAdminUi {
 
     /// Führt eine Änderung aus und leitet mit dem Ergebnis als Hinweis zurück (Post/Redirect/Get).
     /// `target` wird erst nach `work` ausgewertet, damit das Ziel vom Ergebnis abhängen kann.
-    private void act(HTTPServerRequest req, HTTPServerResponse res, lazy string target, string delegate() work) {
+    private void act(HTTPServerRequest req, HTTPServerResponse res, lazy string target, string delegate() @safe work) {
         string query = req.form.get("back", "");
         if (query.any!(c => c == '\r' || c == '\n'))
             query = "";

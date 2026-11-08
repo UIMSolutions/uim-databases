@@ -5,6 +5,8 @@ import std.algorithm : map;
 import std.array : array;
 import vibe.d;
 
+@safe:
+
 /// Eingehender Adapter: HTTP/JSON -> ISqlUseCase.
 final class SqlRestApi {
     private ISqlUseCase sql;
@@ -24,7 +26,7 @@ final class SqlRestApi {
     }
 
     /// Antwortet auf fehlende Rechte mit 401 oder 403 statt mit einem allgemeinen Fehler.
-    private auto secured(void delegate(HTTPServerRequest, HTTPServerResponse) handler) {
+    private auto secured(void delegate(HTTPServerRequest, HTTPServerResponse) @safe handler) {
         return (HTTPServerRequest req, HTTPServerResponse res) {
             try
                 handler(req, res);

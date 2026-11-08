@@ -6,6 +6,8 @@ import std.path : dirName;
 import std.stdio : File;
 import vibe.data.json : Json, parseJsonString;
 
+@safe:
+
 /// Ausgehender Adapter: Liste der Mandanten als JSON-Datei. Eine beschädigte Datei bricht den Start ab,
 /// statt Mandanten stillschweigend zu verlieren.
 final class FileTenantStore : ITenantStore {
@@ -22,10 +24,10 @@ final class FileTenantStore : ITenantStore {
         Tenant[] tenants;
         if (!exists(path))
             return tenants;
-        foreach (j; parseJsonString(readText(path))["tenants"]) {
+        foreach (j; parseJsonString(readText(path))["tenants"].byValue) {
             string[] networks; // fehlt bei Mandanten aus der Zeit vor den Netzlisten
             if (j["networks"].type != Json.Type.undefined)
-                foreach (n; j["networks"])
+                foreach (n; j["networks"].byValue)
                     networks ~= n.get!string;
             parseNetworks(networks); // eine ungültige Liste bricht den Start ab
             tenants ~= Tenant(validTenantName(j["name"].get!string), j["label"].get!string, j["active"].get!bool, networks);

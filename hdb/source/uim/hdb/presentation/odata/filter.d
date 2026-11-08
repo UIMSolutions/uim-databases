@@ -14,6 +14,8 @@ import std.regex : ctRegex, matchFirst;
 import std.string : indexOf, strip;
 import std.uni : isAlphaNum;
 
+@safe:
+
 /// Translates an OData-$filter into a WHERE clause. The text is never passed through as-is: it is parsed into a tree
 /// and regenerated, with properties checked against the schema and literals checked against the column type.
 ///

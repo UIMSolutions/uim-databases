@@ -13,6 +13,8 @@ import std.exception : enforce;
 import std.string : toUpper;
 import vibe.data.json : Json, serializeToJson;
 
+@safe:
+
 /// Eingehender Adapter: dieselben Pfade und dasselbe JSON wie die REST-API unter /api/v1.
 /// Das SecurityGate läuft nur für HTTP, deshalb meldet handle jede Anfrage selbst an. `sql` muss der
 /// SecuredSqlUseCase sein: die Rollen prüft er, hier wird nur die Identität gesetzt.

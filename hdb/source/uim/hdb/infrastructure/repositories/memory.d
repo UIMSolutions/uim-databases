@@ -12,6 +12,8 @@ import std.array : array;
 import std.exception : enforce;
 import std.string : toLower;
 
+@safe:
+
 /// Ausgehender Adapter: hält alle Tabellen im Hauptspeicher.
 final class MemoryTableRepository : ITableRepository {
     private ColumnTable[string] store;

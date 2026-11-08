@@ -12,6 +12,8 @@ import std.exception : enforce;
 import std.range : assumeSorted;
 import std.string : icmp, lastIndexOf;
 
+@safe:
+
 /// Spaltenorientierte Tabelle mit Main/Delta-Spalten.
 final class ColumnTable {
     enum mergeThreshold = 1000; // ab so vielen Delta-Zeilen einer Spalte lohnt sich ein Merge

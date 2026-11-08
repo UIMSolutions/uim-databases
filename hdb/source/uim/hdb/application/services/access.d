@@ -13,6 +13,8 @@ import std.digest.sha : sha256Of;
 import std.exception : enforce;
 import std.string : strip, toLower;
 
+@safe:
+
 /// Anmeldung, Sitzungen und Benutzerverwaltung. Sitzungen liegen nur im Speicher, ein Neustart meldet alle ab.
 /// Die Rolle wird bei jeder Anfrage aus dem Benutzer gelesen, Änderungen wirken also sofort.
 /// Benutzer gehören zu einem Mandanten: Namen sind nur dort eindeutig, und jede Verwaltung wirkt nur im Mandanten
@@ -37,10 +39,10 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
 
     private IUserStore store;
     private ICredentialCrypto crypto;
-    private MonoTime delegate() now;
-    private bool delegate(string) tenantActive;
-    private SysTime delegate() clock; // Uhrzeit für befristete Freigaben
-    private IpNetwork[] delegate(string) networksOf; // erlaubte Netze eines Mandanten; leer: alle
+    private MonoTime delegate() @safe now;
+    private bool delegate(string) @safe tenantActive;
+    private SysTime delegate() @safe clock; // Uhrzeit für befristete Freigaben
+    private IpNetwork[] delegate(string) @safe networksOf; // erlaubte Netze eines Mandanten; leer: alle
     private HdbUser[string] users; // Schlüssel: userKey
     private IRoleStore roleStore;
     private RoleDef[string] customRoles; // Schlüssel: userKey(Bereich, Rollenname)
@@ -52,9 +54,9 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
     /// `tenantActive` sagt, ob ein Mandant existiert und aktiv ist; ohne gelten alle als aktiv.
     /// Ohne `roleStore` gibt es eigene Rollen nur bis zum Neustart.
     /// `clock` liefert die Uhrzeit für befristete Freigaben (UTC), `networksOf` die erlaubten Netze eines Mandanten.
-    this(IUserStore store, ICredentialCrypto crypto, MonoTime delegate() now = null,
-        bool delegate(string) tenantActive = null, IRoleStore roleStore = null, SysTime delegate() clock = null,
-        IpNetwork[] delegate(string) networksOf = null) {
+    this(IUserStore store, ICredentialCrypto crypto, MonoTime delegate() @safe now = null,
+        bool delegate(string) @safe tenantActive = null, IRoleStore roleStore = null, SysTime delegate() @safe clock = null,
+        IpNetwork[] delegate(string) @safe networksOf = null) {
         this.clock = clock !is null ? clock : () => Clock.currTime(UTC());
         this.networksOf = networksOf !is null ? networksOf : (string) => cast(IpNetwork[]) null;
         this.store = store;

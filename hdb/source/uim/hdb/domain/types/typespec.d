@@ -2,6 +2,8 @@ module uim.hdb.domain.types.typespec;
 
 import uim.hdb;
 
+@safe:
+
 struct TypeSpec {
     ColumnType type;
     string name; /// kanonischer SQL-Name; steht in Tabellendateien und Backups, darf sich also nicht ändern

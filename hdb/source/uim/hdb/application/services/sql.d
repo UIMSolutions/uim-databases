@@ -13,6 +13,8 @@ import std.uuid : randomUUID;
 import core.thread : Thread;
 import core.time : MonoTime, msecs, seconds;
 
+@safe:
+
 /// Mini-SQL: CREATE TABLE, INSERT, SELECT (Spalten, *, COUNT(*), SUM(x)) mit einfachem WHERE.
 final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private ITableRepository repo;
@@ -28,7 +30,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private string lastMergeError;
     private bool recovering; // beim Einspielen des Logs keine Hintergrund-Merges starten
     private IChangeSink sink; // erfährt bestätigte Änderungen (Replikation); null: niemand
-    private void delegate(Permission, string) authorizer; // nur während executeAuthorized gesetzt
+    private void delegate(Permission, string) @safe authorizer; // nur während executeAuthorized gesetzt
 
     /// Empfänger aller bestätigten Änderungen, für alle Speicherarten. Das Einspielen des Logs beim Start meldet nichts.
     void changeSink(IChangeSink sink) {
@@ -301,7 +303,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     /// wenn er nicht erlaubt ist. Geprüft wird an den Stellen, an denen die Anweisung ihre Tabellen holt, also genau
     /// für die Tabellen, die sie tatsächlich liest oder ändert, und vor jeder Änderung. `tabelle` ist leer bei
     /// Rechten für den ganzen Mandanten (create mit Tabellenname, transact ohne).
-    QueryResult executeAuthorized(string txId, string sql, scope void delegate(Permission, string) authorize) {
+    QueryResult executeAuthorized(string txId, string sql, scope void delegate(Permission, string) @safe authorize) {
         synchronized (this) {
             authorizer = authorize;
             scope (exit)
@@ -1036,7 +1038,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
         auto ci = t.indexOf(col);
         auto type = t.defs[ci].type;
         auto opU = op.toUpper.split().join(" ");
-        bool delegate(Value) pred;
+        bool delegate(Value) @safe pred;
 
         if (opU == "IS" || opU == "IS NOT") {
             enforce(args[0].strip.toUpper == "NULL", "Nach IS [NOT] muss NULL folgen");
@@ -1239,7 +1241,7 @@ private bool hasAggregate(ColumnTable t, string proj) {
     return false;
 }
 
-private SortKey[] parseOrder(string order, size_t delegate(string) resolve) {
+private SortKey[] parseOrder(string order, size_t delegate(string) @safe resolve) {
     SortKey[] keys;
     foreach (part; splitList(order)) {
         auto p = part.strip.split();

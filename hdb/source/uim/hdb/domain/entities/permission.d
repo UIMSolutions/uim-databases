@@ -14,6 +14,8 @@ import std.exception : enforce;
 import std.datetime.systime : SysTime;
 import std.string : strip, toLower;
 
+@safe:
+
 /// Einzelnes Recht. Rollen sind Mengen davon.
 ///
 /// Drei Ebenen:

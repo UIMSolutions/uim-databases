@@ -7,6 +7,8 @@ module uim.hdb.presentation.odata.model;
 
 import uim.hdb;
 
+@safe:
+
 enum schemaNamespace = "hdb";
 
 /// Alternative key for tables without an `id`: the position in the result set. An entity requires a key in OData,

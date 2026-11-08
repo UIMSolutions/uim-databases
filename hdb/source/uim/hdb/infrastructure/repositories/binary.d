@@ -15,6 +15,8 @@ import std.exception : enforce;
 import std.utf : validate;
 import vibe.data.json : Json;
 
+@safe:
+
 /// Tabellen als kompakte Binärdateien (<name>.bin), alle Zahlen little-endian:
 ///
 ///   "HDBTBIN" 0x00               Kennung, 8 Byte
@@ -234,7 +236,7 @@ unittest {
     assertThrown(new BinaryTableRepository(dir));
 
     // Gültige Prüfsumme, aber unsinniger Inhalt: wird trotzdem abgelehnt
-    ubyte[] forge(void delegate(ref LittleEndianWriter) fill) {
+    ubyte[] forge(void delegate(ref LittleEndianWriter) @safe fill) {
         auto w = LittleEndianWriter(appender!(ubyte[]));
         fill(w);
         auto body_ = w.data;

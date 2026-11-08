@@ -5,6 +5,8 @@ import std.ascii : isDigit, isLower;
 import std.exception : enforce;
 import std.string : strip, toLower;
 
+@safe:
+
 /// Mandant, dem Benutzer und Logins ohne Angabe zugeordnet sind. Er entsteht beim ersten Start
 /// und nimmt bei der Umstellung die bisherigen Daten und Benutzer auf.
 enum defaultTenant = "default";
