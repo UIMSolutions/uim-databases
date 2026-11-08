@@ -18,6 +18,7 @@ struct Tenant {
     string name; // Kennung: Teil des Logins und Name des Datenverzeichnisses
     string label; // Anzeigename
     bool active = true; // inaktiv: keine Anmeldung, laufende Sitzungen enden
+    string[] networks; // erlaubte IP-Adressen und Netze (CIDR), kanonisch; leer: alle
 }
 
 /// Kennung eines Mandanten. Sie wird zum Verzeichnisnamen, deshalb nur Kleinbuchstaben, Ziffern, '-' und '_',

@@ -1,7 +1,7 @@
 module uim.hdb.presentation.rest.services;
 
 import uim.hdb.adapters.inbound.admin_web : createTableSql, isIdentifier, selectSql;
-import uim.hdb.adapters.inbound.security : bearerToken;
+import uim.hdb.adapters.inbound.security : bearerToken, currentClientAddress;
 import uim.hdb.application.ports : BackupNotFound, IAccessUseCase, IBackupUseCase, IReplicationUseCase, ISqlUseCase,
     ITenantUseCase, ReplicationConfig;
 import uim.hdb.adapters.outbound.replication_http : changeBatchJson;
@@ -142,7 +142,7 @@ final class AuthRestApi : IAuthRestApi {
     // vibe requires @safe, the application core (IAccessUseCase) is not
 @trusted:
     RestLogin login(string user, string password, string tenant) {
-        auto r = access.login(tenant, user, password);
+        auto r = access.login(tenant, user, password, currentClientAddress());
         return RestLogin(r.token, r.expiresInSeconds, RestUser(r.principal.name, r.principal.role, true, r.principal.tenant));
     }
 
@@ -196,7 +196,7 @@ final class UserRestApi : IUserRestApi {
     }
 
     RestUser setGrants(string _name, RestGrant[] grants) {
-        return toRest(access.setGrants(current(), _name, grants.map!(g => TableGrant(g.table, g.role)).array));
+        return toRest(access.setGrants(current(), _name, grants.map!(g => TableGrant(g.table, g.role, g.from, g.until)).array));
     }
 
     RestRole[] roles() {
@@ -238,6 +238,29 @@ final class TenantRestApi : ITenantRestApi {
     RestStatus remove(string _name) {
         tenants.deleteTenant(current(), _name);
         return RestStatus("DELETED");
+    }
+
+    RestTenant setNetworks(string _name, string[] networks) {
+        return toRest(tenants.setTenantNetworks(current(), _name, networks));
+    }
+}
+
+final class NetworkRestApi : INetworkRestApi {
+    private ITenantUseCase tenants;
+    private Principal delegate() current;
+
+    this(ITenantUseCase tenants, Principal delegate() current) {
+        this.tenants = tenants;
+        this.current = current;
+    }
+
+@trusted:
+    RestNetworks get() {
+        return RestNetworks(tenants.ownNetworks(current()), currentClientAddress());
+    }
+
+    RestNetworks set(string[] networks) {
+        return RestNetworks(tenants.setOwnNetworks(current(), networks, currentClientAddress()), currentClientAddress());
     }
 }
 
@@ -366,6 +389,7 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
     router.registerRestInterface!IAuthRestApi(new AuthRestApi(access, current), settings);
     router.registerRestInterface!IUserRestApi(new UserRestApi(access, current), settings);
     router.registerRestInterface!ITenantRestApi(new TenantRestApi(tenants, current), settings);
+    router.registerRestInterface!INetworkRestApi(new NetworkRestApi(tenants, current), settings);
     // Das Label ist optional, die REST-Schnittstelle verlangt aber immer einen JSON-Rumpf
     router.post("/api/v1/backups", (HTTPServerRequest req, HTTPServerResponse res) {
         if (req.headers.get("Content-Length", "0") != "0" || "Transfer-Encoding" in req.headers)
@@ -626,7 +650,7 @@ unittest {
             assert(statusOf({ users.saveRole("bad", ["manageTenants"]); }) == 400);
             users.create("tina", "correct-horse-tina", "");
             auto granted = users.setGrants("tina", [RestGrant("T", "clerk")]);
-            assert(granted.grants == [RestGrant("t", "clerk")] && granted.role == "");
+            assert(granted.grants == [RestGrant("t", "clerk", "", "", "active")] && granted.role == "");
             auto tinaToken = client!IAuthRestApi("").login("tina", "correct-horse-tina").token;
             auto tinaMe = client!IAuthRestApi(tinaToken).me();
             assert(tinaMe.permissions.length == 0 && tinaMe.tables == [RestTableAccess("t", ["select", "insert"])]);

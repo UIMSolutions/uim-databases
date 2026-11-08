@@ -157,6 +157,24 @@ interface ITenantRestApi {
     /// Löscht Benutzer, Daten und Sicherungen endgültig; nur für deaktivierte Mandanten.
     @method(HTTPMethod.DELETE) @path("/tenants/:name")
     RestStatus remove(string _name);
+
+    /// Erlaubte Netze eines Mandanten setzen, etwa wenn er sich ausgesperrt hat (Recht manageTenants).
+    @method(HTTPMethod.PUT) @path("/tenants/:name/networks")
+    @bodyParam("networks", "networks")
+    RestTenant setNetworks(string _name, string[] networks);
+}
+
+/// Erlaubte IP-Adressen und Netze des eigenen Mandanten (Recht manageAccess). Leer: keine Einschränkung.
+@path("/api/v1")
+interface INetworkRestApi {
+@safe:
+    @method(HTTPMethod.GET) @path("/network")
+    RestNetworks get();
+
+    /// Lehnt eine Liste ab, die die eigene Adresse ausschließt.
+    @method(HTTPMethod.PUT) @path("/network")
+    @bodyParam("networks", "networks")
+    RestNetworks set(string[] networks);
 }
 
 /// Sichern und Wiederherstellen, nur für die Rolle admin. Dazu kommen außerhalb dieser Schnittstelle, weil es rohe

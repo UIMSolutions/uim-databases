@@ -2,6 +2,7 @@ module uim.hdb.adapters.inbound.security;
 
 import uim.hdb.application.ports;
 import uim.hdb.domain.entities.user;
+import uim.hdb.domain.types.network : IpNetwork, isAllowed;
 import std.algorithm : canFind, startsWith;
 import std.conv : to;
 import std.string : icmp, indexOf, strip;
@@ -20,6 +21,18 @@ Principal currentPrincipal() @trusted {
     return requestPrincipal;
 }
 
+private TaskLocal!string requestAddress;
+
+/// IP-Adresse des Clients der laufenden Anfrage, wie sie das SecurityGate ermittelt hat.
+string currentClientAddress() @trusted {
+    return requestAddress;
+}
+
+/// Für Adapter, die nicht durch das SecurityGate laufen.
+void bindClientAddress(string address) @trusted {
+    requestAddress = address;
+}
+
 /// Für Adapter, die nicht durch das SecurityGate laufen: setzt die Identität des laufenden Tasks.
 void bindPrincipal(Principal principal) @trusted {
     requestPrincipal = principal;
@@ -30,9 +43,13 @@ void bindPrincipal(Principal principal) @trusted {
 /// nicht ungefragt mit seiner Sitzung aufrufen (CSRF).
 final class SecurityGate {
     private IAccessUseCase access;
+    private IpNetwork[] trustedProxies;
 
-    this(IAccessUseCase access) {
+    /// `trustedProxies`: Reverse-Proxys, deren X-Forwarded-For geglaubt wird. Ohne sie zählt nur die Adresse der
+    /// Verbindung; sonst könnte jeder mit einem erfundenen Header die erlaubten Netze umgehen.
+    this(IAccessUseCase access, IpNetwork[] trustedProxies = null) {
         this.access = access;
+        this.trustedProxies = trustedProxies;
     }
 
     /// Muss als Erstes am Router registriert werden.
@@ -43,7 +60,10 @@ final class SecurityGate {
     private void gate(HTTPServerRequest req, HTTPServerResponse res) {
         immutable admin = isAdminPath(req.requestPath.toString);
         auto token = admin ? req.cookies.get(sessionCookie, "") : bearerToken(req.headers.get("Authorization", ""));
-        auto principal = access.authenticate(token);
+        auto address = clientAddressOf(req.clientAddress.toAddressString, req.headers.get("X-Forwarded-For", ""),
+            trustedProxies);
+        requestAddress = address;
+        auto principal = access.authenticate(token, address);
         requestPrincipal = principal;
 
         // Das Limit für Anfragen ist wegen der Sicherungen hoch: das gilt nur für angemeldete Benutzer
@@ -67,6 +87,34 @@ final class SecurityGate {
         } else
             res.writeJsonBody(["statusMessage": "Authentication required"]);
     }
+}
+
+/// Adresse des Clients. Kommt die Verbindung von einem vertrauten Proxy, gilt der letzte Eintrag in
+/// X-Forwarded-For, der kein vertrauter Proxy ist (von rechts gelesen: links kann der Client alles hineinschreiben).
+string clientAddressOf(string peer, string forwardedFor, const IpNetwork[] trustedProxies) @trusted {
+    import std.algorithm : canFind;
+    import std.array : split;
+    import std.string : indexOf, strip;
+
+    string clean(string a) {
+        auto zone = a.indexOf('%'); // fe80::1%eth0
+        return (zone >= 0 ? a[0 .. zone] : a).strip;
+    }
+
+    bool trusted(string a) {
+        return trustedProxies.length && isAllowed(trustedProxies, a);
+    }
+
+    auto address = clean(peer);
+    if (!trusted(address) || forwardedFor.strip.length == 0)
+        return address;
+    auto hops = forwardedFor.split(",");
+    foreach_reverse (hop; hops) {
+        auto candidate = clean(hop);
+        if (!trusted(candidate))
+            return candidate;
+    }
+    return clean(hops[0]);
 }
 
 bool isAdminPath(string path) @safe {
@@ -125,6 +173,15 @@ unittest {
 
     assert(isAnonymousBodyAllowed("", "") && isAnonymousBodyAllowed("65536", ""));
     assert(!isAnonymousBodyAllowed("65537", "") && !isAnonymousBodyAllowed("", "chunked") && !isAnonymousBodyAllowed("x", ""));
+
+    auto proxies = [IpNetwork.parse("10.0.0.5"), IpNetwork.parse("10.1.0.0/16")];
+    assert(clientAddressOf("203.0.113.9", "1.2.3.4", proxies) == "203.0.113.9"); // nicht vertraut: Header zählt nicht
+    assert(clientAddressOf("203.0.113.9", "1.2.3.4", null) == "203.0.113.9");
+    assert(clientAddressOf("10.0.0.5", "198.51.100.7", proxies) == "198.51.100.7");
+    assert(clientAddressOf("10.0.0.5", "6.6.6.6, 198.51.100.7, 10.1.2.3", proxies) == "198.51.100.7"); // links gefälscht
+    assert(clientAddressOf("10.0.0.5", "", proxies) == "10.0.0.5");
+    assert(clientAddressOf("10.0.0.5", "10.1.0.1, 10.1.0.2", proxies) == "10.1.0.1");
+    assert(clientAddressOf("fe80::1%eth0", "", null) == "fe80::1");
 
     assert(isAdminPath("/admin") && isAdminPath("/admin/users"));
     assert(!isAdminPath("/administrator") && !isAdminPath("/sql"));

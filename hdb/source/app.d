@@ -25,8 +25,9 @@ void main() {
         registry.put(Tenant(defaultTenant, "Default", true));
 
     // Eigene Rollen aller Mandanten und des Bereichs system; die vordefinierten stehen nicht in der Datei
+    // Befristete Freigaben laufen nach der Systemuhr (UTC); erlaubte Netze kommen aus der Mandantenliste
     auto access = new AccessService(userStore, new OpensslCredentialCrypto, null, &registry.isActive,
-        new FileRoleStore(environment.get("ROLES_FILE", "data/hdb-roles.json")));
+        new FileRoleStore(environment.get("ROLES_FILE", "data/hdb-roles.json")), null, &registry.networks);
     void announce(string tenant, string name, string generated) {
         if (generated.length)
             logWarn("Erster Start: Benutzer '%s' im Mandanten '%s' mit Passwort '%s' angelegt. Bitte unter /admin/account ändern.",
@@ -88,7 +89,10 @@ void main() {
     }, true);
 
     auto router = new URLRouter;
-    new SecurityGate(access).register(router); // muss vor allen anderen Routen stehen
+    // X-Forwarded-For zählt nur von diesen Proxys (durch Komma getrennt, Adressen oder Netze); ohne die Variable
+    // gilt die Adresse der Verbindung
+    auto trustedProxies = parseNetworks(environment.get("TRUSTED_PROXIES", "").split(","));
+    new SecurityGate(access, trustedProxies).register(router); // muss vor allen anderen Routen stehen
     new SqlRestApi(secured).register(router);
     registerHdbRestApi(router, secured, access, backups, tenants, databases, toDelegate(&currentPrincipal));
     new ODataController(secured).register(router);

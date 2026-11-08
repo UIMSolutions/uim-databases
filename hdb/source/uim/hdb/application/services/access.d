@@ -2,6 +2,8 @@ module uim.hdb.application.services.access;
 
 import uim.hdb;
 import core.time : Duration, hours, minutes, MonoTime;
+import std.datetime.systime : Clock, SysTime;
+import std.datetime.timezone : UTC;
 import std.algorithm : all, any, canFind, count, filter, map, sort;
 import std.conv : to;
 import std.array : array;
@@ -37,6 +39,8 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
     private ICredentialCrypto crypto;
     private MonoTime delegate() now;
     private bool delegate(string) tenantActive;
+    private SysTime delegate() clock; // Uhrzeit für befristete Freigaben
+    private IpNetwork[] delegate(string) networksOf; // erlaubte Netze eines Mandanten; leer: alle
     private HdbUser[string] users; // Schlüssel: userKey
     private IRoleStore roleStore;
     private RoleDef[string] customRoles; // Schlüssel: userKey(Bereich, Rollenname)
@@ -47,8 +51,12 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
 
     /// `tenantActive` sagt, ob ein Mandant existiert und aktiv ist; ohne gelten alle als aktiv.
     /// Ohne `roleStore` gibt es eigene Rollen nur bis zum Neustart.
+    /// `clock` liefert die Uhrzeit für befristete Freigaben (UTC), `networksOf` die erlaubten Netze eines Mandanten.
     this(IUserStore store, ICredentialCrypto crypto, MonoTime delegate() now = null,
-        bool delegate(string) tenantActive = null, IRoleStore roleStore = null) {
+        bool delegate(string) tenantActive = null, IRoleStore roleStore = null, SysTime delegate() clock = null,
+        IpNetwork[] delegate(string) networksOf = null) {
+        this.clock = clock !is null ? clock : () => Clock.currTime(UTC());
+        this.networksOf = networksOf !is null ? networksOf : (string) => cast(IpNetwork[]) null;
         this.store = store;
         this.crypto = crypto;
         this.now = now !is null ? now : () => MonoTime.currTime;
@@ -90,9 +98,10 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @param tenant The tenant of the user; empty means the default tenant.
      *  @param name The name of the user attempting to log in.
      *  @param password The password for the user.
+     *  @param address The client's IP address; checked against the tenant's allowed networks.
      *  @return The result of the login attempt, including a session token if successful.
     **/
-    LoginResult login(string tenant, string name, string password) {
+    LoginResult login(string tenant, string name, string password, string address) {
         auto key = userKey(loginTenant(tenant), name.strip.toLower);
         auto locked = key in failures;
         enforce!AuthenticationRequired(locked is null || locked.lockedUntil <= now(),
@@ -111,15 +120,23 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
             throw new AuthenticationRequired("Invalid tenant, user name or password");
         }
         failures.remove(key);
+        // Erst nach dem Passwort: nur wer die Zugangsdaten kennt, erfährt von der Einschränkung
+        enforce!AccessDenied(isAllowed(networksOf(user.tenant), address),
+            "Sign-in from " ~ (address.length ? address : "this address") ~ " is not allowed for this tenant");
         pruneSessions();
         auto token = crypto.randomSecret();
         sessions[digest(token)] = Session(key, now() + sessionLifetime);
         return LoginResult(token, principalOf(*user), sessionLifetime.total!"seconds");
     }
 
+    /// Ohne bekannte Adresse: nur möglich, solange der Mandant keine Netze einschränkt.
+    LoginResult login(string tenant, string name, string password) {
+        return login(tenant, name, password, "");
+    }
+
     /// Wie login(tenant, ...) im Mandanten default.
     LoginResult login(string name, string password) {
-        return login("", name, password);
+        return login("", name, password, "");
     }
 
     /** 
@@ -137,7 +154,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
      *  @param token The session token to authenticate.
      *  @return The principal associated with the session, or an empty principal if authentication fails.
     **/
-    Principal authenticate(string token) {
+    Principal authenticate(string token, string address) {
         if (token.length == 0)
             return Principal.init;
         auto id = digest(token);
@@ -149,7 +166,15 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
             sessions.remove(id);
             return Principal.init;
         }
+        // Von einer nicht erlaubten Adresse gilt die Sitzung nicht; sie bleibt aber für erlaubte Adressen bestehen
+        if (!isAllowed(networksOf(user.tenant), address))
+            return Principal.init;
         return principalOf(*user);
+    }
+
+    /// Ohne bekannte Adresse: gilt nur, solange der Mandant keine Netze einschränkt.
+    Principal authenticate(string token) {
+        return authenticate(token, "");
     }
 
     /** 
@@ -232,24 +257,33 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
     /// entstehen und gelten für eine später gleichnamig angelegte Tabelle wieder.
     UserInfo setGrants(Principal actor, string name, TableGrant[] grants) {
         requirePermission(actor, Permission.manageAccess);
-        enforce(actor.tenant != systemTenant, "The system area has no tables");
         auto user = find(actor.tenant, name);
+        immutable now = clock();
         TableGrant[] clean;
         bool[string] seen;
         foreach (g; grants) {
             auto table = g.table.strip.toLower;
-            enforce(table.length && table.all!(c => isAlphaNum(c) || c == '_'), "Invalid table name: " ~ g.table);
+            enforce(table.all!(c => isAlphaNum(c) || c == '_'), "Invalid table name: " ~ g.table);
+            enforce(table.length == 0 || actor.tenant != systemTenant, "The system area has no tables");
             auto role = assignableRole(actor.tenant, g.role);
-            enforce(role.length, "Choose a role for table " ~ table);
-            enforce(!(rolePermissions(actor.tenant, role) & tablePermissions).empty,
-                "Role " ~ role ~ " has no table permissions (select, insert, update, delete, drop)");
-            auto key = table ~ "/" ~ role;
+            enforce(role.length, "Choose a role" ~ (table.length ? " for table " ~ table : ""));
+            if (table.length)
+                enforce(!(rolePermissions(actor.tenant, role) & tablePermissions).empty,
+                    "Role " ~ role ~ " has no table permissions (select, insert, update, delete, drop)");
+            auto from = normalizeInstant(g.from), until = normalizeInstant(g.until);
+            if (from.length && until.length)
+                enforce(SysTime.fromISOExtString(from) < SysTime.fromISOExtString(until), "The grant must start before it ends");
+            auto grant = TableGrant(table, role, from, until);
+            // Abgelaufene bleiben zur Nachvollziehbarkeit stehen, neu anlegen lassen sie sich nicht
+            if (grant.stateAt(now) == "expired")
+                enforce(user.grants.canFind(grant), "The grant would already be over");
+            auto key = table ~ "/" ~ role ~ "/" ~ from ~ "/" ~ until;
             if (key in seen)
                 continue;
             seen[key] = true;
-            clean ~= TableGrant(table, role);
+            clean ~= grant;
         }
-        clean.sort!((a, b) => a.table != b.table ? a.table < b.table : a.role < b.role);
+        clean.sort!((a, b) => a.table != b.table ? a.table < b.table : a.role != b.role ? a.role < b.role : a.from < b.from);
         user.grants = clean;
         commit(user);
         return info(user);
@@ -459,8 +493,16 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
         p.authenticated = true;
         p.tenant = user.tenant;
         p.role = user.role;
-        p.permissions = rolePermissions(user.tenant, user.role) & allowedPermissions(user.tenant);
+        auto allowed = allowedPermissions(user.tenant);
+        p.permissions = rolePermissions(user.tenant, user.role) & allowed;
+        immutable now = clock();
         foreach (g; user.grants) {
+            if (!g.activeAt(now))
+                continue; // noch nicht begonnen oder abgelaufen
+            if (g.table.length == 0) {
+                p.permissions = p.permissions | (rolePermissions(user.tenant, g.role) & allowed);
+                continue;
+            }
             auto granted = rolePermissions(user.tenant, g.role) & tablePermissions;
             if (!granted.empty)
                 p.tables[g.table] = p.tables.get(g.table, PermissionSet.init) | granted;
@@ -879,4 +921,101 @@ unittest {
     auto restarted = new AccessService(users, new FakeCrypto, null, null, roles);
     auto again = restarted.authenticate(restarted.login("", "tina", pw).token);
     assert(again.can(Permission.update, "orders") && !again.can(Permission.select, "secret"));
+}
+
+/// Befristete Rechte und erlaubte Netze.
+unittest {
+    import std.exception : assertThrown, collectException;
+    import core.time : hours, minutes;
+
+    static class MemStore : IUserStore {
+        HdbUser[] saved;
+        HdbUser[] load() {
+            return saved;
+        }
+
+        void save(HdbUser[] users) {
+            saved = users.dup;
+        }
+    }
+
+    static class FakeCrypto : ICredentialCrypto {
+        string hashPassword(string p) {
+            return "h:" ~ p;
+        }
+
+        bool verifyPassword(string p, string stored) {
+            return stored == "h:" ~ p;
+        }
+
+        string randomSecret() {
+            import std.conv : to;
+            import std.random : uniform;
+
+            return "s" ~ uniform(0, int.max).to!string;
+        }
+    }
+
+    auto now = SysTime.fromISOExtString("2026-11-08T12:00:00Z");
+    IpNetwork[][string] networks;
+    auto a = new AccessService(new MemStore, new FakeCrypto, null, null, null, () => now,
+        (string t) => networks.get(t, null));
+    auto pw = "correct-horse-1";
+    a.bootstrap(defaultTenant, "admin", pw);
+    a.bootstrap(systemTenant, "root", pw);
+    auto admin = a.authenticate(a.login("", "admin", pw).token);
+    auto root = a.authenticate(a.login("system", "root", pw).token);
+    a.createUser(admin, "vic", pw, "viewer");
+
+    // Befristete Rolle im ganzen Mandanten: vorher, währenddessen, danach
+    a.setGrants(admin, "vic", [TableGrant("", "admin", "2026-11-08T13:00", "2026-11-08T15:00:00+01:00")]);
+    assert(a.listUsers(admin).filter!(u => u.name == "vic").front.grants
+        == [TableGrant("", "admin", "2026-11-08T13:00:00Z", "2026-11-08T14:00:00Z")]);
+    auto vic = a.login("", "vic", pw).token;
+    assert(!a.authenticate(vic).can(Permission.create)); // geplant
+    now += 90.minutes;
+    assert(a.authenticate(vic).can(Permission.create) && a.authenticate(vic).can(Permission.manageAccess));
+    now += 1.hours;
+    auto after = a.authenticate(vic);
+    assert(after.authenticated && !after.can(Permission.create) && after.can(Permission.select)); // zurück auf viewer
+
+    // Befristete Tabellenfreigabe
+    a.setGrants(admin, "vic", [TableGrant("orders", "editor", "", "2026-11-08T16:00:00Z")]);
+    assert(a.authenticate(vic).can(Permission.update, "orders") && !a.authenticate(vic).can(Permission.update, "other"));
+    now += 2.hours;
+    assert(!a.authenticate(vic).can(Permission.update, "orders"));
+
+    // Abgelaufene bleiben stehen, neue abgelaufene oder verdrehte gehen nicht
+    auto kept = a.listUsers(admin).filter!(u => u.name == "vic").front.grants;
+    a.setGrants(admin, "vic", kept); // unverändert speicherbar
+    assertThrown(a.setGrants(admin, "vic", [TableGrant("t", "viewer", "", "2026-01-01T00:00:00Z")]));
+    assertThrown(a.setGrants(admin, "vic", [TableGrant("t", "viewer", "2026-12-02T00:00", "2026-12-01T00:00")]));
+    assertThrown(a.setGrants(admin, "vic", [TableGrant("t", "viewer", "soon", "")]));
+
+    // Im Bereich system: befristet Systemadministrator, aber keine Tabellen
+    a.createUser(root, "ops", pw, "viewer");
+    a.setGrants(root, "ops", [TableGrant("", "admin", "", "2026-11-09T00:00:00Z")]);
+    auto ops = a.authenticate(a.login("system", "ops", pw).token);
+    assert(ops.can(Permission.manageTenants));
+    assertThrown(a.setGrants(root, "ops", [TableGrant("orders", "admin")]));
+    // Befristete Rechte zählen nicht als dauerhafte Verwaltung
+    a.setGrants(admin, "vic", [TableGrant("", "admin", "", "2026-11-09T00:00:00Z")]);
+    assertThrown(a.updateUser(admin, "admin", "viewer", true));
+
+    // Erlaubte Netze: Anmeldung erst nach dem Passwort geprüft, Sitzungen je Anfrage
+    networks[defaultTenant] = parseNetworks(["192.168.10.0/24", "2001:db8::/32"]);
+    auto denied = collectException!AccessDenied(a.login("", "admin", pw, "203.0.113.9"));
+    assert(denied !is null && denied.msg.canFind("203.0.113.9"));
+    assertThrown!AuthenticationRequired(a.login("", "admin", "wrong-password", "203.0.113.9"));
+    assertThrown!AccessDenied(a.login("", "admin", pw)); // ohne bekannte Adresse
+    auto inside = a.login("", "admin", pw, "192.168.10.20").token;
+    assert(a.authenticate(inside, "192.168.10.20").authenticated);
+    assert(a.authenticate(inside, "2001:db8::5").authenticated);
+    assert(!a.authenticate(inside, "203.0.113.9").authenticated); // gestohlenes Token von außen
+    assert(!a.authenticate(inside).authenticated);
+    assert(a.authenticate(inside, "192.168.10.20").authenticated); // die Sitzung bleibt bestehen
+    // Andere Mandanten und der Bereich system sind nicht betroffen
+    assert(a.authenticate(a.login("system", "root", pw, "203.0.113.9").token, "203.0.113.9").authenticated);
+    networks.remove(defaultTenant);
+    assert(a.authenticate(inside, "203.0.113.9").authenticated);
 }

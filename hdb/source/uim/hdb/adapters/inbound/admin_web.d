@@ -2,10 +2,12 @@ module uim.hdb.adapters.inbound.admin_web;
 
 import uim.hdb.application.ports;
 import uim.hdb;
-import uim.hdb.adapters.inbound.security : currentPrincipal, sessionCookie;
+import uim.hdb.adapters.inbound.security : currentClientAddress, currentPrincipal, sessionCookie;
 import uim.hdb.domain.entities.user;
 import uim.hdb.domain.value;
 import core.time : MonoTime;
+import std.datetime.systime : Clock;
+import std.datetime.timezone : UTC;
 import std.algorithm : all, any, canFind, filter, map, max, min, startsWith;
 import std.array : array, join, replace;
 import std.conv : to;
@@ -164,15 +166,30 @@ struct RolesView {
 
 struct GrantsView {
     string user, role;
-    TableGrant[] grants;
-    string[] roles; // Rollen mit Tabellenrechten
+    GrantRow[] grants;
+    string[] roles; // alle Rollen des Bereichs
+    string[] tableRoles; // davon Rollen mit Tabellenrechten
     string[] tables; // bekannte Tabellen, als Vorschläge
+    bool tenantArea; // Tabellenfreigaben gibt es nur in Mandanten
+    bool hasExpired;
+}
+
+struct GrantRow {
+    TableGrant grant;
+    string state; // active, scheduled oder expired
+}
+
+struct NetworkView {
+    string networksText; // eine Zeile je Netz
+    string yourAddress;
 }
 
 struct TenantRow {
     string name, label;
     bool active;
     size_t users;
+    size_t networkCount;
+    string networksText; // eine Zeile je Netz
 }
 
 struct BackupRow {
@@ -245,6 +262,9 @@ final class SqlAdminUi {
         router.get("/admin/users/:user/grants", &grantsPage);
         router.post("/admin/users/:user/grants", &changeGrants);
         router.get("/admin/roles", &rolesPage);
+        router.get("/admin/network", &networkPage);
+        router.post("/admin/network", &saveNetwork);
+        router.post("/admin/tenants/:tenant/networks", &setTenantNetworks);
         router.post("/admin/roles", &saveRole);
         router.post("/admin/roles/:role/delete", &deleteRole);
         router.get("/admin/tenants", &tenantList);
@@ -361,11 +381,17 @@ final class SqlAdminUi {
         LoginResult session;
         string tenantValue = req.form.get("tenant", "").strip;
         try
-            session = access.login(tenantValue, req.form.get("user", ""), req.form.get("password", ""));
+            session = access.login(tenantValue, req.form.get("user", ""), req.form.get("password", ""),
+                currentClientAddress());
         catch (AuthenticationRequired e) {
             string loginError = e.msg;
             string loginNotice;
             res.statusCode = HTTPStatus.unauthorized;
+            return res.render!("login.dt", loginError, loginNotice, tenantValue);
+        } catch (AccessDenied e) { // Netz nicht erlaubt
+            string loginError = e.msg;
+            string loginNotice;
+            res.statusCode = HTTPStatus.forbidden;
             return res.render!("login.dt", loginError, loginNotice, tenantValue);
         }
         // Nur zum Vorausfüllen des Formulars, kein Geheimnis
@@ -406,7 +432,7 @@ final class SqlAdminUi {
         TenantRow[] rows;
         try {
             foreach (t; tenants.listTenants(currentPrincipal()))
-                rows ~= TenantRow(t.name, t.label, t.active, t.users);
+                rows ~= TenantRow(t.name, t.label, t.active, t.users, t.networks.length, t.networks.join("\n"));
         } catch (AccessDenied e)
             return renderError(req, res, HTTPStatus.forbidden, e.msg);
         auto page = pageFor(req, "Tenants", "tenants");
@@ -484,26 +510,35 @@ final class SqlAdminUi {
         auto me = currentPrincipal();
         GrantsView view;
         try {
-            enforce!AccessDenied(!me.isSystem, "The system area has no tables");
             auto name = req.params["user"].toLower;
             bool found;
+            auto now = Clock.currTime(UTC());
             foreach (u; access.listUsers(me))
                 if (u.name == name) {
-                    view = GrantsView(u.name, u.role, u.grants);
+                    view.user = u.name;
+                    view.role = u.role;
+                    foreach (g; u.grants) {
+                        view.grants ~= GrantRow(g, g.stateAt(now));
+                        view.hasExpired = view.hasExpired || view.grants[$ - 1].state == "expired";
+                    }
                     found = true;
                 }
             if (!found)
                 return renderError(req, res, HTTPStatus.notFound, "User not found: " ~ name);
-            foreach (r; access.listRoles(me))
+            view.tenantArea = !me.isSystem;
+            foreach (r; access.listRoles(me)) {
+                view.roles ~= r.name;
                 if (!(PermissionSet.parse(r.permissions) & tablePermissions).empty)
-                    view.roles ~= r.name;
+                    view.tableRoles ~= r.name;
+            }
         } catch (AccessDenied e)
             return renderError(req, res, HTTPStatus.forbidden, e.msg);
-        try
-            view.tables = sql.listTables(); // nur Vorschläge: Freigaben dürfen auch noch fehlende Tabellen nennen
-        catch (Exception) {
-        }
-        auto page = pageFor(req, "Table access: " ~ view.user, "users");
+        if (view.tenantArea)
+            try
+                view.tables = sql.listTables(); // nur Vorschläge: Freigaben dürfen auch noch fehlende Tabellen nennen
+            catch (Exception) {
+            }
+        auto page = pageFor(req, "Additional roles: " ~ view.user, "users");
         res.render!("grants.dt", page, view);
     }
 
@@ -518,13 +553,51 @@ final class SqlAdminUi {
                     grants = u.grants;
             auto table = req.form.get("table", "").strip.toLower;
             auto role = req.form.get("role", "").strip.toLower;
-            if (req.form.get("action", "") == "remove") {
-                grants = grants.filter!(g => !(g.table == table && g.role == role)).array;
+            auto scope_ = table.length ? " on table " ~ table : " in the whole " ~ (me.isSystem ? "system area" : "tenant");
+            switch (req.form.get("action", "")) {
+            case "remove":
+                auto from = req.form.get("from", ""), until = req.form.get("until", "");
+                grants = grants.filter!(g => !(g.table == table && g.role == role && g.from == from && g.until == until)).array;
                 access.setGrants(me, name, grants);
-                return "Removed role " ~ role ~ " on table " ~ table;
+                return "Removed role " ~ role ~ scope_;
+            case "purge":
+                auto now = Clock.currTime(UTC());
+                auto before = grants.length;
+                grants = grants.filter!(g => g.stateAt(now) != "expired").array;
+                access.setGrants(me, name, grants);
+                return (before - grants.length).to!string ~ " expired grant(s) removed";
+            default:
+                auto grant = TableGrant(table, role, req.form.get("from", ""), req.form.get("until", ""));
+                access.setGrants(me, name, grants ~ grant);
+                return "Granted role " ~ role ~ scope_ ~ (grant.until.length ? " until " ~ normalizeInstant(grant.until) : "");
             }
-            access.setGrants(me, name, grants ~ TableGrant(table, role));
-            return "Granted role " ~ role ~ " on table " ~ table;
+        });
+    }
+
+    private void networkPage(HTTPServerRequest req, HTTPServerResponse res) {
+        NetworkView view;
+        try
+            view.networksText = tenants.ownNetworks(currentPrincipal()).join("\n");
+        catch (AccessDenied e)
+            return renderError(req, res, HTTPStatus.forbidden, e.msg);
+        view.yourAddress = currentClientAddress();
+        auto page = pageFor(req, "Allowed networks", "network");
+        res.render!("network.dt", page, view);
+    }
+
+    /// Eine Adresse oder ein Netz je Zeile; Kommas gehen auch.
+    private void saveNetwork(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/network", {
+            auto list = tenants.setOwnNetworks(currentPrincipal(), networkLines(req.form.get("networks", "")),
+                currentClientAddress());
+            return list.length ? "Allowed networks saved (" ~ list.length.to!string ~ ")" : "Network restriction removed";
+        });
+    }
+
+    private void setTenantNetworks(HTTPServerRequest req, HTTPServerResponse res) {
+        act(req, res, "/admin/tenants", {
+            auto t = tenants.setTenantNetworks(currentPrincipal(), req.params["tenant"], networkLines(req.form.get("networks", "")));
+            return "Allowed networks of " ~ t.name ~ (t.networks.length ? " saved" : " removed");
         });
     }
 
@@ -878,7 +951,7 @@ bool isTenantDataPath(string path) @safe {
     if (path == "/admin")
         return true;
     return ["/admin/stats", "/admin/sql", "/admin/merge", "/admin/checkpoint", "/admin/tables", "/admin/backups",
-        "/admin/replication"]
+        "/admin/replication", "/admin/network"]
         .any!(p => path == p || path.startsWith(p ~ "/"));
 }
 
@@ -888,6 +961,13 @@ private bool isPlainTenant(string value) {
         return value.length == 0 || validTenantName(value) == value;
     catch (Exception)
         return false;
+}
+
+private string[] networkLines(string text) {
+    import std.array : split;
+    import std.regex : regex, splitter;
+
+    return text.splitter(regex(`[\s,]+`)).filter!(e => e.length).array;
 }
 
 private string matchingPasswords(HTTPServerRequest req) {

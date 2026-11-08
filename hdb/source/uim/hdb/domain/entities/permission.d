@@ -11,6 +11,7 @@ import std.array : array;
 import std.ascii : isAlphaNum;
 import std.conv : to;
 import std.exception : enforce;
+import std.datetime.systime : SysTime;
 import std.string : strip, toLower;
 
 /// Einzelnes Recht. Rollen sind Mengen davon.
@@ -120,10 +121,56 @@ struct RoleDef {
     bool builtin; // vordefiniert, nicht änderbar oder löschbar
 }
 
-/// Freigabe einer Rolle für eine einzelne Tabelle. Davon gelten nur die Tabellenrechte der Rolle.
+/// Zusätzliche Rolle eines Benutzers, auf Wunsch befristet.
+/// Mit `table` gilt sie nur für diese Tabelle, und davon nur die Tabellenrechte der Rolle. Ohne `table` gilt sie im
+/// ganzen Bereich wie eine zweite Rolle, etwa "admin bis Freitag 18 Uhr".
+/// `from` und `until` sind UTC-Zeitpunkte (2026-11-08T18:00:00Z); leer heißt ohne Grenze. Außerhalb des Zeitraums
+/// hat die Freigabe keine Wirkung; geprüft wird bei jeder Anfrage.
 struct TableGrant {
-    string table; // klein geschrieben
+    string table; // klein geschrieben; leer: ganzer Bereich
     string role;
+    string from; // gilt ab (einschließlich)
+    string until; // gilt bis (ausschließlich)
+
+    bool temporary() const {
+        return from.length || until.length;
+    }
+
+    /// active, scheduled oder expired
+    string stateAt(SysTime now) const {
+        if (from.length && now < SysTime.fromISOExtString(from))
+            return "scheduled";
+        if (until.length && now >= SysTime.fromISOExtString(until))
+            return "expired";
+        return "active";
+    }
+
+    bool activeAt(SysTime now) const {
+        return stateAt(now) == "active";
+    }
+}
+
+/// Zeitpunkt in kanonischer UTC-Form ohne Sekundenbruchteile; leer bleibt leer.
+/// Akzeptiert ISO 8601 mit oder ohne Sekunden und Zeitzone; ohne Zeitzone gilt UTC (wie in den Formularen).
+string normalizeInstant(string text) {
+    import std.datetime.timezone : UTC;
+    import std.regex : ctRegex, matchFirst;
+
+    auto t = text.strip;
+    if (t.length == 0)
+        return "";
+    if (!matchFirst(t, ctRegex!`^\d{4}-\d\d-\d\dT\d\d:\d\d$`).empty)
+        t ~= ":00";
+    if (matchFirst(t, ctRegex!`(Z|[+-]\d\d:\d\d)$`).empty)
+        t ~= "Z";
+    SysTime time;
+    try
+        time = SysTime.fromISOExtString(t);
+    catch (Exception)
+        throw new Exception("Invalid time: " ~ text ~ " (expected e.g. 2026-11-08T18:00:00Z)");
+    time = time.toUTC;
+    time.fracSecs = typeof(time.fracSecs).zero;
+    return time.toISOExtString;
 }
 
 /// Vordefinierte Rollen. Ihre Namen entsprechen den bisherigen festen Rollen, bestehende Benutzer behalten so ihre Rechte.
@@ -173,6 +220,22 @@ unittest {
     assert(roles[2].permissions == tenantPermissions);
     assert(builtinRoles(systemTenant)[1].permissions == serverPermissions);
     assert(!tenantPermissions.has(Permission.manageTenants) && serverPermissions.has(Permission.manageAccess));
+
+    import std.datetime.timezone : UTC;
+    import core.time : hours;
+
+    assert(normalizeInstant("2026-11-08T18:00") == "2026-11-08T18:00:00Z");
+    assert(normalizeInstant(" 2026-11-08T18:00:00+01:00 ") == "2026-11-08T17:00:00Z");
+    assert(normalizeInstant("2026-11-08T18:00:00.123Z") == "2026-11-08T18:00:00Z");
+    assert(normalizeInstant("") == "");
+    assertThrown(normalizeInstant("tomorrow"));
+    assertThrown(normalizeInstant("2026-13-01T00:00"));
+
+    auto noon = SysTime.fromISOExtString("2026-11-08T12:00:00Z");
+    auto g = TableGrant("", "admin", "2026-11-08T10:00:00Z", "2026-11-08T14:00:00Z");
+    assert(g.temporary && g.activeAt(noon));
+    assert(g.stateAt(noon - 3.hours) == "scheduled" && g.stateAt(noon + 2.hours) == "expired");
+    assert(TableGrant("t", "viewer").activeAt(noon) && !TableGrant("t", "viewer").temporary);
 
     assert(validRoleName(" Accountant ") == "accountant");
     assertThrown(validRoleName("a b"));

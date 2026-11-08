@@ -26,9 +26,13 @@ struct RestUser {
 }
 
 /// Rolle für eine einzelne Tabelle; davon gelten nur select, insert, update, delete und drop.
+/// Ohne `table` gilt die Rolle im ganzen Mandanten. `from`/`until` befristen sie (UTC, ISO 8601).
 struct RestGrant {
     string table;
     string role;
+    @optional string from;
+    @optional string until;
+    @optional string state; // nur in Antworten: active, scheduled oder expired
 }
 
 struct RestRole {
@@ -50,10 +54,16 @@ struct RestMe {
     RestTableAccess[] tables;
 }
 
+struct RestNetworks {
+    string[] networks;
+    string yourAddress; // Adresse dieser Anfrage, wie der Server sie sieht
+}
+
 struct RestTenant {
     string name, label;
     bool active;
     long users;
+    @optional string[] networks;
 }
 
 struct RestLogin {
@@ -130,11 +140,16 @@ RestBackupSchedule toRest(BackupSchedule s) {
 }
 
 RestTenant toRest(TenantInfo t) {
-    return RestTenant(t.name, t.label, t.active, t.users);
+    return RestTenant(t.name, t.label, t.active, t.users, t.networks);
 }
 
 RestUser toRest(UserInfo u) {
-    return RestUser(u.name, u.role, u.active, u.tenant, u.grants.map!(g => RestGrant(g.table, g.role)).array);
+    import std.datetime.systime : Clock;
+    import std.datetime.timezone : UTC;
+
+    auto now = Clock.currTime(UTC());
+    return RestUser(u.name, u.role, u.active, u.tenant,
+        u.grants.map!(g => RestGrant(g.table, g.role, g.from, g.until, g.stateAt(now))).array);
 }
 
 RestRole toRest(RoleInfo r) {

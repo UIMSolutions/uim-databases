@@ -9,11 +9,28 @@ import std.exception : enforce;
 final class TenantRegistry {
     private ITenantStore store;
     private Tenant[string] tenants;
+    private IpNetwork[][string] parsed; // erlaubte Netze, einmal gelesen statt bei jeder Anfrage
 
     this(ITenantStore store) {
         this.store = store;
         foreach (t; store.load())
             tenants[t.name] = t;
+        parsed = parseAll(tenants);
+    }
+
+    /// Für AccessService: erlaubte Netze eines Mandanten; leer heißt ohne Einschränkung.
+    /// Der Bereich system wird nicht eingeschränkt.
+    IpNetwork[] networks(string name) {
+        auto n = name in parsed;
+        return n !is null ? *n : null;
+    }
+
+    private static IpNetwork[][string] parseAll(Tenant[string] all) {
+        IpNetwork[][string] result;
+        foreach (name, t; all)
+            if (t.networks.length)
+                result[name] = parseNetworks(t.networks);
+        return result;
     }
 
     /// Für AccessService: gibt es den Mandanten, und ist er aktiv?
@@ -44,8 +61,10 @@ final class TenantRegistry {
     void put(Tenant tenant) {
         auto next = tenants.dup;
         next[tenant.name] = tenant;
+        auto nextParsed = parseAll(next); // ungültige Netze scheitern vor dem Speichern
         store.save(next.values);
         tenants = next;
+        parsed = nextParsed;
     }
 
     void remove(string name) {
@@ -53,6 +72,7 @@ final class TenantRegistry {
         next.remove(name);
         store.save(next.values);
         tenants = next;
+        parsed.remove(name);
     }
 }
 
@@ -339,9 +359,48 @@ final class TenantService : ITenantUseCase {
             throw new Exception("Tenant " ~ tenant.name ~ " was removed, but its data could not be deleted: " ~ e.msg);
     }
 
-    private TenantInfo info(Tenant t) {
-        return TenantInfo(t.name, t.label, t.active, accounts.userCount(t.name));
+    TenantInfo setTenantNetworks(Principal actor, string name, string[] networks) {
+        requirePermission(actor, Permission.manageTenants);
+        auto tenant = registry.get(validTenantName(name));
+        tenant.networks = canonicalNetworks(networks);
+        registry.put(tenant);
+        return info(tenant);
     }
+
+    string[] ownNetworks(Principal actor) {
+        requireTenantAccessManager(actor);
+        return registry.get(actor.tenant).networks.dup;
+    }
+
+    string[] setOwnNetworks(Principal actor, string[] networks, string clientAddress) {
+        requireTenantAccessManager(actor);
+        auto tenant = registry.get(actor.tenant);
+        auto next = canonicalNetworks(networks);
+        enforce(isAllowed(parseNetworks(next), clientAddress), "Your current address "
+                ~ (clientAddress.length ? clientAddress : "(unknown)")
+                ~ " is not in the list. Add it, or you would lock yourself out.");
+        tenant.networks = next;
+        registry.put(tenant);
+        return next;
+    }
+
+    /// Netze gibt es nur für Mandanten, nicht für den Bereich system.
+    private void requireTenantAccessManager(Principal actor) {
+        requirePermission(actor, Permission.manageAccess);
+        enforce!AccessDenied(actor.tenant != systemTenant, "The system area has no network restriction");
+    }
+
+    private TenantInfo info(Tenant t) {
+        return TenantInfo(t.name, t.label, t.active, accounts.userCount(t.name), t.networks.dup);
+    }
+}
+
+/// Prüft eine Liste und gibt sie in kanonischer Schreibweise zurück.
+string[] canonicalNetworks(string[] entries) {
+    string[] result;
+    foreach (n; parseNetworks(entries))
+        result ~= n.toString;
+    return result;
 }
 
 private string cleanLabel(string label, string fallback) {
@@ -513,4 +572,66 @@ unittest {
     assert(!registry.has("acme") && !databases.isOpen("acme") && accounts.userCount("acme") == 0);
     assert(storage.purged.canFind("acme") && store.saved.length == 1);
     assert(registry.isActive(systemTenant) && !registry.isActive("acme"));
+}
+
+/// Erlaubte Netze: eigener Mandant mit Schutz vor dem Aussperren, Korrektur durch Systemadministratoren.
+unittest {
+    import std.exception : assertThrown;
+
+    static class MemTenantStore : ITenantStore {
+        Tenant[] saved;
+        Tenant[] load() {
+            return saved;
+        }
+
+        void save(Tenant[] tenants) {
+            saved = tenants.dup;
+        }
+    }
+
+    static class NoAccounts : ITenantAccounts {
+        void provisionAdmin(string, string, string) {
+        }
+
+        void revokeTenant(string) {
+        }
+
+        void removeTenant(string) {
+        }
+
+        size_t userCount(string) {
+            return 1;
+        }
+    }
+
+    auto store = new MemTenantStore;
+    auto registry = new TenantRegistry(store);
+    registry.put(Tenant("acme", "Acme", true));
+    auto service = new TenantService(registry, new NoAccounts, null, null);
+    auto admin = Principal("a", HdbRole.admin, true, "acme");
+    auto viewer = Principal("v", HdbRole.viewer, true, "acme");
+    auto sys = Principal("s", HdbRole.admin, true, systemTenant);
+
+    assert(service.ownNetworks(admin).length == 0 && registry.networks("acme").length == 0);
+    assertThrown!AccessDenied(service.ownNetworks(viewer));
+    assertThrown!AccessDenied(service.ownNetworks(sys)); // der Bereich system hat keine Netzliste
+
+    // Die eigene Adresse muss in der Liste bleiben
+    assertThrown(service.setOwnNetworks(admin, ["10.0.0.0/8"], "192.168.1.5"));
+    assertThrown(service.setOwnNetworks(admin, ["10.0.0.0/8"], ""));
+    assert(service.setOwnNetworks(admin, ["10.0.0.0/8", "192.168.1.0/24", " ", "10.0.0.0/8"], "192.168.1.5")
+        == ["10.0.0.0/8", "192.168.1.0/24"]);
+    assert(registry.networks("acme").length == 2 && store.saved[0].networks == ["10.0.0.0/8", "192.168.1.0/24"]);
+    assertThrown(service.setOwnNetworks(admin, ["300.1.1.1"], "192.168.1.5"));
+    assert(service.setOwnNetworks(admin, [], "203.0.113.1").length == 0); // leeren geht immer
+
+    // Systemadministratoren dürfen jede Liste setzen, auch ohne eigene Adresse darin
+    service.setOwnNetworks(admin, ["192.168.1.0/24"], "192.168.1.5");
+    assert(service.setTenantNetworks(sys, "acme", ["198.51.100.0/24"]).networks == ["198.51.100.0/24"]);
+    assertThrown!AccessDenied(service.setTenantNetworks(admin, "acme", []));
+    assert(service.listTenants(sys)[0].networks == ["198.51.100.0/24"]);
+
+    // Ein Neustart liest die Listen wieder
+    auto again = new TenantRegistry(store);
+    assert(again.networks("acme").length == 1 && isAllowed(again.networks("acme"), "198.51.100.77"));
 }

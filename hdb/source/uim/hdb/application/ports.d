@@ -30,10 +30,12 @@ struct LoginResult {
 /// Die Benutzerverwaltung wirkt immer nur im Mandanten des actors.
 interface IAccessUseCase {
     /// `tenant` leer bedeutet default.
-    LoginResult login(string tenant, string name, string password);
+    /// `address` ist die IP-Adresse des Clients; schränkt der Mandant die Netze ein, muss sie darin liegen.
+    LoginResult login(string tenant, string name, string password, string address);
     void logout(string token);
-    /// Identität zu einem Token; anonym, wenn es ungültig oder abgelaufen ist.
-    Principal authenticate(string token);
+    /// Identität zu einem Token; anonym, wenn es ungültig, abgelaufen oder die Adresse nicht erlaubt ist.
+    /// Rechte werden dabei neu aufgelöst, befristete Freigaben gelten also genau in ihrem Zeitraum.
+    Principal authenticate(string token, string address);
     void changeOwnPassword(Principal actor, string current, string replacement);
 
     // Benutzer, Rollen und Tabellenfreigaben, alles mit dem Recht manageAccess und nur im Bereich des actors.
@@ -82,6 +84,7 @@ struct TenantInfo {
     string name, label;
     bool active;
     size_t users;
+    string[] networks; // erlaubte Netze; leer: alle
 }
 
 /// Eingehender Port: Mandanten anlegen, ändern und löschen, nur für Systemadministratoren.
@@ -93,6 +96,15 @@ interface ITenantUseCase {
     TenantInfo updateTenant(Principal actor, string name, string label, bool active);
     /// Löscht Benutzer, Daten und Sicherungen endgültig. Nur für deaktivierte Mandanten.
     void deleteTenant(Principal actor, string name);
+    /// Setzt die erlaubten Netze eines Mandanten, etwa wenn sich dessen Administratoren ausgesperrt haben
+    /// (Recht manageTenants).
+    TenantInfo setTenantNetworks(Principal actor, string name, string[] networks);
+
+    /// Erlaubte Netze des eigenen Mandanten (Recht manageAccess im Mandanten).
+    string[] ownNetworks(Principal actor);
+    /// Setzt die erlaubten Netze des eigenen Mandanten. `clientAddress` ist die Adresse der Anfrage: eine Liste,
+    /// die sie ausschließt, wird abgelehnt, damit sich niemand selbst aussperrt.
+    string[] setOwnNetworks(Principal actor, string[] networks, string clientAddress);
 }
 
 /// Ausgehender Port: Liste der Mandanten.

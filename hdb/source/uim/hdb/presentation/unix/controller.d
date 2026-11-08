@@ -18,6 +18,7 @@ import vibe.data.json : Json, serializeToJson;
 /// SecuredSqlUseCase sein: die Rollen prüft er, hier wird nur die Identität gesetzt.
 final class UnixController : IUnixController {
     enum root = "/api/v1";
+    private enum localAddress = "127.0.0.1";
     private ISqlUseCase sql;
     private IAccessUseCase access;
 
@@ -39,7 +40,9 @@ final class UnixController : IUnixController {
         scope (exit)
             bindPrincipal(Principal.init);
         try {
-            bindPrincipal(access.authenticate(tokenOf(request)));
+            // Lokale Clients ohne Netzadresse gelten als 127.0.0.1: erlaubte Netze eines Mandanten müssen das enthalten
+            bindClientAddress(localAddress);
+            bindPrincipal(access.authenticate(tokenOf(request), localAddress));
             return route(request);
         } catch (AuthenticationRequired e)
             return UnixResponse.error(401, e.msg);
@@ -57,7 +60,7 @@ final class UnixController : IUnixController {
         case "POST /auth/login":
             auto input = objectOf(request);
             auto tenant = input["tenant"].type == Json.Type.string ? input["tenant"].get!string : "";
-            auto r = access.login(tenant, textOf(input, "user"), textOf(input, "password"));
+            auto r = access.login(tenant, textOf(input, "user"), textOf(input, "password"), localAddress);
             return reply(RestLogin(r.token, r.expiresInSeconds,
                 RestUser(r.principal.name, r.principal.role, true, r.principal.tenant)));
         case "POST /auth/logout":
