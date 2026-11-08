@@ -59,19 +59,27 @@ final class TenantRegistry {
 /// Eine Datenbank je Mandant: jede Anfrage geht an die Datenbank des angemeldeten Mandanten.
 /// Getrennt sind Tabellen, Protokoll, Sicherungen, Zeitplan und die offene Transaktion. Systemadministratoren
 /// haben keine Datenbank und werden abgelehnt, ebenso Anfragen ohne Anmeldung.
-final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler {
+/// Jeder Mandant kann Quelle und Ziel einer Replikation sein; ein Ziel nimmt keine Schreibzugriffe an.
+final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IReplicationUseCase {
     private struct Engine {
         SecuredSqlUseCase sql;
         BackupService backups;
+        TenantReplication replication;
     }
 
     private ITenantStorage storage;
     private Principal delegate() current;
+    private IReplicationClient client;
+    private size_t retain;
     private Engine[string] engines;
 
-    this(ITenantStorage storage, Principal delegate() current) {
+    /// `client` null: dieser Server kann Quelle sein, aber kein Ziel. `retain`: so viele Änderungen bleiben je
+    /// Mandant abrufbar, ein Ziel mit größerem Rückstand holt einen vollständigen Stand.
+    this(ITenantStorage storage, Principal delegate() current, IReplicationClient client = null, size_t retain = 10_000) {
         this.storage = storage;
         this.current = current;
+        this.client = client;
+        this.retain = retain;
     }
 
     /// Lädt die Datenbank eines Mandanten aus ihrem Protokoll. Mehrfaches Öffnen ändert nichts.
@@ -82,7 +90,11 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler {
         auto core = new SqlService(parts.tables, parts.log);
         core.recover();
         core.mergeDelta();
-        engines[tenant] = Engine(new SecuredSqlUseCase(core, current), new BackupService(core, parts.backups, current));
+        auto feed = new ChangeFeed(retain);
+        core.changeSink(feed); // erst nach dem Einspielen: der Strom beginnt mit dem geladenen Stand
+        auto configs = parts.replication !is null ? parts.replication : new MemoryReplicationConfigStore;
+        engines[tenant] = Engine(new SecuredSqlUseCase(core, current), new BackupService(core, parts.backups, current),
+            new TenantReplication(core, feed, configs, client));
     }
 
     bool isOpen(string tenant) {
@@ -107,13 +119,24 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler {
         return *e;
     }
 
+    /// Ein Ziel liest nur: lokale Änderungen würden beim nächsten vollständigen Stand verloren gehen und
+    /// bis dahin das Einspielen der Quelle stören.
+    private void requireWritable(Engine e) {
+        if (e.replication.isReplica)
+            throw new AccessDenied("This tenant is a read-only replica of " ~ e.replication.sourceUrl
+                    ~ ". Stop the replication to change data.");
+    }
+
     // ISqlUseCase
     QueryResult execute(string sql) {
-        return engine().sql.execute(sql);
+        return executeIn("", sql);
     }
 
     QueryResult executeIn(string txId, string sql) {
-        return engine().sql.executeIn(txId, sql);
+        auto e = engine();
+        if (requiredRole(sql) > HdbRole.viewer)
+            requireWritable(e);
+        return e.sql.executeIn(txId, sql);
     }
 
     string[] listTables() {
@@ -150,7 +173,9 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler {
     }
 
     BackupInfo restore(string name) {
-        return engine().backups.restore(name);
+        auto e = engine();
+        requireWritable(e);
+        return e.backups.restore(name);
     }
 
     void remove(string name) {
@@ -171,6 +196,57 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler {
 
     BackupSchedule updateSchedule(bool enabled, int intervalHours, int keepScheduled, int keepSafety) {
         return engine().backups.updateSchedule(enabled, intervalHours, keepScheduled, keepSafety);
+    }
+
+    // IReplicationUseCase: lesen darf jeder Benutzer des Mandanten, er sieht über SELECT ohnehin alle Daten
+    ReplicationSnapshot replicationSnapshot() {
+        auto e = engine();
+        requireRole(current(), HdbRole.viewer);
+        return e.replication.snapshot();
+    }
+
+    ChangeBatch replicationChanges(string epoch, ulong since, size_t limit) {
+        auto e = engine();
+        requireRole(current(), HdbRole.viewer);
+        return e.replication.changes(epoch, since, limit);
+    }
+
+    ReplicationStatus replicationStatus() {
+        auto e = engine();
+        requireRole(current(), HdbRole.admin);
+        return e.replication.status();
+    }
+
+    ReplicationStatus configureReplica(ReplicationConfig config) {
+        auto e = engine();
+        requireRole(current(), HdbRole.admin);
+        return e.replication.configure(config);
+    }
+
+    ReplicationStatus stopReplica() {
+        auto e = engine();
+        requireRole(current(), HdbRole.admin);
+        return e.replication.stop();
+    }
+
+    ReplicationStatus resyncReplica() {
+        auto e = engine();
+        requireRole(current(), HdbRole.admin);
+        return e.replication.resync();
+    }
+
+    /// Fällige Abrufe aller Ziele. Läuft ohne Anfrage und damit ohne Identität: nur für den Zeitgeber der Anwendung.
+    /// Gibt neue Fehler zurück, je Mandant einer.
+    string[] replicationTick() {
+        string[] errors;
+        foreach (name; engines.keys) {
+            auto e = name in engines;
+            if (e is null)
+                continue;
+            if (auto error = e.replication.tick())
+                errors ~= name ~ ": " ~ error;
+        }
+        return errors;
     }
 
     /// Fällige Sicherungen aller Mandanten; ein Fehler bei einem hält die anderen nicht auf.

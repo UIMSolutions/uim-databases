@@ -22,6 +22,7 @@ public:
     import uim.hdb.adapters.outbound.file_user_store;
     import uim.hdb.adapters.outbound.file_statement_log;
     import uim.hdb.adapters.outbound.openssl_credential_crypto;
+    import uim.hdb.adapters.outbound.replication_http;
 
     import std.algorithm;
     import std.array;

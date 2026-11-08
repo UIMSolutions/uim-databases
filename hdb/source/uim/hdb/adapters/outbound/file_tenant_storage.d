@@ -11,6 +11,7 @@ import std.path : buildPath;
 ///   <root>/<mandant>/tables/json   Tabellen mit Speicher JSON
 ///   <root>/<mandant>/hdb.log       Anweisungsprotokoll
 ///   <root>/<mandant>/backups       Sicherungen und Zeitplan
+///   <root>/<mandant>/replication.json  Quelle, falls der Mandant ein Ziel ist (Rechte 0600)
 /// Der Name wird vor jedem Pfad geprüft: er kann nie aus `root` herausführen.
 final class FileTenantStorage : ITenantStorage {
     private string root;
@@ -28,7 +29,8 @@ final class FileTenantStorage : ITenantStorage {
             new RoutingTableRepository(new MemoryTableRepository,
                 new FileTableRepository(buildPath(tables, "file")), new JsonTableRepository(buildPath(tables, "json"))),
             new FileStatementLog(buildPath(dir, "hdb.log")),
-            new FileBackupStore(buildPath(dir, "backups")));
+            new FileBackupStore(buildPath(dir, "backups")),
+            new FileReplicationConfigStore(buildPath(dir, "replication.json")));
     }
 
     bool exists(string tenant) {
