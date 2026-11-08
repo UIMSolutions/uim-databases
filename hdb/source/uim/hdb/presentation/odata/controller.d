@@ -453,7 +453,7 @@ private Json[string] readEntity(HTTPServerRequest req, TableStats table) {
     if (document.type != Json.Type.object)
         throw badRequest("Request body must be a JSON object");
     Json[string] entity;
-    foreach (string name, value; document) {
+    foreach (name, value; document.byKeyValue) {
         if (name.indexOf('@') >= 0 || name == rowIdProperty)
             continue;
         auto column = table.columns.filter!(c => c.name == name);

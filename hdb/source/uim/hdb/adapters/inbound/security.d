@@ -19,24 +19,24 @@ enum sessionCookie = "hdb_session";
 // Eine Verbindung bedient mehrere Anfragen im selben Task: das Gate setzt den Wert deshalb bei jeder Anfrage neu.
 private TaskLocal!Principal requestPrincipal;
 
-Principal currentPrincipal() @trusted {
+Principal currentPrincipal() @safe {
     return requestPrincipal;
 }
 
 private TaskLocal!string requestAddress;
 
 /// IP-Adresse des Clients der laufenden Anfrage, wie sie das SecurityGate ermittelt hat.
-string currentClientAddress() @trusted {
+string currentClientAddress() @safe {
     return requestAddress;
 }
 
 /// Für Adapter, die nicht durch das SecurityGate laufen.
-void bindClientAddress(string address) @trusted {
+void bindClientAddress(string address) @safe {
     requestAddress = address;
 }
 
 /// Für Adapter, die nicht durch das SecurityGate laufen: setzt die Identität des laufenden Tasks.
-void bindPrincipal(Principal principal) @trusted {
+void bindPrincipal(Principal principal) @safe {
     requestPrincipal = principal;
 }
 
@@ -93,7 +93,7 @@ final class SecurityGate {
 
 /// Adresse des Clients. Kommt die Verbindung von einem vertrauten Proxy, gilt der letzte Eintrag in
 /// X-Forwarded-For, der kein vertrauter Proxy ist (von rechts gelesen: links kann der Client alles hineinschreiben).
-string clientAddressOf(string peer, string forwardedFor, const IpNetwork[] trustedProxies) @trusted {
+string clientAddressOf(string peer, string forwardedFor, const IpNetwork[] trustedProxies) @safe {
     import std.algorithm : canFind;
     import std.array : split;
     import std.string : indexOf, strip;

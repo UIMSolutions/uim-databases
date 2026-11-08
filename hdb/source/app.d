@@ -8,7 +8,7 @@ module app;
 import uim.hdb;
 
 /// Composition Root: einziger Ort, an dem Adapter und Kern verdrahtet werden.
-void main() {
+void main() @safe {
     // Eine Datenbank je Mandant unter TENANTS_DIR. Daten aus der Zeit vor den Mandanten (TABLES_DIR, DATA_FILE,
     // BACKUP_DIR) ziehen beim ersten Start in den Mandanten default.
     auto tenantsDir = environment.get("TENANTS_DIR", "data/tenants");

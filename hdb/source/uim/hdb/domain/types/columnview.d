@@ -44,9 +44,9 @@ struct ColumnView {
 ///
 unittest {
     auto cv = ColumnView(
-        ["a", "b", "c"].map!(s => Value(s)).array,
+        ["a", "b", "c"].map!(s => Value(s)).toValues,
         PackedVector.pack([0, 1, 2], 3),
-        ["d", "e"].map!(s => Value(s)).array,
+        ["d", "e"].map!(s => Value(s)).toValues,
         [0, 1]
     );
     assert(cv.length == 5);

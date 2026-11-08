@@ -81,7 +81,7 @@ final class BinaryTableRepository : SnapshotTableRepository {
         auto row = new Value[defs.length];
         foreach (n; 0 .. rowCount) {
             foreach (c, d; defs)
-                row[c] = tableValueFromJson(d.type, readValue(r));
+                assign(row[c], tableValueFromJson(d.type, readValue(r)));
             table.insert(row.dup);
         }
         enforce(r.remaining == 0, "Unexpected data at the end of binary table " ~ name);
@@ -223,7 +223,7 @@ unittest {
     assert(!exists(buildPath(dir, "empty.bin")));
 
     // Jede Beschädigung bricht das Laden ab, ohne Absturz
-    auto good = cast(immutable(ubyte)[]) read(path);
+    auto good = readBytes(path);
     auto bad = good.dup;
     bad[20] ^= 1;
     write(path, bad);
@@ -265,6 +265,6 @@ unittest {
     assertThrown(new BinaryTableRepository(dir)); // Rest am Ende
     write(path, forge((ref w) { header(w, "INTEGER"); w.put!ulong(0); }));
     assert(new BinaryTableRepository(dir).get("all").liveRows().length == 0); // gültig, nur leer
-    write(buildPath(dir, "other.bin"), cast(ubyte[]) read(path));
+    write(buildPath(dir, "other.bin"), readBytes(path));
     assertThrown(new BinaryTableRepository(dir)); // Tabelle "all" in other.bin
 }

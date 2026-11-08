@@ -94,7 +94,7 @@ final class BsonTableRepository : SnapshotTableRepository {
         foreach (values; document["rows"].byValue) {
             enforce(values.type == Json.Type.array && values.length == defs.length, "Invalid row in BSON table " ~ name);
             foreach (i, d; defs)
-                row[i] = tableValueFromJson(d.type, values[i]);
+                assign(row[i], tableValueFromJson(d.type, values[i]));
             table.insert(row.dup);
         }
         return table;
@@ -288,7 +288,7 @@ unittest {
     assert(readDocument(rd, false, 0)["a"].get!long == 1);
 
     // Beschädigungen: Exception statt Absturz
-    auto good = cast(immutable(ubyte)[]) read(path);
+    auto good = readBytes(path);
     foreach (cut; [0, 3, 4, 10, good.length / 2, good.length - 1]) {
         write(path, good[0 .. cut]);
         assertThrown(new BsonTableRepository(dir));
@@ -297,7 +297,7 @@ unittest {
     bad[0] = 0xff; // Gesamtlänge
     write(path, bad);
     assertThrown(new BsonTableRepository(dir));
-    write(path, good ~ cast(immutable(ubyte)[]) [0]);
+    write(path, good ~ cast(ubyte) 0);
     assertThrown(new BsonTableRepository(dir));
 
     ubyte[] document(void delegate(ref BsonWriter) @safe fill) {

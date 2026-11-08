@@ -48,12 +48,12 @@ final class FileBackupStore : IBackupStore {
 
     BackupInfo[] list() {
         BackupInfo[] result;
-        foreach (entry; dirEntries(directory, "*" ~ extension, SpanMode.shallow)) {
-            auto info = BackupInfo(baseName(entry.name));
-            info.size = getSize(entry.name);
+        foreach (entry; filesIn(directory, "*" ~ extension)) {
+            auto info = BackupInfo(baseName(entry));
+            info.size = getSize(entry);
             info.kind = kindOf(info.name);
             try {
-                auto file = File(entry.name, "r");
+                auto file = File(entry, "r");
                 auto header = parseHeader(file.readln().strip);
                 info.label = header.label;
                 info.created = header.created;
@@ -451,7 +451,7 @@ unittest {
     // Beschädigte Dateien werden erkannt, bevor irgendetwas geändert wird
     string[] invalid = [
         "", "kein Backup", "{}\n", content[0 .. $ / 2], content ~ "x", content.replace("weg", "WEG") ~ "\n",
-        content.replace("t_FILE", "t_FILx"), cast(string)[0xff, 0xfe, 0x0a]
+        content.replace("t_FILE", "t_FILx"), "\xff\xfe\n"
     ];
     foreach (bad; invalid)
         assertThrown(backups.upload(bad));

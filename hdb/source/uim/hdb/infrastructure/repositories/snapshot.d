@@ -39,10 +39,10 @@ abstract class SnapshotTableRepository : ITableRepository, IDurableTableReposito
 
     /// Liest alle Tabellen; die abgeleitete Klasse ruft das am Ende ihres Konstruktors auf.
     protected final void loadAll() {
-        foreach (entry; dirEntries(directory, "*." ~ extension, SpanMode.shallow)) {
-            auto table = decodeBytes(cast(immutable(ubyte)[]) read(entry.name));
-            enforce(table.name.toLower == baseName(entry.name).stripExtension,
-                "Tabellenname passt nicht zur Datei: " ~ entry.name);
+        foreach (entry; filesIn(directory, "*." ~ extension)) {
+            auto table = decodeBytes(readBytes(entry));
+            enforce(table.name.toLower == baseName(entry).stripExtension,
+                "Tabellenname passt nicht zur Datei: " ~ entry);
             store[table.name.toLower] = table;
         }
     }
@@ -108,4 +108,23 @@ abstract class TextTableRepository : SnapshotTableRepository {
         validate(text);
         return decode(text);
     }
+}
+
+/// Dateien eines Verzeichnisses (nicht rekursiv), deren Name zum Muster passt, sortiert.
+/// @trusted: dirEntries ist @system, weil der Iterator interne Zeiger hält; zurück kommt nur eine fertige Liste.
+string[] filesIn(string directory, string pattern) @trusted {
+    import std.algorithm : map, sort;
+    import std.array : array;
+    import std.file : dirEntries, SpanMode;
+
+    return dirEntries(directory, pattern, SpanMode.shallow).map!(e => e.name).array.sort.release;
+}
+
+/// Inhalt einer Datei als Bytes. @trusted: read liefert void[]; der Puffer ist frisch angelegt und gehört nur uns,
+/// die Umwandlung in unveränderliche Bytes ist deshalb sicher.
+immutable(ubyte)[] readBytes(string path) @trusted {
+    import std.exception : assumeUnique;
+    import std.file : read;
+
+    return assumeUnique(cast(ubyte[]) read(path));
 }

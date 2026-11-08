@@ -113,7 +113,6 @@ final class UnixController : IUnixController {
 unittest {
     import std.algorithm : canFind;
     import std.functional : toDelegate;
-    import vibe.core.core : exitEventLoop, runEventLoop, runTask;
     import vibe.data.json : parseJsonString;
 
     static class MemStore : IUserStore {
@@ -152,83 +151,76 @@ unittest {
     }
 
     // TaskLocal braucht einen Task
-    Throwable failure;
-    runTask(() nothrow {
-        try {
-            assert(controller.routePrefix == "/api/v1");
-            assert(controller.canHandle(new UnixRequest("GET", "/api/v1")));
-            assert(controller.canHandle(new UnixRequest("GET", "/api/v1/stats")));
-            assert(!controller.canHandle(new UnixRequest("GET", "/api/v1x")));
-            assert(!controller.canHandle(new UnixRequest("GET", "/admin")));
+    import uim.hdb.testing : runInEventLoop;
 
-            // Ohne Token ist nur health und die Anmeldung erreichbar
-            assert(call("GET", "/health").status == 200);
-            foreach (route; [["GET", "/tables"], ["GET", "/stats"], ["GET", "/merge"], ["POST", "/merge"], ["POST", "/checkpoint"], ["POST", "/auth/logout"]])
-                assert(call(route[0], route[1]).status == 401);
-            assert(sql("", "SELECT 1").status == 401);
-            assert(call("GET", "/tables", "forged").status == 401);
-            assert(call("POST", "/auth/login", "", `{"user":"root","password":"wrong-password"}`).status == 401);
+    auto failure = runInEventLoop({
+        assert(controller.routePrefix == "/api/v1");
+        assert(controller.canHandle(new UnixRequest("GET", "/api/v1")));
+        assert(controller.canHandle(new UnixRequest("GET", "/api/v1/stats")));
+        assert(!controller.canHandle(new UnixRequest("GET", "/api/v1x")));
+        assert(!controller.canHandle(new UnixRequest("GET", "/admin")));
 
-            auto root = login("root", "correct-horse-root");
+        // Ohne Token ist nur health und die Anmeldung erreichbar
+        assert(call("GET", "/health").status == 200);
+        foreach (route; [["GET", "/tables"], ["GET", "/stats"], ["GET", "/merge"], ["POST", "/merge"], ["POST", "/checkpoint"], ["POST", "/auth/logout"]])
+            assert(call(route[0], route[1]).status == 401);
+        assert(sql("", "SELECT 1").status == 401);
+        assert(call("GET", "/tables", "forged").status == 401);
+        assert(call("POST", "/auth/login", "", `{"user":"root","password":"wrong-password"}`).status == 401);
 
-            // Der Mandant ist optional: ohne gilt default, ein anderer Mandant kennt root nicht
-            auto withTenant = call("POST", "/auth/login", "", `{"user":"root","password":"correct-horse-root","tenant":"Default"}`);
-            assert(withTenant.status == 200 && parseJsonString(withTenant.body)["user"]["tenant"].get!string == "default");
-            assert(call("POST", "/auth/login", "", `{"user":"root","password":"correct-horse-root","tenant":"acme"}`).status == 401);
-            assert(sql(root, "CREATE TABLE t (id INTEGER, n NUMERIC)").status == 200);
-            assert(sql(root, "INSERT INTO t VALUES (1, 12345678901234567890.55)").status == 200);
-            assert(call("GET", "/tables", root).body == `["t"]`);
-            assert(call("GET", "/tables", root).headers["Content-Type"] == "application/json");
+        auto root = login("root", "correct-horse-root");
 
-            // Dieselbe Darstellung wie die REST-API: NUMERIC bleibt exakt
-            auto selected = parseJsonString(sql(root, "SELECT * FROM t").body);
-            assert(selected["columns"].length == 2 && selected["rows"][0][1].get!string == "12345678901234567890.55");
-            assert(parseJsonString(call("GET", "/stats", root).body)[0]["storage"].get!string == "MEMORY");
+        // Der Mandant ist optional: ohne gilt default, ein anderer Mandant kennt root nicht
+        auto withTenant = call("POST", "/auth/login", "", `{"user":"root","password":"correct-horse-root","tenant":"Default"}`);
+        assert(withTenant.status == 200 && parseJsonString(withTenant.body)["user"]["tenant"].get!string == "default");
+        assert(call("POST", "/auth/login", "", `{"user":"root","password":"correct-horse-root","tenant":"acme"}`).status == 401);
+        assert(sql(root, "CREATE TABLE t (id INTEGER, n NUMERIC)").status == 200);
+        assert(sql(root, "INSERT INTO t VALUES (1, 12345678901234567890.55)").status == 200);
+        assert(call("GET", "/tables", root).body == `["t"]`);
+        assert(call("GET", "/tables", root).headers["Content-Type"] == "application/json");
 
-            // Die Identität gilt nur für eine Anfrage, auch auf derselben Verbindung
-            assert(currentPrincipal() == Principal.init);
-            assert(call("GET", "/tables").status == 401);
+        // Dieselbe Darstellung wie die REST-API: NUMERIC bleibt exakt
+        auto selected = parseJsonString(sql(root, "SELECT * FROM t").body);
+        assert(selected["columns"].length == 2 && selected["rows"][0][1].get!string == "12345678901234567890.55");
+        assert(parseJsonString(call("GET", "/stats", root).body)[0]["storage"].get!string == "MEMORY");
 
-            // Rollen entscheidet der Kern
-            access.createUser(Principal("root", HdbRole.admin, true, defaultTenant), "vera", "correct-horse-vera", HdbRole.viewer);
-            auto vera = login("vera", "correct-horse-vera");
-            assert(sql(vera, "SELECT * FROM t").status == 200);
-            assert(sql(vera, "INSERT INTO t VALUES (2, 1)").status == 403);
-            assert(call("POST", "/checkpoint", vera).status == 403);
-            assert(call("POST", "/merge", vera).status == 403);
+        // Die Identität gilt nur für eine Anfrage, auch auf derselben Verbindung
+        assert(currentPrincipal() == Principal.init);
+        assert(call("GET", "/tables").status == 401);
 
-            // Transaktion über den Header, und das Feld im Body hat Vorrang
-            auto transaction = parseJsonString(sql(root, "BEGIN").body)["transaction"].get!string;
-            assert(sql(root, "INSERT INTO t VALUES (2, 1)", transaction).status == 200);
-            assert(sql(vera, "SELECT * FROM t").status == 400); // gesperrt
-            assert(sql(vera, "SELECT * FROM t", transaction).status == 403); // fremde Transaktion
-            assert(call("POST", "/sql", root, Json(["statement": Json("ROLLBACK"), "transaction": Json(transaction)]).toString,
-                "wrong").status == 200);
-            assert(parseJsonString(sql(root, "SELECT COUNT(*) FROM t").body)["rows"][0][0].get!long == 1);
+        // Rollen entscheidet der Kern
+        access.createUser(Principal("root", HdbRole.admin, true, defaultTenant), "vera", "correct-horse-vera", HdbRole.viewer);
+        auto vera = login("vera", "correct-horse-vera");
+        assert(sql(vera, "SELECT * FROM t").status == 200);
+        assert(sql(vera, "INSERT INTO t VALUES (2, 1)").status == 403);
+        assert(call("POST", "/checkpoint", vera).status == 403);
+        assert(call("POST", "/merge", vera).status == 403);
 
-            // Ungültige Eingaben
-            assert(call("POST", "/sql", root, "not json").status == 400);
-            assert(call("POST", "/sql", root, `["SELECT 1"]`).status == 400);
-            assert(call("POST", "/sql", root, `{"statement":5}`).status == 400);
-            assert(sql(root, "SELEC").status == 400);
-            auto missing = call("GET", "/nope", root);
-            assert(missing.status == 404 && parseJsonString(missing.body)["statusMessage"].get!string.canFind("/api/v1/nope"));
-            assert(call("DELETE", "/tables", root).status == 404);
+        // Transaktion über den Header, und das Feld im Body hat Vorrang
+        auto transaction = parseJsonString(sql(root, "BEGIN").body)["transaction"].get!string;
+        assert(sql(root, "INSERT INTO t VALUES (2, 1)", transaction).status == 200);
+        assert(sql(vera, "SELECT * FROM t").status == 400); // gesperrt
+        assert(sql(vera, "SELECT * FROM t", transaction).status == 403); // fremde Transaktion
+        assert(call("POST", "/sql", root, Json(["statement": Json("ROLLBACK"), "transaction": Json(transaction)]).toString,
+            "wrong").status == 200);
+        assert(parseJsonString(sql(root, "SELECT COUNT(*) FROM t").body)["rows"][0][0].get!long == 1);
 
-            assert(call("POST", "/merge", root).status == 202);
-            assert(call("GET", "/merge", root).status == 200);
-            assert(call("POST", "/checkpoint", root).status == 200);
+        // Ungültige Eingaben
+        assert(call("POST", "/sql", root, "not json").status == 400);
+        assert(call("POST", "/sql", root, `["SELECT 1"]`).status == 400);
+        assert(call("POST", "/sql", root, `{"statement":5}`).status == 400);
+        assert(sql(root, "SELEC").status == 400);
+        auto missing = call("GET", "/nope", root);
+        assert(missing.status == 404 && parseJsonString(missing.body)["statusMessage"].get!string.canFind("/api/v1/nope"));
+        assert(call("DELETE", "/tables", root).status == 404);
 
-            assert(call("POST", "/auth/logout", vera).status == 200);
-            assert(call("GET", "/tables", vera).status == 401);
-        } catch (Throwable t)
-            failure = t;
-        try
-            exitEventLoop();
-        catch (Exception) {
-        }
+        assert(call("POST", "/merge", root).status == 202);
+        assert(call("GET", "/merge", root).status == 200);
+        assert(call("POST", "/checkpoint", root).status == 200);
+
+        assert(call("POST", "/auth/logout", vera).status == 200);
+        assert(call("GET", "/tables", vera).status == 401);
     });
-    runEventLoop();
     if (failure !is null)
         throw failure;
 }

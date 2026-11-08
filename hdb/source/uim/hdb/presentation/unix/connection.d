@@ -9,7 +9,7 @@ import uim.hdb.presentation.unix.interfaces;
 import uim.hdb.presentation.unix.message;
 import std.array : appender;
 import std.conv : ConvException, to;
-import std.string : icmp, indexOf, representation, strip;
+import std.string : assumeUTF, icmp, indexOf, representation, strip;
 import std.utf : UTFException, validate;
 import vibe.core.net : TCPConnection;
 
@@ -47,12 +47,13 @@ final class UnixConnection : IUnixConnection {
         auto content = new ubyte[bodyLength];
         if (bodyLength)
             socket.read(content);
-        auto message = header.data ~ cast(string)content;
+        // Erst prüfen, dann als Text nehmen: assumeUTF bricht bei ungültigem UTF-8 mit einem assert ab
+        immutable(ubyte)[] bytes = header.data.representation ~ content.idup;
         try
-            validate(message);
+            validate(cast(const(char)[]) bytes);
         catch (UTFException)
             throw new UnixProtocolError(400, "Message is not valid UTF-8");
-        return message;
+        return assumeUTF(bytes);
     }
 
     /// Zeile mit Zeilenende. Das Limit gilt für alle Header zusammen, sonst wäre der Speicher pro Nachricht unbegrenzt.

@@ -29,8 +29,7 @@ import vibe.web.rest : registerRestInterface, RestErrorInformation, RestInterfac
 private enum long maxRowLimit = 1000;
 
 final class SystemRestApi : ISystemRestApi {
-    // vibe requires @safe, the application core (ISqlUseCase) is not
-@trusted:
+@safe:
     private ISqlUseCase sql;
 
     this(ISqlUseCase sql) {
@@ -62,8 +61,7 @@ final class SystemRestApi : ISystemRestApi {
 }
 
 final class SqlExecutionRestApi : ISqlRestApi {
-    // vibe requires @safe, the application core (ISqlUseCase) is not
-@trusted:
+@safe:
     private ISqlUseCase sql;
 
     this(ISqlUseCase sql) {
@@ -76,8 +74,7 @@ final class SqlExecutionRestApi : ISqlRestApi {
 }
 
 final class TableRestApi : ITableRestApi {
-    // vibe requires @safe, the application core (ISqlUseCase) is not
-@trusted:
+@safe:
     private ISqlUseCase sql;
 
     this(ISqlUseCase sql) {
@@ -141,8 +138,7 @@ final class AuthRestApi : IAuthRestApi {
         this.current = current;
     }
 
-    // vibe requires @safe, the application core (IAccessUseCase) is not
-@trusted:
+@safe:
     RestLogin login(string user, string password, string tenant) {
         auto r = access.login(tenant, user, password, currentClientAddress());
         return RestLogin(r.token, r.expiresInSeconds, RestUser(r.principal.name, r.principal.role, true, r.principal.tenant));
@@ -174,7 +170,7 @@ final class UserRestApi : IUserRestApi {
         this.current = current;
     }
 
-@trusted:
+@safe:
     RestUser[] list() {
         return access.listUsers(current()).map!(u => toRest(u)).array;
     }
@@ -224,7 +220,7 @@ final class TenantRestApi : ITenantRestApi {
         this.current = current;
     }
 
-@trusted:
+@safe:
     RestTenant[] list() {
         return tenants.listTenants(current()).map!(t => toRest(t)).array;
     }
@@ -256,7 +252,7 @@ final class NetworkRestApi : INetworkRestApi {
         this.current = current;
     }
 
-@trusted:
+@safe:
     RestNetworks get() {
         return RestNetworks(tenants.ownNetworks(current()), currentClientAddress());
     }
@@ -273,7 +269,7 @@ final class BackupRestApi : IBackupRestApi {
         this.backups = backups;
     }
 
-@trusted:
+@safe:
     RestBackup[] list() {
         return backups.list().map!(b => toRest(b)).array;
     }
@@ -363,7 +359,7 @@ string jsonLiteral(ColumnStats column, Json value) {
     }
 }
 
-private void writeRestError(HTTPServerResponse res, Exception e) @trusted {
+private void writeRestError(HTTPServerResponse res, Exception e) @safe {
     if (cast(AuthenticationRequired) e)
         res.statusCode = HTTPStatus.unauthorized;
     else if (cast(AccessDenied) e)
@@ -382,7 +378,7 @@ private void writeRestError(HTTPServerResponse res, Exception e) @trusted {
 void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups,
     ITenantUseCase tenants, IReplicationUseCase replication, Principal delegate() @safe current) {
     auto settings = new RestInterfaceSettings;
-    settings.errorHandler = (HTTPServerRequest req, HTTPServerResponse res, RestErrorInformation error) @trusted {
+    settings.errorHandler = (HTTPServerRequest req, HTTPServerResponse res, RestErrorInformation error) @safe {
         writeRestError(res, error.exception);
     };
     router.registerRestInterface!ISystemRestApi(new SystemRestApi(sql), settings);
@@ -425,14 +421,14 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
 /// einer Position, beides für jeden Benutzer des Mandanten. Ziel: Einstellungen und Zustand, nur für admin.
 /// Das Passwort der Quelle wird angenommen, aber nie ausgegeben.
 private void registerReplicationRoutes(URLRouter router, IReplicationUseCase replication) {
-    static void handle(HTTPServerResponse res, scope void delegate() @safe work) @trusted {
+    static void handle(HTTPServerResponse res, scope void delegate() @safe work) @safe {
         try
             work();
         catch (Exception e)
             writeRestError(res, e);
     }
 
-    router.get("/api/v1/replication/snapshot", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+    router.get("/api/v1/replication/snapshot", (HTTPServerRequest req, HTTPServerResponse res) @safe {
         handle(res, {
             auto snap = replication.replicationSnapshot();
             res.headers["X-Hdb-Epoch"] = snap.epoch;
@@ -440,7 +436,7 @@ private void registerReplicationRoutes(URLRouter router, IReplicationUseCase rep
             res.writeBody(encodeSnapshot("replication", snap.tables), "application/octet-stream");
         });
     });
-    router.get("/api/v1/replication/changes", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+    router.get("/api/v1/replication/changes", (HTTPServerRequest req, HTTPServerResponse res) @safe {
         handle(res, {
             ulong since;
             size_t limit;
@@ -452,10 +448,10 @@ private void registerReplicationRoutes(URLRouter router, IReplicationUseCase rep
             res.writeJsonBody(changeBatchJson(replication.replicationChanges(req.query.get("epoch", ""), since, limit)));
         });
     });
-    router.get("/api/v1/replication", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+    router.get("/api/v1/replication", (HTTPServerRequest req, HTTPServerResponse res) @safe {
         handle(res, { res.writeJsonBody(serializeToJson(replication.replicationStatus())); });
     });
-    router.put("/api/v1/replication/source", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+    router.put("/api/v1/replication/source", (HTTPServerRequest req, HTTPServerResponse res) @safe {
         handle(res, {
             auto j = req.json;
             enforce(j.type == Json.Type.object, "JSON object expected");
@@ -480,10 +476,10 @@ private void registerReplicationRoutes(URLRouter router, IReplicationUseCase rep
             res.writeJsonBody(serializeToJson(replication.configureReplica(config)));
         });
     });
-    router.delete_("/api/v1/replication/source", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+    router.delete_("/api/v1/replication/source", (HTTPServerRequest req, HTTPServerResponse res) @safe {
         handle(res, { res.writeJsonBody(serializeToJson(replication.stopReplica())); });
     });
-    router.post("/api/v1/replication/resync", (HTTPServerRequest req, HTTPServerResponse res) @trusted {
+    router.post("/api/v1/replication/resync", (HTTPServerRequest req, HTTPServerResponse res) @safe {
         handle(res, { res.writeJsonBody(serializeToJson(replication.resyncReplica())); });
     });
 }
@@ -497,7 +493,6 @@ unittest {
     import std.functional : toDelegate;
     import std.path : buildPath;
     import std.uuid : randomUUID;
-    import vibe.core.core : exitEventLoop, runEventLoop, runTask;
     import vibe.http.client : HTTPClientRequest;
     import vibe.http.server : HTTPServerSettings, listenHTTP;
     import vibe.web.rest : RestException, RestInterfaceClient;
@@ -548,182 +543,175 @@ unittest {
     auto listener = listenHTTP(http, router);
     auto base = "http://127.0.0.1:" ~ listener.bindAddresses[0].port.to!string ~ "/";
 
-    Throwable failure;
-    runTask(() nothrow {
-        try {
-            auto client(I)(string token) {
-                auto c = new RestInterfaceClient!I(base);
-                c.requestFilter = (HTTPClientRequest r) @safe {
-                    if (token.length)
-                        r.headers["Authorization"] = "Bearer " ~ token;
-                };
-                return c;
-            }
+    import uim.hdb.testing : runInEventLoop;
 
-            int statusOf(void delegate() @safe call) {
-                auto e = collectException!RestException(call());
-                assert(e !is null);
-                return e.status;
-            }
-
-            // Ohne Token ist nur health erreichbar
-            assert(client!ISystemRestApi("").health().status == "UP");
-            assert(statusOf({ client!ISystemRestApi("").stats(); }) == 401);
-            assert(statusOf({ client!ISqlRestApi("").execute("SELECT 1", "", ""); }) == 401);
-            assert(statusOf({ client!ITableRestApi("forged").list(); }) == 401);
-            assert(statusOf({ client!IAuthRestApi("").login("root", "wrong-password"); }) == 401);
-
-            auto token = client!IAuthRestApi("").login("root", "correct-horse-root").token;
-            auto system = client!ISystemRestApi(token);
-            auto tables = client!ITableRestApi(token);
-            auto sql = client!ISqlRestApi(token);
-            auto users = client!IUserRestApi(token);
-            assert(client!IAuthRestApi(token).me().role == "admin");
-
-            auto info = tables.create("t", [RestColumnDef("id", "integer"), RestColumnDef("n", "VARCHAR"), RestColumnDef("w", "DECIMAL")]);
-            assert(info.columns.length == 3 && info.columns[0].type == "INTEGER");
-            assert(tables.list() == ["t"]);
-
-            assert(tables.insert("t", [Json(1), Json("it's; DROP TABLE t"), Json(1234567.891)]).affected == 1);
-            assert(tables.insert("t", [Json(2), Json(null), Json(2)]).affected == 1);
-            auto page = tables.rows("t", "id >= 1", "id", true, 1, 0);
-            assert(page.total == 2 && page.rows.length == 1 && page.rows[0][0].get!long == 2 && page.rows[0][1].type == Json.Type.null_);
-            assert(tables.rows("t", "", "", false, 100, 0).rows[0][1].get!string == "it's; DROP TABLE t");
-
-            auto tx = sql.execute("BEGIN", "", "").transaction;
-            assert(tx.length);
-            sql.execute("DELETE FROM t", tx, "");
-            sql.execute("ROLLBACK", "", tx); // Id über den Header
-            assert(sql.execute("SELECT COUNT(*) FROM t", "", "").rows[0][0].get!long == 2);
-
-            int status;
-            auto merge = system.startMerge(status).status;
-            assert(status == 202 && (merge == "STARTED" || merge == "RUNNING"));
-            assert(system.checkpoint().status == "CHECKPOINTED");
-
-            assert(statusOf({ tables.info("missing"); }) == 404);
-            assert(statusOf({ sql.execute("SELECT nope FROM t", "", ""); }) == 400);
-            assert(statusOf({ tables.insert("t", [Json("x"), Json("y"), Json(1)]); }) == 400);
-            assert(statusOf({ tables.insert("t", [Json(1)]); }) == 400);
-            assert(statusOf({ tables.rows("t", "", "evil; DROP", false, 10, 0); }) == 400);
-            assert(statusOf({ tables.rows("t", "", "", false, 100_000, 0); }) == 400);
-            assert(statusOf({ tables.create("a;b", [RestColumnDef("x", "INTEGER")]); }) == 400);
-            assert(statusOf({ tables.create("b", [RestColumnDef("x", "INTEGER")], "DISK"); }) == 400);
-            // Der Mandant hat eine echte Dateiablage: FILE-Tabellen gehen
-            assert(tables.create("b", [RestColumnDef("x", "INTEGER")], "FILE").storage == "FILE");
-            assert(exists(buildPath(dataDir, "default", "tables", "file")));
-            tables.drop("b");
-
-            // Rollen über dieselben Endpunkte
-            assert(users.create("vera", "correct-horse-vera", "viewer").role == "viewer");
-            auto viewerToken = client!IAuthRestApi("").login("vera", "correct-horse-vera").token;
-            auto viewerTables = client!ITableRestApi(viewerToken);
-            assert(viewerTables.rows("t", "", "", false, 10, 0).total == 2);
-            assert(statusOf({ viewerTables.insert("t", [Json(3), Json("x"), Json(1)]); }) == 403);
-            assert(statusOf({ viewerTables.drop("t"); }) == 403);
-            assert(statusOf({ client!ISystemRestApi(viewerToken).checkpoint(); }) == 403);
-            assert(statusOf({ client!IUserRestApi(viewerToken).list(); }) == 403);
-            assert(statusOf({ client!ISqlRestApi(viewerToken).execute("DROP TABLE t", "", ""); }) == 403);
-
-            users.update("vera", "editor", true);
-            assert(viewerTables.insert("t", [Json(3), Json("x"), Json(1)]).affected == 1);
-            users.remove("vera");
-            assert(statusOf({ viewerTables.list(); }) == 401);
-            assert(statusOf({ users.remove("root"); }) == 400); // letzter Administrator
-
-            // Sicherung über dieselbe Schnittstelle, nur für Administratoren
-            auto backups = client!IBackupRestApi(token);
-            assert(statusOf({ client!IBackupRestApi(viewerToken).list(); }) == 401); // vera ist gelöscht
-            auto saved = backups.create("rest");
-            assert(saved.tables == 1 && backups.list().length == 1);
-            tables.insert("t", [Json(99), Json("später"), Json(1)]);
-            assert(backups.restore(saved.name).safetyBackup.label == "before-restore");
-            assert(tables.rows("t", "id = 99", "", false, 10, 0).total == 0);
-            assert(statusOf({ backups.restore("missing.hdbbak"); }) == 404);
-            assert(statusOf({ backups.remove("../x.hdbbak"); }) == 404);
-            assert(backups.remove(saved.name).status == "DELETED");
-
-            // RBAC über die API: eigene Rolle, Benutzer ohne Rolle, Zugriff nur auf freigegebene Tabellen
-            tables.create("hidden", [RestColumnDef("x", "INTEGER")]);
-            auto clerk = users.saveRole("clerk", ["select", "insert"], "Enters rows");
-            assert(clerk.permissions == ["select", "insert"] && !clerk.builtin);
-            assert(users.roles().map!(r => r.name).array == ["viewer", "editor", "admin", "clerk"]);
-            assert(statusOf({ users.saveRole("admin", ["select"]); }) == 400);
-            assert(statusOf({ users.saveRole("bad", ["manageTenants"]); }) == 400);
-            users.create("tina", "correct-horse-tina", "");
-            auto granted = users.setGrants("tina", [RestGrant("T", "clerk")]);
-            assert(granted.grants == [RestGrant("t", "clerk", "", "", "active")] && granted.role == "");
-            auto tinaToken = client!IAuthRestApi("").login("tina", "correct-horse-tina").token;
-            auto tinaMe = client!IAuthRestApi(tinaToken).me();
-            assert(tinaMe.permissions.length == 0 && tinaMe.tables == [RestTableAccess("t", ["select", "insert"])]);
-            auto tinaTables = client!ITableRestApi(tinaToken);
-            assert(tinaTables.list() == ["t"]); // hidden bleibt verborgen
-            assert(tinaTables.insert("t", [Json(50), Json("tina"), Json(1)]).affected == 1);
-            // verborgen wie nicht vorhanden: 404, die Existenz wird nicht verraten
-            assert(statusOf({ tinaTables.rows("hidden", "", "", false, 10, 0); }) == 404);
-            assert(statusOf({ tinaTables.rows("nothere", "", "", false, 10, 0); }) == 404);
-            assert(statusOf({ tinaTables.drop("t"); }) == 403);
-            assert(statusOf({ client!ISqlRestApi(tinaToken).execute("SELECT * FROM t JOIN hidden h ON t.id = h.x", "", ""); }) == 403);
-            assert(statusOf({ client!ISqlRestApi(tinaToken).execute("DELETE FROM t", "", ""); }) == 403);
-            assert(statusOf({ client!IUserRestApi(tinaToken).roles(); }) == 403);
-            assert(client!IAuthRestApi(token).me().permissions.length == 12); // admin: alle Mandantenrechte
-            assert(statusOf({ users.removeRole("clerk"); }) == 400); // noch verwendet
-            users.setGrants("tina", []);
-            assert(tinaTables.list().length == 0); // ohne Freigaben sieht sie nichts
-            users.remove("tina");
-            assert(users.removeRole("clerk").status == "DELETED");
-            tables.drop("hidden");
-            tables.rows("t", "id = 50", "", false, 10, 0); // die Zeile von tina ist da
-            sql.execute("DELETE FROM t WHERE id = 50", "", "");
-
-            // Mandanten: nur der Systemadministrator verwaltet sie und sieht keine Daten
-            assert(statusOf({ client!ITenantRestApi(token).list(); }) == 403);
-            auto sysToken = client!IAuthRestApi("").login("sys", "correct-horse-sys1", "system").token;
-            assert(client!IAuthRestApi(sysToken).me().tenant == "system");
-            assert(statusOf({ client!ITableRestApi(sysToken).list(); }) == 403);
-            assert(statusOf({ client!IBackupRestApi(sysToken).list(); }) == 403);
-            assert(statusOf({ client!ISqlRestApi(sysToken).execute("SELECT 1", "", ""); }) == 403);
-            auto tenantsApi = client!ITenantRestApi(sysToken);
-            auto acme = tenantsApi.create("acme", "boss", "correct-horse-acme", "Acme Corp");
-            assert(acme.name == "acme" && acme.label == "Acme Corp" && acme.active && acme.users == 1);
-            assert(tenantsApi.list().map!(t => t.name).array == ["acme", "default"]);
-            assert(statusOf({ tenantsApi.create("acme", "boss", "correct-horse-acme"); }) == 400);
-            assert(statusOf({ tenantsApi.create("../x", "boss", "correct-horse-acme"); }) == 400);
-
-            // Gleicher Tabellenname, getrennte Daten
-            auto acmeToken = client!IAuthRestApi("").login("boss", "correct-horse-acme", "ACME").token;
-            assert(client!IAuthRestApi(acmeToken).me().tenant == "acme");
-            auto acmeTables = client!ITableRestApi(acmeToken);
-            assert(acmeTables.list().length == 0);
-            acmeTables.create("t", [RestColumnDef("id", "integer")]);
-            acmeTables.insert("t", [Json(42)]);
-            assert(acmeTables.rows("t", "", "", false, 10, 0).total == 1);
-            assert(tables.rows("t", "", "", false, 10, 0).total == 3);
-            assert(client!IUserRestApi(acmeToken).list().map!(u => u.name ~ "@" ~ u.tenant).array == ["boss@acme"]);
-            assert(statusOf({ client!IUserRestApi(acmeToken).remove("root"); }) == 400); // nicht gefunden
-            assert(statusOf({ client!IAuthRestApi("").login("root", "correct-horse-root", "acme"); }) == 401);
-            assert(statusOf({ client!IAuthRestApi("").login("boss", "correct-horse-acme"); }) == 401); // default
-
-            // Deaktivieren beendet die Sitzungen, Löschen entfernt alles
-            assert(statusOf({ tenantsApi.remove("acme"); }) == 400);
-            assert(!tenantsApi.update("acme", false, "Acme Corp").active);
-            assert(statusOf({ acmeTables.list(); }) == 401);
-            assert(statusOf({ client!IAuthRestApi("").login("boss", "correct-horse-acme", "acme"); }) == 401);
-            assert(tenantsApi.remove("acme").status == "DELETED");
-            assert(!exists(buildPath(dataDir, "acme")) && tenantsApi.list().length == 1);
-            assert(statusOf({ tenantsApi.update("acme", true); }) == 400);
-
-            assert(tables.drop("t").status == "DROPPED");
-            client!IAuthRestApi(token).logout("Bearer " ~ token);
-            assert(statusOf({ tables.list(); }) == 401);
-        } catch (Throwable t)
-            failure = t;
-        try
-            exitEventLoop();
-        catch (Exception) {
+    auto failure = runInEventLoop({
+        auto client(I)(string token) {
+            auto c = new RestInterfaceClient!I(base);
+            c.requestFilter = (HTTPClientRequest r) @safe {
+                if (token.length)
+                    r.headers["Authorization"] = "Bearer " ~ token;
+            };
+            return c;
         }
+
+        int statusOf(void delegate() @safe call) {
+            auto e = collectException!RestException(call());
+            assert(e !is null);
+            return e.status;
+        }
+
+        // Ohne Token ist nur health erreichbar
+        assert(client!ISystemRestApi("").health().status == "UP");
+        assert(statusOf({ client!ISystemRestApi("").stats(); }) == 401);
+        assert(statusOf({ client!ISqlRestApi("").execute("SELECT 1", "", ""); }) == 401);
+        assert(statusOf({ client!ITableRestApi("forged").list(); }) == 401);
+        assert(statusOf({ client!IAuthRestApi("").login("root", "wrong-password"); }) == 401);
+
+        auto token = client!IAuthRestApi("").login("root", "correct-horse-root").token;
+        auto system = client!ISystemRestApi(token);
+        auto tables = client!ITableRestApi(token);
+        auto sql = client!ISqlRestApi(token);
+        auto users = client!IUserRestApi(token);
+        assert(client!IAuthRestApi(token).me().role == "admin");
+
+        auto info = tables.create("t", [RestColumnDef("id", "integer"), RestColumnDef("n", "VARCHAR"), RestColumnDef("w", "DECIMAL")]);
+        assert(info.columns.length == 3 && info.columns[0].type == "INTEGER");
+        assert(tables.list() == ["t"]);
+
+        assert(tables.insert("t", [Json(1), Json("it's; DROP TABLE t"), Json(1234567.891)]).affected == 1);
+        assert(tables.insert("t", [Json(2), Json(null), Json(2)]).affected == 1);
+        auto page = tables.rows("t", "id >= 1", "id", true, 1, 0);
+        assert(page.total == 2 && page.rows.length == 1 && page.rows[0][0].get!long == 2 && page.rows[0][1].type == Json.Type.null_);
+        assert(tables.rows("t", "", "", false, 100, 0).rows[0][1].get!string == "it's; DROP TABLE t");
+
+        auto tx = sql.execute("BEGIN", "", "").transaction;
+        assert(tx.length);
+        sql.execute("DELETE FROM t", tx, "");
+        sql.execute("ROLLBACK", "", tx); // Id über den Header
+        assert(sql.execute("SELECT COUNT(*) FROM t", "", "").rows[0][0].get!long == 2);
+
+        int status;
+        auto merge = system.startMerge(status).status;
+        assert(status == 202 && (merge == "STARTED" || merge == "RUNNING"));
+        assert(system.checkpoint().status == "CHECKPOINTED");
+
+        assert(statusOf({ tables.info("missing"); }) == 404);
+        assert(statusOf({ sql.execute("SELECT nope FROM t", "", ""); }) == 400);
+        assert(statusOf({ tables.insert("t", [Json("x"), Json("y"), Json(1)]); }) == 400);
+        assert(statusOf({ tables.insert("t", [Json(1)]); }) == 400);
+        assert(statusOf({ tables.rows("t", "", "evil; DROP", false, 10, 0); }) == 400);
+        assert(statusOf({ tables.rows("t", "", "", false, 100_000, 0); }) == 400);
+        assert(statusOf({ tables.create("a;b", [RestColumnDef("x", "INTEGER")]); }) == 400);
+        assert(statusOf({ tables.create("b", [RestColumnDef("x", "INTEGER")], "DISK"); }) == 400);
+        // Der Mandant hat eine echte Dateiablage: FILE-Tabellen gehen
+        assert(tables.create("b", [RestColumnDef("x", "INTEGER")], "FILE").storage == "FILE");
+        assert(exists(buildPath(dataDir, "default", "tables", "file")));
+        tables.drop("b");
+
+        // Rollen über dieselben Endpunkte
+        assert(users.create("vera", "correct-horse-vera", "viewer").role == "viewer");
+        auto viewerToken = client!IAuthRestApi("").login("vera", "correct-horse-vera").token;
+        auto viewerTables = client!ITableRestApi(viewerToken);
+        assert(viewerTables.rows("t", "", "", false, 10, 0).total == 2);
+        assert(statusOf({ viewerTables.insert("t", [Json(3), Json("x"), Json(1)]); }) == 403);
+        assert(statusOf({ viewerTables.drop("t"); }) == 403);
+        assert(statusOf({ client!ISystemRestApi(viewerToken).checkpoint(); }) == 403);
+        assert(statusOf({ client!IUserRestApi(viewerToken).list(); }) == 403);
+        assert(statusOf({ client!ISqlRestApi(viewerToken).execute("DROP TABLE t", "", ""); }) == 403);
+
+        users.update("vera", "editor", true);
+        assert(viewerTables.insert("t", [Json(3), Json("x"), Json(1)]).affected == 1);
+        users.remove("vera");
+        assert(statusOf({ viewerTables.list(); }) == 401);
+        assert(statusOf({ users.remove("root"); }) == 400); // letzter Administrator
+
+        // Sicherung über dieselbe Schnittstelle, nur für Administratoren
+        auto backups = client!IBackupRestApi(token);
+        assert(statusOf({ client!IBackupRestApi(viewerToken).list(); }) == 401); // vera ist gelöscht
+        auto saved = backups.create("rest");
+        assert(saved.tables == 1 && backups.list().length == 1);
+        tables.insert("t", [Json(99), Json("später"), Json(1)]);
+        assert(backups.restore(saved.name).safetyBackup.label == "before-restore");
+        assert(tables.rows("t", "id = 99", "", false, 10, 0).total == 0);
+        assert(statusOf({ backups.restore("missing.hdbbak"); }) == 404);
+        assert(statusOf({ backups.remove("../x.hdbbak"); }) == 404);
+        assert(backups.remove(saved.name).status == "DELETED");
+
+        // RBAC über die API: eigene Rolle, Benutzer ohne Rolle, Zugriff nur auf freigegebene Tabellen
+        tables.create("hidden", [RestColumnDef("x", "INTEGER")]);
+        auto clerk = users.saveRole("clerk", ["select", "insert"], "Enters rows");
+        assert(clerk.permissions == ["select", "insert"] && !clerk.builtin);
+        assert(users.roles().map!(r => r.name).array == ["viewer", "editor", "admin", "clerk"]);
+        assert(statusOf({ users.saveRole("admin", ["select"]); }) == 400);
+        assert(statusOf({ users.saveRole("bad", ["manageTenants"]); }) == 400);
+        users.create("tina", "correct-horse-tina", "");
+        auto granted = users.setGrants("tina", [RestGrant("T", "clerk")]);
+        assert(granted.grants == [RestGrant("t", "clerk", "", "", "active")] && granted.role == "");
+        auto tinaToken = client!IAuthRestApi("").login("tina", "correct-horse-tina").token;
+        auto tinaMe = client!IAuthRestApi(tinaToken).me();
+        assert(tinaMe.permissions.length == 0 && tinaMe.tables == [RestTableAccess("t", ["select", "insert"])]);
+        auto tinaTables = client!ITableRestApi(tinaToken);
+        assert(tinaTables.list() == ["t"]); // hidden bleibt verborgen
+        assert(tinaTables.insert("t", [Json(50), Json("tina"), Json(1)]).affected == 1);
+        // verborgen wie nicht vorhanden: 404, die Existenz wird nicht verraten
+        assert(statusOf({ tinaTables.rows("hidden", "", "", false, 10, 0); }) == 404);
+        assert(statusOf({ tinaTables.rows("nothere", "", "", false, 10, 0); }) == 404);
+        assert(statusOf({ tinaTables.drop("t"); }) == 403);
+        assert(statusOf({ client!ISqlRestApi(tinaToken).execute("SELECT * FROM t JOIN hidden h ON t.id = h.x", "", ""); }) == 403);
+        assert(statusOf({ client!ISqlRestApi(tinaToken).execute("DELETE FROM t", "", ""); }) == 403);
+        assert(statusOf({ client!IUserRestApi(tinaToken).roles(); }) == 403);
+        assert(client!IAuthRestApi(token).me().permissions.length == 12); // admin: alle Mandantenrechte
+        assert(statusOf({ users.removeRole("clerk"); }) == 400); // noch verwendet
+        users.setGrants("tina", []);
+        assert(tinaTables.list().length == 0); // ohne Freigaben sieht sie nichts
+        users.remove("tina");
+        assert(users.removeRole("clerk").status == "DELETED");
+        tables.drop("hidden");
+        tables.rows("t", "id = 50", "", false, 10, 0); // die Zeile von tina ist da
+        sql.execute("DELETE FROM t WHERE id = 50", "", "");
+
+        // Mandanten: nur der Systemadministrator verwaltet sie und sieht keine Daten
+        assert(statusOf({ client!ITenantRestApi(token).list(); }) == 403);
+        auto sysToken = client!IAuthRestApi("").login("sys", "correct-horse-sys1", "system").token;
+        assert(client!IAuthRestApi(sysToken).me().tenant == "system");
+        assert(statusOf({ client!ITableRestApi(sysToken).list(); }) == 403);
+        assert(statusOf({ client!IBackupRestApi(sysToken).list(); }) == 403);
+        assert(statusOf({ client!ISqlRestApi(sysToken).execute("SELECT 1", "", ""); }) == 403);
+        auto tenantsApi = client!ITenantRestApi(sysToken);
+        auto acme = tenantsApi.create("acme", "boss", "correct-horse-acme", "Acme Corp");
+        assert(acme.name == "acme" && acme.label == "Acme Corp" && acme.active && acme.users == 1);
+        assert(tenantsApi.list().map!(t => t.name).array == ["acme", "default"]);
+        assert(statusOf({ tenantsApi.create("acme", "boss", "correct-horse-acme"); }) == 400);
+        assert(statusOf({ tenantsApi.create("../x", "boss", "correct-horse-acme"); }) == 400);
+
+        // Gleicher Tabellenname, getrennte Daten
+        auto acmeToken = client!IAuthRestApi("").login("boss", "correct-horse-acme", "ACME").token;
+        assert(client!IAuthRestApi(acmeToken).me().tenant == "acme");
+        auto acmeTables = client!ITableRestApi(acmeToken);
+        assert(acmeTables.list().length == 0);
+        acmeTables.create("t", [RestColumnDef("id", "integer")]);
+        acmeTables.insert("t", [Json(42)]);
+        assert(acmeTables.rows("t", "", "", false, 10, 0).total == 1);
+        assert(tables.rows("t", "", "", false, 10, 0).total == 3);
+        assert(client!IUserRestApi(acmeToken).list().map!(u => u.name ~ "@" ~ u.tenant).array == ["boss@acme"]);
+        assert(statusOf({ client!IUserRestApi(acmeToken).remove("root"); }) == 400); // nicht gefunden
+        assert(statusOf({ client!IAuthRestApi("").login("root", "correct-horse-root", "acme"); }) == 401);
+        assert(statusOf({ client!IAuthRestApi("").login("boss", "correct-horse-acme"); }) == 401); // default
+
+        // Deaktivieren beendet die Sitzungen, Löschen entfernt alles
+        assert(statusOf({ tenantsApi.remove("acme"); }) == 400);
+        assert(!tenantsApi.update("acme", false, "Acme Corp").active);
+        assert(statusOf({ acmeTables.list(); }) == 401);
+        assert(statusOf({ client!IAuthRestApi("").login("boss", "correct-horse-acme", "acme"); }) == 401);
+        assert(tenantsApi.remove("acme").status == "DELETED");
+        assert(!exists(buildPath(dataDir, "acme")) && tenantsApi.list().length == 1);
+        assert(statusOf({ tenantsApi.update("acme", true); }) == 400);
+
+        assert(tables.drop("t").status == "DROPPED");
+        client!IAuthRestApi(token).logout("Bearer " ~ token);
+        assert(statusOf({ tables.list(); }) == 401);
     });
-    runEventLoop();
     listener.stopListening();
     if (failure !is null)
         throw failure;
@@ -737,7 +725,6 @@ unittest {
     import std.functional : toDelegate;
     import std.path : buildPath;
     import std.uuid : randomUUID;
-    import vibe.core.core : exitEventLoop, runEventLoop, runTask;
     import vibe.http.server : HTTPServerSettings, listenHTTP;
 
     static class MemUsers : IUserStore {
@@ -803,71 +790,64 @@ unittest {
         replica.listener.stopListening();
     }
 
-    Throwable failure;
-    runTask(() nothrow {
-        try {
-            auto admin = Principal("root", HdbRole.admin, true, defaultTenant);
-            // Auf der Quelle: Daten in allen Speicherarten und ein Benutzer nur zum Lesen für das Ziel
-            bindPrincipal(admin);
-            primary.databases.execute("CREATE TABLE m (id INTEGER, n VARCHAR)");
-            primary.databases.execute("CREATE TABLE f (id INTEGER) USING FILE");
-            primary.databases.execute("INSERT INTO m VALUES (1, 'it''s')");
-            primary.databases.execute("INSERT INTO f VALUES (10)");
-            primary.access.createUser(admin, "repl", "replication-pw1", HdbRole.viewer);
+    import uim.hdb.testing : runInEventLoop;
 
-            // Ein Betrachter liest den Strom, darf aber nichts einstellen
-            auto viewer = Principal("repl", HdbRole.viewer, true, defaultTenant);
-            bindPrincipal(viewer);
-            assert(primary.databases.replicationSnapshot().tables.length == 2);
-            assert(collectException!AccessDenied(primary.databases.replicationStatus()) !is null);
+    auto failure = runInEventLoop({
+        auto admin = Principal("root", HdbRole.admin, true, defaultTenant);
+        // Auf der Quelle: Daten in allen Speicherarten und ein Benutzer nur zum Lesen für das Ziel
+        bindPrincipal(admin);
+        primary.databases.execute("CREATE TABLE m (id INTEGER, n VARCHAR)");
+        primary.databases.execute("CREATE TABLE f (id INTEGER) USING FILE");
+        primary.databases.execute("INSERT INTO m VALUES (1, 'it''s')");
+        primary.databases.execute("INSERT INTO f VALUES (10)");
+        primary.access.createUser(admin, "repl", "replication-pw1", HdbRole.viewer);
 
-            // Das Ziel einrichten und abrufen
-            bindPrincipal(admin);
-            replica.databases.execute("CREATE TABLE stale (x INTEGER)"); // wird vom Stand der Quelle ersetzt
-            replica.databases.configureReplica(ReplicationConfig(true, primary.url, "", "repl", "replication-pw1", 1));
-            assert(replica.databases.replicationTick().length == 0);
-            auto status = replica.databases.replicationStatus();
-            assert(status.state == "streaming" && status.replica, status.lastError);
-            assert(replica.databases.listTables().sort.array == ["f", "m"]);
-            assert(replica.databases.execute("SELECT n FROM m").rows[0][0].get!string == "it's");
+        // Ein Betrachter liest den Strom, darf aber nichts einstellen
+        auto viewer = Principal("repl", HdbRole.viewer, true, defaultTenant);
+        bindPrincipal(viewer);
+        assert(primary.databases.replicationSnapshot().tables.length == 2);
+        assert(collectException!AccessDenied(primary.databases.replicationStatus()) !is null);
 
-            // Das Ziel ist schreibgeschützt, Lesen geht
-            assert(collectException!AccessDenied(replica.databases.execute("INSERT INTO m VALUES (2, 'x')")) !is null);
-            assert(collectException!AccessDenied(replica.databases.execute("BEGIN")) !is null);
+        // Das Ziel einrichten und abrufen
+        bindPrincipal(admin);
+        replica.databases.execute("CREATE TABLE stale (x INTEGER)"); // wird vom Stand der Quelle ersetzt
+        replica.databases.configureReplica(ReplicationConfig(true, primary.url, "", "repl", "replication-pw1", 1));
+        assert(replica.databases.replicationTick().length == 0);
+        auto status = replica.databases.replicationStatus();
+        assert(status.state == "streaming" && status.replica, status.lastError);
+        assert(replica.databases.listTables().sort.array == ["f", "m"]);
+        assert(replica.databases.execute("SELECT n FROM m").rows[0][0].get!string == "it's");
 
-            // Änderungen der Quelle kommen an, auch Transaktionen und Dateitabellen
-            primary.databases.execute("INSERT INTO m VALUES (2, 'b')");
-            auto tx = primary.databases.execute("BEGIN").transaction;
-            primary.databases.executeIn(tx, "UPDATE f SET id = 11 WHERE id = 10");
-            primary.databases.executeIn(tx, "DELETE FROM m WHERE id = 1");
-            primary.databases.executeIn(tx, "COMMIT");
-            primary.databases.execute("DROP TABLE f");
-            import core.time : seconds;
-            import vibe.core.core : sleep;
+        // Das Ziel ist schreibgeschützt, Lesen geht
+        assert(collectException!AccessDenied(replica.databases.execute("INSERT INTO m VALUES (2, 'x')")) !is null);
+        assert(collectException!AccessDenied(replica.databases.execute("BEGIN")) !is null);
 
-            sleep(1.seconds);
-            assert(replica.databases.replicationTick().length == 0);
-            assert(replica.databases.listTables() == ["m"]);
-            assert(replica.databases.execute("SELECT id FROM m").rows.map!(r => r[0].get!long).array == [2]);
-            assert(replica.databases.replicationStatus().appliedSequence == primary.databases.replicationChanges(
-                    primary.databases.replicationStatus().epoch, 0, 500).sequence);
+        // Änderungen der Quelle kommen an, auch Transaktionen und Dateitabellen
+        primary.databases.execute("INSERT INTO m VALUES (2, 'b')");
+        auto tx = primary.databases.execute("BEGIN").transaction;
+        primary.databases.executeIn(tx, "UPDATE f SET id = 11 WHERE id = 10");
+        primary.databases.executeIn(tx, "DELETE FROM m WHERE id = 1");
+        primary.databases.executeIn(tx, "COMMIT");
+        primary.databases.execute("DROP TABLE f");
+        import core.time : seconds;
+        import vibe.core.core : sleep;
 
-            // Falsches Passwort wird gemeldet; nach dem Stoppen ist das Ziel wieder beschreibbar
-            replica.databases.configureReplica(ReplicationConfig(true, primary.url, "", "repl", "wrong-password1", 1));
-            auto errors = replica.databases.replicationTick();
-            assert(errors.length == 1 && errors[0].canFind("rejected the login"), errors.join);
-            replica.databases.stopReplica();
-            replica.databases.execute("INSERT INTO m VALUES (3, 'local')");
-            assert(replica.databases.execute("SELECT COUNT(*) FROM m").rows[0][0].get!long == 2);
-            bindPrincipal(Principal.init);
-        } catch (Throwable t)
-            failure = t;
-        try
-            exitEventLoop();
-        catch (Exception) {
-        }
+        sleep(1.seconds);
+        assert(replica.databases.replicationTick().length == 0);
+        assert(replica.databases.listTables() == ["m"]);
+        assert(replica.databases.execute("SELECT id FROM m").rows.map!(r => r[0].get!long).array == [2]);
+        assert(replica.databases.replicationStatus().appliedSequence == primary.databases.replicationChanges(
+                primary.databases.replicationStatus().epoch, 0, 500).sequence);
+
+        // Falsches Passwort wird gemeldet; nach dem Stoppen ist das Ziel wieder beschreibbar
+        replica.databases.configureReplica(ReplicationConfig(true, primary.url, "", "repl", "wrong-password1", 1));
+        auto errors = replica.databases.replicationTick();
+        assert(errors.length == 1 && errors[0].canFind("rejected the login"), errors.join);
+        replica.databases.stopReplica();
+        replica.databases.execute("INSERT INTO m VALUES (3, 'local')");
+        assert(replica.databases.execute("SELECT COUNT(*) FROM m").rows[0][0].get!long == 2);
+        bindPrincipal(Principal.init);
     });
-    runEventLoop();
     if (failure !is null)
         throw failure;
 }
