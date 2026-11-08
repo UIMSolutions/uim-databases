@@ -4,8 +4,8 @@
 		<VBox class="sapUiSmallMargin">
 			<Title text="{i18n>loginTitle}" titleStyle="H3" class="sapUiSmallMarginBottom"/>
 			<MessageStrip text="{app>/loginError}" type="Error" visible="{= !!${app>/loginError} }" class="sapUiSmallMarginBottom"/>
-			<Label text="{i18n>loginTenant}" labelFor="tenant"/>
-			<Input id="tenant" value="{app>/tenant}" placeholder="{i18n>loginTenantPlaceholder}" submit=".onLogin"/>
+			<Label text="{i18n>loginTenant}" labelFor="tenant" visible="{app>/tenantLogin}"/>
+			<Input id="tenant" value="{app>/tenant}" visible="{app>/tenantLogin}" placeholder="{i18n>loginTenantPlaceholder}" submit=".onLogin"/>
 			<Label text="{i18n>loginUser}" labelFor="user" class="sapUiTinyMarginTop"/>
 			<Input id="user" submit=".onLogin"/>
 			<Label text="{i18n>loginPassword}" labelFor="password" class="sapUiTinyMarginTop"/>

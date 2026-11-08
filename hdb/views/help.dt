@@ -15,6 +15,7 @@ block content
           li: a.link(href="#statistics") Statistics
           li: a.link(href="#maintenance") Merge and checkpoint
           li: a.link(href="#transactions") Transactions
+          li: a.link(href="#procedures") Stored procedures
           li: a.link(href="#backups") Backups
 
     section#start.card.bg-base-100.shadow.scroll-mt-4
@@ -249,6 +250,27 @@ block content
           li An open transaction locks the database for everyone else. Their requests fail at once instead of waiting.
           li After 30 seconds without activity, a transaction rolls back.
           li Savepoints and nested transactions aren't supported.
+
+    section#procedures.card.bg-base-100.shadow.scroll-mt-4
+      div.card-body
+        h2.card-title Stored procedures
+        p A procedure is a named list of SQL statements with typed parameters. Manage and run procedures in the SQL Console.
+        pre.bg-base-200.rounded.p-3.text-sm.overflow-x-auto
+          | CREATE [OR REPLACE] PROCEDURE mark_paid (order_id INTEGER, who VARCHAR(40)) AS BEGIN
+          |   UPDATE orders SET paid = TRUE, customer = :who WHERE id = :order_id;
+          |   SELECT id, customer, paid FROM orders WHERE id = :order_id;
+          | END
+          | CALL mark_paid(1, 'ACME')
+          | SHOW PROCEDURES
+          | SHOW PROCEDURE mark_paid
+          | DROP PROCEDURE mark_paid
+        ul.list-disc.pl-5.space-y-1
+          li :name stands for a parameter. On CALL, the argument is checked against the parameter's type and inserted as a value. Text inside quotes is never replaced.
+          li A procedure can contain SELECT, INSERT, UPDATE, DELETE, CREATE TABLE and DROP TABLE.
+          li CALL returns the result of the last query in the procedure.
+          li Outside a transaction, a CALL is all or nothing: if a statement fails, every change is rolled back. Inside a transaction, the statements become part of it.
+          li Each statement runs with the caller's own rights. CALL and SHOW need the execute right, and creating or dropping a procedure needs manageProcedures.
+          li Procedures are saved in the statement log, in backups and in replication. Create or drop them outside a transaction.
 
     section#backups.card.bg-base-100.shadow.scroll-mt-4
       div.card-body

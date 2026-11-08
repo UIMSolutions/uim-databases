@@ -23,12 +23,27 @@ sap.ui.define([
 			this.setModel(new JSONModel({
 				authenticated: false, busy: true, user: "", role: "", userTenant: "", permissions: [], tablePermissions: {},
 				canBackups: false, canInsert: false, canUpdate: false, canDelete: false,
-				layout: "OneColumn", navKey: "home", sets: [], loginError: "", tenant: this._rememberedTenant()
+				layout: "OneColumn", navKey: "home", sets: [], loginError: "", tenant: this._rememberedTenant(),
+				tenantLogin: true
 			}), "app");
+			this._loadServerInfo();
 			this._viewsReady = new Promise(function (resolve) {
 				this.viewsLoaded = resolve;
 			}.bind(this));
 			this._restoreSession();
+		},
+
+		/** Im Einzelmandanten-Betrieb fragt die Anmeldung keinen Mandanten ab. Ohne Antwort bleibt das Feld sichtbar. */
+		_loadServerInfo: function () {
+			const app = this.getModel("app");
+			fetch("/api/v1/info").then(function (response) {
+				return response.ok ? response.json() : null;
+			}).then(function (info) {
+				if (info && info.tenantLogin === false) {
+					app.setProperty("/tenantLogin", false);
+					app.setProperty("/tenant", "");
+				}
+			}).catch(function () { });
 		},
 
 		getLanguages: function () {

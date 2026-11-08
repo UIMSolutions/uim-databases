@@ -188,6 +188,8 @@ Seitenleiste nur, was die Rechte erlauben:
 | SQL Console | wie SQL | Anweisungen mit Strg+Enter; `BEGIN` hält die Transaktion bis `COMMIT`/`ROLLBACK` |
 | Statistics | – | Speicherart und Zeilen je sichtbarer Tabelle |
 | Backups | `manageBackups` | anlegen, wiederherstellen, löschen |
+| Audit log, Event log | `viewLogs` (Einstellungen: `manageLogs`) | Einträge mit Filtern, blättern, Doppelklick zeigt den ganzen Eintrag; Settings… |
+| Application log | wie oben, nur im Bereich des Servers | technische Meldungen des Servers |
 | Users | `manageAccess` | anlegen, Rolle, aktivieren/deaktivieren, Passwort zurücksetzen, löschen |
 | Tenants | `viewTenants`/`manageTenants` | nur im Bereich `system`: Mandanten anlegen, ändern, löschen |
 
@@ -222,6 +224,102 @@ Antwort: Zeile `STATUS 200`, Header mit `Content-Length`, Leerzeile, Body. Eine 
   endet die Verbindung. Ohne Anfrage endet sie nach 5 Minuten.
 - Ein verwaister Socket nach einem Absturz wird beim Start ersetzt. Antwortet er noch oder liegt dort etwas anderes als ein
   Socket, bricht der Start ab; es wird nichts gelöscht.
+
+## Betriebsarten
+
+| Betriebsart | Start | Wofür |
+|---|---|---|
+| Eingebettet | Bibliothek, `dub build --config=library` | Datenbank im eigenen D-Programm, ohne Netz und Anmeldung |
+| Einzelmandant | `HDB_MODE=single ./hdb` | ein Server mit genau einer Datenbank, ohne Mandantenfeld und Systembereich |
+| Mehrmandanten | `./hdb` (Standard, `HDB_MODE=multi`) | ein Server mit mehreren getrennten Mandanten, siehe [Mandanten](#mandanten) |
+| Verteilt (Gateway) | `HDB_MODE=gateway ./hdb` | ein Zugang vor mehreren hdb-Servern, jeder Mandant liegt auf einem davon |
+
+`GET /api/v1/info` (ohne Anmeldung) nennt die Betriebsart, etwa `{"mode":"single","tenantLogin":false}`. Fiori-Client,
+Admin-Oberfläche und GTK-Client blenden danach das Mandantenfeld der Anmeldung aus. Ein ungültiger Wert von `HDB_MODE`
+oder eine unpassende Konfiguration beendet den Start mit Exit-Code 1.
+
+### Eingebettet
+
+Die Datenbank läuft im Prozess der Anwendung: kein HTTP, keine Benutzer und Rollen, wer die API aufruft, hat alle Rechte.
+Es braucht keine Ereignisschleife von vibe.d; der Delta-Merge läuft wie im Server in einem eigenen Thread.
+
+    // dub.sdl der Anwendung
+    dependency "hdb" path="../hdb"
+    subConfiguration "hdb" "library"
+
+```d
+import uim.hdb.embedded;
+
+auto db = HdbDatabase.open("data/mydb");     // oder HdbDatabase.inMemory()
+scope (exit) db.close();                     // schreibt den Stand weg
+db.execute("CREATE TABLE t (k INTEGER, name VARCHAR) USING FILE");
+auto tx = db.begin();
+scope (failure) tx.rollback();
+tx.execute("INSERT INTO t VALUES (1, 'a')");
+tx.commit();
+auto result = db.execute("SELECT k, name FROM t");   // QueryResult: columns, rows (Value)
+auto backup = db.backup("vor-umbau");               // auch backups(), restore(name), removeBackup(name)
+```
+
+Das Verzeichnis hat denselben Aufbau wie ein Mandant im Server (`tables/`, `hdb.log`, `backups/`): nach
+`TENANTS_DIR/<mandant>` kopiert und als Mandant angelegt, gehört es dem Server, und umgekehrt. Ein Verzeichnis darf nur
+ein Prozess gleichzeitig öffnen. `inMemory()` kennt nur Tabellen im Hauptspeicher und Sicherungen nur mit Verzeichnis
+(`inMemory("backups")`). Die Bibliothek enthält den ganzen Server-Code und hängt daher von vibe.d ab, startet aber
+nichts davon.
+
+### Einzelmandant
+
+`HDB_MODE=single` betreibt genau den Mandanten `default`:
+
+- Die Anmeldung fragt keinen Mandanten ab; eine Angabe per API wird nicht beachtet.
+- Es gibt keinen Systembereich: `sysadmin` wird nicht angelegt, Benutzer des Bereichs `system` können sich nicht anmelden.
+  Benutzer, Rollen, Tabellenfreigaben, befristete Rechte, erlaubte Netze, Sicherungen und Replikation gelten wie gewohnt.
+- Die Daten liegen wie im Mehrmandanten-Betrieb unter `data/tenants/default`. Ein Wechsel zu `HDB_MODE=multi` braucht
+  deshalb keine Umstellung. Zurück zu `single` geht es nur, solange es außer `default` keinen Mandanten gibt; sonst
+  bricht der Start mit einer Meldung ab, damit keine Daten unerreichbar werden.
+
+### Verteilt (Gateway)
+
+Das Gateway hat selbst keine Daten und keine Benutzer. Es nimmt jede Anfrage an und reicht sie an den hdb-Server
+(Backend) des Mandanten weiter; Rechte prüft das Backend wie bei einem direkten Zugriff.
+
+    HDB_MODE=gateway GATEWAY_CONFIG=data/hdb-gateway.json PORT=8080 ./hdb
+
+```json
+{
+  "backends": { "eu": "http://10.0.0.1:8080", "us": "https://us.example:8443" },
+  "tenants":  { "default": "eu", "acme": "us" },
+  "fallback": "eu"
+}
+```
+
+- **Anmeldung:** Das Gateway schickt sie an das Backend des Mandanten und gibt dessen Token mit vorangestellter Kennung
+  zurück (`us.<token>`, im Cookie der Admin-Oberfläche ebenso). Spätere Anfragen gehen anhand der Kennung an dasselbe
+  Backend, ohne die Kennung. Ein Token geht nie an ein anderes Backend: mit falscher Kennung kommt 401.
+- **Mandanten ohne Eintrag** gehen an `fallback`. Ohne `fallback` scheitert ihre Anmeldung. Von `fallback` (sonst vom
+  ersten Backend nach Namen) kommen auch die öffentlichen Seiten: Anmeldeformular, Fiori-Client.
+- **Systemadministratoren:** Jedes Backend hat seinen eigenen Systembereich. Am Gateway meldet man sich mit Mandant
+  `system@<backend>` an, etwa `system@us`; nur `system` geht an das Backend, das `tenants` oder `fallback` dafür nennt.
+- **Neuer Mandant:** Ein Systemadministrator legt ihn auf einem Backend an; danach gehört er in `tenants`, sofern er
+  nicht auf `fallback` liegt. Die Datei wird ohne Neustart neu gelesen (höchstens einmal je Sekunde); ist sie
+  fehlerhaft, gilt die bisherige weiter und das Log sagt warum.
+- **Adresse des Clients:** Das Gateway hängt sie an `X-Forwarded-For` an. Die Backends müssen das Gateway in
+  `TRUSTED_PROXIES` eintragen, sonst prüfen sie erlaubte Netze gegen die Adresse des Gateways. Der Host-Header des Clients
+  bleibt erhalten, damit die Admin-Oberfläche Formulare als gleiche Herkunft erkennt.
+- **Mandant umziehen:** Den Mandanten auf dem neuen Backend anlegen und als Replikationsziel des alten einrichten
+  (siehe [Replikation](#replikation)), nachziehen lassen, die Replikation beenden (das Ziel wird beschreibbar) und den
+  Eintrag in `tenants` ändern. Die Replikation überträgt nur Daten: Benutzer und Rollen des Mandanten müssen auf dem
+  neuen Backend angelegt werden. Bestehende Sitzungen enden mit dem Umzug.
+
+| Variable | Standard | Bedeutung |
+|---|---|---|
+| `GATEWAY_CONFIG` | `data/hdb-gateway.json` | Konfiguration wie oben |
+| `GATEWAY_CONNECT_SECONDS` | `5` | Zeit für den Verbindungsaufbau zu einem Backend |
+| `GATEWAY_READ_SECONDS` | `300` | Zeit für eine Antwort (lange Abfragen, Sicherungen) |
+| `PORT`, `MAX_REQUEST_MB` | `8080`, `256` | wie beim Server |
+
+Ist ein Backend nicht erreichbar, antwortet das Gateway mit 502. Mandanten auf anderen Backends sind davon nicht
+betroffen. Das Gateway spricht nur HTTP; Unix-Socket und Replikation laufen weiter direkt zwischen den Servern.
 
 ## Mandanten
 
@@ -278,15 +376,15 @@ Rechte werden über Rollen vergeben (RBAC), auf drei Ebenen:
 
 | Ebene | Wer | Rechte |
 |---|---|---|
-| Server | Benutzer im Bereich `system` | `viewTenants`, `manageTenants`, `manageAccess` (Systembenutzer und -rollen) |
-| Mandant | Rolle eines Benutzers, gilt für alle Tabellen | `select`, `insert`, `update`, `delete`, `drop`, `create`, `transact`, `maintain`, `manageBackups`, `replicate`, `manageReplication`, `manageAccess` |
+| Server | Benutzer im Bereich `system` | `viewTenants`, `manageTenants`, `manageAccess` (Systembenutzer und -rollen), `viewLogs`, `manageLogs` |
+| Mandant | Rolle eines Benutzers, gilt für alle Tabellen | `select`, `insert`, `update`, `delete`, `drop`, `create`, `transact`, `maintain`, `manageBackups`, `replicate`, `manageReplication`, `manageAccess`, `viewLogs`, `manageLogs`, `execute`, `manageProcedures` |
 | Tabelle | Freigabe: Rolle für eine einzelne Tabelle | davon nur `select`, `insert`, `update`, `delete`, `drop` |
 
 Vordefinierte Rollen, unveränderlich; bestehende Benutzer behalten damit ihre Rechte:
 
 | Bereich | Rolle | Rechte |
 |---|---|---|
-| Mandant | `viewer` | `select`, `replicate` |
+| Mandant | `viewer` | `select`, `replicate`, `execute` |
 | Mandant | `editor` | zusätzlich `insert`, `update`, `delete`, `transact` |
 | Mandant | `admin` | alle Mandantenrechte |
 | `system` | `viewer` | `viewTenants` |
@@ -504,6 +602,54 @@ genügt ein Benutzer mit der Rolle `viewer`:
 - Zwischen Servern im Netz nur über TLS betreiben: Zugangsdaten und Daten gehen sonst im Klartext.
 - Benutzer werden nicht repliziert, wie bei Sicherungen.
 
+## Protokolle
+
+Drei Protokolle, jedes mit eigenen Einstellungen, die Administratoren in `hdb-admin` (Seiten *Audit log*,
+*Application log*, *Event log*, Knopf *Settings…*) oder über die REST-API ändern:
+
+| Protokoll | Inhalt | Kategorien |
+|---|---|---|
+| `audit` | wer hat wann was getan, mit Adresse und Ergebnis; Fehlschläge mit Grund | `auth`, `users`, `roles`, `network`, `tenants`, `backups`, `replication`, `schema`, `data`, `maintenance`, `logs` |
+| `event` | Betriebsereignisse | `server` (Start, Ende, Ersteinrichtung), `backups` (geplante Sicherungen), `replication` (Zustandswechsel, Fehler) |
+| `application` | alles, was über `vibe.core.log` geht (auch aus vibe.d), mit dem meldenden Modul | – |
+
+- **Bereiche:** jeder Mandant hat sein eigenes Audit- und Ereignisprotokoll mit eigenen Einstellungen und sieht nur
+  diese. Der Bereich des Servers (`system`, im Einzelmandanten-Betrieb `default`) hat dazu das Anwendungsprotokoll und
+  sieht die Einträge aller Mandanten (Filter `tenant`). Einträge zu unbekannten Mandanten (etwa eine Anmeldung bei
+  einem erfundenen) landen im Bereich des Servers.
+- **Rechte:** `viewLogs` zum Lesen, `manageLogs` zum Einstellen. Beide gehören zur Rolle `admin` im Mandanten und im
+  Bereich `system` und lassen sich eigenen Rollen geben.
+- **Einstellungen je Protokoll:** an/aus, Mindestschwere (`debug`, `info`, `warning`, `error`), Aufbewahrung in Tagen
+  (1–3650), höchstens so viele Einträge (100–1 000 000) und die aufgezeichneten Kategorien. Voreinstellungen: Audit
+  365 Tage / 50 000 ohne `data`, Ereignisse 90 Tage / 20 000, Anwendung 30 Tage / 20 000 ab `info`. Kürzere
+  Aufbewahrung wirkt sofort, sonst räumt der Server stündlich auf.
+- **Immer aufgezeichnet:** Änderungen an den Protokolleinstellungen (Kategorie `logs`), auch abgelehnte und auch bei
+  abgeschaltetem Audit.
+- **Audit-Schwere:** Erfolg `info`, Misserfolg `warning`; mit Mindestschwere `warning` bleiben nur Fehlschläge.
+- **Nie im Protokoll:** Passwörter, Tokens, Werte aus Zeilen (`data` nennt nur Tabelle, Verb und Zeilenzahl), das
+  Passwort einer Replikationsquelle. `SELECT`, `BEGIN`, `COMMIT` und `ROLLBACK` werden nicht aufgezeichnet,
+  Änderungen in einer Transaktion beim Ausführen (auch wenn sie später zurückgerollt werden).
+- **Ablage:** `LOG_DIR` (Standard `data/logs`) mit `audit.jsonl`, `event.jsonl`, `application.jsonl`, ein JSON-Objekt
+  je Zeile, Rechte 0600; Einstellungen in `LOG_SETTINGS_FILE` (Standard `data/hdb-logs.json`). Eine beschädigte
+  Einstellungsdatei bricht den Start ab; unlesbare Protokollzeilen werden übersprungen. Alle Einträge liegen auch im
+  Speicher, gesucht wird dort.
+- Ein Fehler beim Schreiben eines Eintrags hält keine Aktion auf.
+
+REST (`kind` ist `audit`, `application` oder `event`):
+
+    GET /api/v1/logs                        # Protokolle der Anmeldung mit Einstellungen und Kategorien
+    GET /api/v1/logs/:kind?severity=warning&category=auth&actor=ann&text=login&tenant=acme&from=2026-11-08T00:00&until=...&limit=200&before=<id>
+    GET /api/v1/logs/:kind/settings
+    PUT /api/v1/logs/:kind/settings         # {"enabled", "minSeverity", "retentionDays", "maxEntries", "categories"}
+
+Einträge kommen neueste zuerst mit `total` (alle Treffer); weiterblättern mit `before` = kleinste Id der Seite.
+
+Aufbau: `domain/types/logentry.d` (Eintrag, Einstellungen, Kategorien), `application/services/logging.d`
+(`LogService`: Filtern nach Einstellungen, Suche, Aufbewahrung), `application/services/audit.d` (Dekoratoren um
+`IAccessUseCase`, `ITenantUseCase` und die Datenports: die Dienste selbst wissen nichts vom Audit),
+`adapters/outbound/file_log_store.d` und `adapters/inbound/application_log.d` (vibe-Logger, der Zeilen aus allen
+Threads puffert und im Hauptthread abgibt).
+
 ## Persistenz
 
 Command-Log (Write-Ahead-Log) über den Port `IStatementLog`, Adapter `FileStatementLog`.
@@ -613,6 +759,38 @@ Die ID kann statt im Header auch als Feld `"transaction"` im JSON-Body stehen.
 - Ein fehlerhaftes Statement macht die Transaktion nicht ungültig, hinterlässt aber keine Teiländerung.
 - Ohne `BEGIN` läuft jede Anweisung wie bisher als eigene Transaktion (Autocommit).
 - Keine Savepoints und keine verschachtelten Transaktionen.
+
+## Gespeicherte Prozeduren
+
+Eine Prozedur ist eine benannte Folge von SQL-Anweisungen mit typisierten Parametern. Angelegt, aufgerufen und
+angesehen wird sie mit SQL, also aus jedem Client: SQL-Konsole, `POST /api/v1/sql`, Unix-Socket, eingebettete Datenbank.
+
+    CREATE [OR REPLACE] PROCEDURE mark_paid (order_id INTEGER, who VARCHAR(40)) AS BEGIN
+      UPDATE orders SET paid = TRUE, customer = :who WHERE id = :order_id;
+      SELECT id, customer, paid FROM orders WHERE id = :order_id;
+    END
+    CALL mark_paid(1, 'ACME')
+    SHOW PROCEDURES                -- name, parameters, statements, definition
+    SHOW PROCEDURE mark_paid
+    DROP PROCEDURE mark_paid
+
+- **Parameter:** `:name` im Rumpf. Beim Aufruf wird jedes Argument gegen den Typ des Parameters geprüft (wie ein Wert in
+  `INSERT ... VALUES`) und als Literal eingesetzt; Text muss in Hochkommata stehen, `NULL` geht immer. Ausdrücke oder
+  Anweisungsteile lassen sich so nicht einschleusen. In 'Textliteralen' wird nichts ersetzt. Schon beim Anlegen wird
+  geprüft, dass jeder verwendete Parameter deklariert ist.
+- **Rumpf:** `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE TABLE`, `DROP TABLE`, getrennt durch `;`. Keine
+  Transaktionssteuerung, keine Aufrufe anderer Prozeduren, keine Variablen oder Schleifen.
+- **Ergebnis:** das der letzten Abfrage im Rumpf; `affected` zählt die geänderten Zeilen aller Anweisungen.
+- **Alles oder nichts:** Außerhalb einer Transaktion läuft ein `CALL` in einer eigenen; scheitert eine Anweisung, ist keine
+  Änderung geblieben. In einer offenen Transaktion gehören die Anweisungen zu ihr, `ROLLBACK` nimmt sie zurück.
+- **Rechte des Aufrufers:** `CALL` und `SHOW` brauchen `execute` (Rolle `viewer` und höher), Anlegen, Ersetzen und Löschen
+  `manageProcedures` (Rolle `admin`). Jede Anweisung im Rumpf prüft die Rechte und Tabellenfreigaben des Aufrufers: über
+  eine Prozedur kann niemand mehr als direkt. Das interne `BEGIN` eines Aufrufs braucht kein `transact`.
+- **Dauerhaft:** Prozeduren stehen im Anweisungsprotokoll und nach einem Checkpoint am Anfang des neuen. In Sicherungen
+  und im vollständigen Stand der Replikation stehen sie als Tabelle `hdb_procedures`; der Name ist dafür reserviert und
+  erscheint nicht in der Tabellenliste. Ein Replikationsziel erhält neue und gelöschte Prozeduren mit dem Änderungsstrom;
+  dort ist `CALL` wie jede schreibende Anweisung gesperrt, `SHOW` geht.
+- Anlegen und Löschen nur außerhalb einer Transaktion. Die Prozeduren gehören zum Mandanten.
 
 ## WHERE-Pushdown
 
