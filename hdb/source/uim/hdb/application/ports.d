@@ -332,3 +332,88 @@ interface IStatementLog {
     /// Ersetzt das gesamte Protokoll atomar (Checkpoint).
     void replaceAll(string[] statements);
 }
+
+// --- Protokolle: Audit, Anwendung, Ereignisse ---
+
+/// Was eine Aktion für das Audit-Protokoll hinterlässt. Passwörter und Werte aus Zeilen gehören nie hinein.
+struct AuditRecord {
+    string scope_; // Mandant des Handelnden; bei einer fehlgeschlagenen Anmeldung der angegebene Mandant
+    string actor;
+    string address;
+    string category; // siehe auditCategories
+    string action; // etwa login, createUser, restoreBackup
+    string target; // betroffenes Objekt: Benutzer, Tabelle, Sicherung, Mandant
+    bool success = true;
+    string message; // bei Misserfolg der Grund
+}
+
+/// Ausgehender Port der Anwendungsdienste: nimmt Audit-Einträge an. Darf nie werfen: ein volles Protokoll soll
+/// keine Anmeldung und keine Änderung verhindern.
+interface IAuditTrail {
+    void audit(AuditRecord record) nothrow;
+}
+
+/// Ausgehender Port: nimmt Betriebsereignisse an. Darf nie werfen.
+interface IEventLog {
+    void event(string scope_, string category, LogSeverity severity, string message) nothrow;
+}
+
+/// Suche in einem Protokoll. Leere Felder filtern nicht.
+struct LogQuery {
+    LogKind kind;
+    string scope_; // nur im Bereich des Servers wählbar; sonst immer der eigene Bereich
+    LogSeverity minSeverity = LogSeverity.debug_;
+    string category;
+    string actor;
+    string text; // Teilstring in Aktion, Ziel oder Meldung, ohne Groß- und Kleinschreibung
+    string from, until; // ISO 8601; from einschließlich, until ausschließlich
+    size_t limit = 200;
+    ulong before; // nur Einträge mit kleinerer Id (Blättern); 0: ab dem neuesten
+}
+
+/// Treffer, neueste zuerst. `total`: alle Treffer ohne limit und before.
+struct LogPage {
+    LogEntry[] entries;
+    size_t total;
+}
+
+/// Ein Protokoll, wie es eine Anmeldung sieht.
+struct LogInfo {
+    LogKind kind;
+    LogSettings settings;
+    bool editable; // Recht manageLogs
+}
+
+/// Eingehender Port: Protokolle lesen und einstellen. Lesen braucht viewLogs, Einstellen manageLogs. Jeder
+/// Bereich hat eigene Einstellungen; das Anwendungsprotokoll gehört dem Bereich des Servers.
+interface ILogUseCase {
+    /// Die Protokolle, die `actor` lesen darf.
+    LogInfo[] logs(Principal actor);
+    LogPage read(Principal actor, LogQuery query);
+    LogSettings settings(Principal actor, LogKind kind);
+    /// Ändert die Einstellungen des eigenen Bereichs. Wird immer im Audit-Protokoll vermerkt.
+    LogSettings configure(Principal actor, LogKind kind, LogSettings next, string address);
+}
+
+/// Ausgehender Port: Ablage der Einträge.
+interface ILogStore {
+    /// Vergibt die Id und gibt den gespeicherten Eintrag zurück.
+    LogEntry append(LogEntry entry);
+    /// Durchsucht eine Art vom neuesten zum ältesten Eintrag.
+    LogPage find(LogKind kind, scope bool delegate(ref const LogEntry) @safe match, ulong before, size_t limit);
+    /// Löscht je Bereich Einträge einer Art, die vor `cutoff` liegen oder über die neuesten `maxEntries`
+    /// hinausgehen. Gibt die Anzahl gelöschter Einträge zurück.
+    size_t prune(LogKind kind, scope LogRetention delegate(string scope_) @safe retentionOf);
+}
+
+/// Aufbewahrung eines Protokolls in einem Bereich. `cutoff` im Format von logTime.
+struct LogRetention {
+    string cutoff;
+    size_t maxEntries;
+}
+
+/// Ausgehender Port: Einstellungen der Protokolle je Bereich.
+interface ILogSettingsStore {
+    LogPolicy[string] load();
+    void save(LogPolicy[string] policies);
+}

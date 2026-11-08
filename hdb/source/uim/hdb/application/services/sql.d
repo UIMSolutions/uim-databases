@@ -31,6 +31,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private bool recovering; // beim Einspielen des Logs keine Hintergrund-Merges starten
     private IChangeSink sink; // erfährt bestätigte Änderungen (Replikation); null: niemand
     private void delegate(Permission, string) @safe authorizer; // nur während executeAuthorized gesetzt
+    private StoredProcedure[string] procedures; // Schlüssel: Name klein geschrieben
 
     /// Empfänger aller bestätigten Änderungen, für alle Speicherarten. Das Einspielen des Logs beim Start meldet nichts.
     void changeSink(IChangeSink sink) {
@@ -218,7 +219,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
             return;
         synchronized (this) {
             requireIdle();
-            string[] stmts;
+            string[] stmts = procedureDefinitions(); // Prozeduren liegen immer im Protokoll
             foreach (name; repo.list()) {
                 auto t = repo.get(name);
                 if (t.storage != TableStorage.memory)
@@ -248,6 +249,15 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
                 }
                 result ~= s;
             }
+            // Prozeduren reisen als eigene Tabelle mit: so enthalten Sicherungen und der vollständige Stand der
+            // Replikation sie, ohne dass sich deren Format ändert
+            if (procedures.length) {
+                auto p = TableSnapshot(procedureTable, TableStorage.memory,
+                    [ColumnDef("name", ColumnType.text), ColumnDef("definition", ColumnType.text)]);
+                foreach (key; procedures.keys.sort.array)
+                    p.rows ~= [Value(procedures[key].name), Value(procedures[key].definition)];
+                result ~= p;
+            }
             return result;
         }
     }
@@ -256,8 +266,17 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
         // Erst alles aufbauen und prüfen: ein Fehler hier lässt die Datenbank unberührt.
         // Der Name wird in File- und Json-Tabellen zum Dateinamen und kann aus einer hochgeladenen Datei stammen.
         ColumnTable[] fresh;
+        StoredProcedure[string] freshProcedures;
         bool[string] seen;
         foreach (s; tables) {
+            if (s.name.toLower == procedureTable) {
+                foreach (row; s.rows) {
+                    enforce(row.length == 2, "Ungültige Prozedur in " ~ procedureTable);
+                    auto p = parseCreateProcedure(row[1].get!string).procedure;
+                    freshProcedures[p.name.toLower] = p;
+                }
+                continue;
+            }
             enforce(!matchFirst(s.name, ctRegex!(`^\w+$`)).empty, "Ungültiger Tabellenname: " ~ s.name);
             enforce((s.name.toLower in seen) is null, "Tabelle ist doppelt: " ~ s.name);
             enforce(s.storage == TableStorage.memory || durable !is null, "Dieses Repository unterstützt nur MEMORY");
@@ -283,6 +302,7 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
                 if (t.storage != TableStorage.memory)
                     durable.flush(t.name);
             }
+            procedures = freshProcedures;
             checkpoint(); // das Log enthält danach genau die wiederhergestellten Speicher-Tabellen
             if (sink !is null)
                 sink.replaced();
@@ -340,6 +360,8 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
                 enforce(txId == tx.id, "Datenbank durch Transaktion " ~ tx.id ~ " gesperrt");
             else
                 enforce(txId.length == 0, "Unbekannte oder beendete Transaktion: " ~ txId);
+            if (verb == "CALL") // schreibt selbst: ins Log kommen die einzelnen Anweisungen, nicht der Aufruf
+                return callProcedure(s);
 
             immutable writes = verb == "CREATE" || verb == "DROP" || verb == "INSERT" || verb == "UPDATE" || verb == "DELETE";
             auto target = writes ? targetTable(s) : "";
@@ -450,9 +472,11 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private QueryResult run(string s) {
         switch (s.split()[0].toUpper) {
         case "CREATE":
-            return createTable(s);
+            return isProcedureStatement(s) ? defineProcedure(s) : createTable(s);
         case "DROP":
-            return dropTable(s);
+            return isProcedureStatement(s) ? dropProcedure(s) : dropTable(s);
+        case "SHOW":
+            return showProcedures(s);
         case "INSERT":
             return insertInto(s);
         case "UPDATE":
@@ -466,12 +490,94 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
         }
     }
 
+    /// CREATE [OR REPLACE] PROCEDURE. Nur außerhalb einer Transaktion: ein Rollback stellt Prozeduren nicht wieder her.
+    private QueryResult defineProcedure(string s) {
+        authorizeAccess(Permission.manageProcedures, "");
+        enforce(tx is null, "Prozeduren lassen sich nur außerhalb einer Transaktion anlegen");
+        auto d = parseCreateProcedure(s);
+        auto key = d.procedure.name.toLower;
+        immutable existed = (key in procedures) !is null;
+        enforce(d.replace || !existed, "Prozedur existiert bereits: " ~ d.procedure.name ~ " (CREATE OR REPLACE ersetzt sie)");
+        procedures[key] = d.procedure;
+        return QueryResult(null, null, 0, "Prozedur " ~ d.procedure.name ~ (existed ? " ersetzt" : " angelegt"));
+    }
+
+    private QueryResult dropProcedure(string s) {
+        authorizeAccess(Permission.manageProcedures, "");
+        enforce(tx is null, "Prozeduren lassen sich nur außerhalb einer Transaktion löschen");
+        auto name = parseDropProcedure(s);
+        enforce((name.toLower in procedures) !is null, "Prozedur nicht gefunden: " ~ name);
+        procedures.remove(name.toLower);
+        return QueryResult(null, null, 0, "Prozedur " ~ name ~ " gelöscht");
+    }
+
+    /// CALL name(...): jede Anweisung läuft mit den Rechten des Aufrufers. Außerhalb einer Transaktion bilden
+    /// alle eine eigene (alles oder nichts); in einer Transaktion gehören sie zu ihr.
+    private QueryResult callProcedure(string s) {
+        auto call = parseCall(s);
+        authorizeAccess(Permission.execute, "");
+        auto found = call.name.toLower in procedures;
+        enforce(found !is null, "Prozedur nicht gefunden: " ~ call.name);
+        auto procedure = *found;
+        auto statements = procedure.bind(call.args);
+
+        immutable own = tx is null;
+        if (own)
+            beginTx(); // intern: das Recht transact braucht der Aufrufer dafür nicht
+        auto id = tx.id;
+        QueryResult result;
+        long affected;
+        try {
+            foreach (statement; statements) {
+                auto r = executeIn(id, statement);
+                affected += r.affected;
+                if (r.columns.length || result.columns.length == 0)
+                    result = r; // das Ergebnis der letzten Abfrage
+            }
+        } catch (Exception e) {
+            if (own && tx !is null && tx.id == id)
+                undo();
+            throw e;
+        }
+        if (own)
+            commitTx();
+        result.affected = affected;
+        result.transaction = "";
+        result.message = "Prozedur " ~ procedure.name ~ " ausgeführt (" ~ statements.length.to!string ~ " Anweisung(en))";
+        return result;
+    }
+
+    /// SHOW PROCEDURES listet alle, SHOW PROCEDURE name zeigt eine mit ihrer Definition.
+    private QueryResult showProcedures(string s) {
+        auto m = matchFirst(s, ctRegex!(`^SHOW\s+PROCEDURES$|^SHOW\s+PROCEDURE\s+(\w+)$`, "i"));
+        enforce(!m.empty, "Syntax: SHOW PROCEDURES | SHOW PROCEDURE name");
+        authorizeAccess(Permission.execute, "");
+        string[] keys;
+        if (m[1].length) {
+            enforce((m[1].toLower in procedures) !is null, "Prozedur nicht gefunden: " ~ m[1]);
+            keys = [m[1].toLower];
+        } else
+            keys = procedures.keys.sort.array;
+        QueryResult r;
+        r.columns = ["name", "parameters", "statements", "definition"];
+        foreach (key; keys) {
+            auto p = procedures[key];
+            r.rows ~= [Value(p.name), Value(p.signature), Value(cast(long) p.statements.length), Value(p.definition)];
+        }
+        return r;
+    }
+
+    private string[] procedureDefinitions() {
+        return procedures.keys.sort.map!(k => procedures[k].definition).array;
+    }
+
     private QueryResult createTable(string s) {
         auto m = matchFirst(s, ctRegex!(`^CREATE\s+TABLE\s+(\w+)\s*\((.*)\)(?:\s+USING\s+(\w+))?$`, "is"));
         enforce(!m.empty, "Syntax: CREATE TABLE name (spalte TYP, ...) [USING MEMORY|FILE|JSON|BINARY|BSON]");
         authorizeAccess(Permission.create, m[1]);
         immutable storage = m[3].length ? parseStorage(m[3]) : TableStorage.memory;
         enforce(storage == TableStorage.memory || durable !is null, "Dieses Repository unterstützt nur MEMORY");
+        enforce(m[1].toLower != procedureTable, "Der Name " ~ procedureTable ~ " ist für Prozeduren reserviert");
         enforce(!repo.exists(m[1]), "Tabelle existiert bereits");
         ColumnDef[] defs;
         foreach (part; splitList(m[2])) {
@@ -1109,6 +1215,9 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
 
 /// Ersetzt den Inhalt von 'Textliteralen' Byte für Byte, damit darin stehende Schlüsselwörter wie WHERE
 /// nicht als Klauseln erkannt werden. Die Länge bleibt gleich, Treffer lassen sich aufs Original übertragen.
+/// Name, unter dem Prozeduren in Sicherungen und im vollständigen Stand der Replikation stehen.
+private enum procedureTable = "hdb_procedures";
+
 private string maskLiterals(string s) {
     auto masked = s.dup;
     bool quoted;
@@ -2841,4 +2950,99 @@ private size_t offsetWithin(const(char)[] part, const(char)[] whole) @trusted {
     enforce(part.ptr >= whole.ptr && part.ptr + part.length <= whole.ptr + whole.length,
         "Internal error: capture is not part of the statement");
     return part.ptr - whole.ptr;
+}
+
+/// Gespeicherte Prozeduren: Anlegen, Aufrufen (alles oder nichts), Rechte des Aufrufers, Protokoll, Sicherung.
+unittest {
+    import std.exception : assertThrown;
+
+    static class MemLog : IStatementLog {
+        string[] lines;
+        void append(string st) {
+            lines ~= st;
+        }
+
+        void appendAll(string[] sts) {
+            lines ~= sts;
+        }
+
+        string[] readAll() {
+            return lines.dup;
+        }
+
+        void replaceAll(string[] sts) {
+            lines = sts.dup;
+        }
+    }
+
+    auto log = new MemLog;
+    auto s = new SqlService(new MemoryTableRepository, log);
+    s.execute("CREATE TABLE acct (id INTEGER, balance DECIMAL)");
+    s.execute("INSERT INTO acct VALUES (1, 100)");
+    s.execute("INSERT INTO acct VALUES (2, 0)");
+    // UPDATE kennt keine Ausdrücke wie balance - x: der Aufrufer gibt die neuen Stände mit
+    s.execute("CREATE PROCEDURE transfer (src INTEGER, dst INTEGER, srcBalance DECIMAL, dstBalance DECIMAL) AS BEGIN
+        UPDATE acct SET balance = :srcBalance WHERE id = :src;
+        UPDATE acct SET balance = :dstBalance WHERE id = :dst;
+        SELECT id, balance FROM acct ORDER BY id;
+    END");
+    assertThrown(s.execute("CREATE PROCEDURE transfer () AS BEGIN SELECT id FROM acct END")); // gibt es schon
+    assertThrown(s.execute("CREATE TABLE hdb_procedures (a INTEGER)")); // reserviert
+
+    auto r = s.execute("CALL transfer(1, 2, 70, 30)");
+    assert(r.columns == ["id", "balance"] && r.rows.length == 2 && r.affected == 2);
+    assert(s.execute("SELECT balance FROM acct WHERE id = 2").rows[0][0].get!double == 30);
+
+    // Ein Fehler mittendrin nimmt alles zurück: die erste Änderung ist nicht mehr da
+    s.execute("CREATE OR REPLACE PROCEDURE broken (amount DECIMAL) AS BEGIN
+        UPDATE acct SET balance = :amount WHERE id = 1;
+        INSERT INTO missing VALUES (1)
+    END");
+    assertThrown(s.execute("CALL broken(10)"));
+    assert(s.execute("SELECT balance FROM acct WHERE id = 1").rows[0][0].get!double == 70);
+    assertThrown(s.execute("CALL transfer(1, 2, 3)")); // zu wenige Argumente
+    assertThrown(s.execute("CALL transfer('x', 2, 1, 1)")); // falscher Typ
+    assertThrown(s.execute("CALL nope()"));
+
+    // In einer Transaktion gehören die Anweisungen zu ihr; Prozeduren anlegen geht dort nicht
+    auto tx = s.execute("BEGIN").transaction;
+    s.executeIn(tx, "CALL transfer(1, 2, 65, 35)");
+    assertThrown(s.executeIn(tx, "DROP PROCEDURE broken"));
+    s.executeIn(tx, "ROLLBACK");
+    assert(s.execute("SELECT balance FROM acct WHERE id = 1").rows[0][0].get!double == 70);
+
+    auto shown = s.execute("SHOW PROCEDURES");
+    assert(shown.columns == ["name", "parameters", "statements", "definition"] && shown.rows.length == 2);
+    assert(s.execute("SHOW PROCEDURE transfer").rows[0][1].get!string == "src INTEGER, dst INTEGER, srcBalance DECIMAL, dstBalance DECIMAL");
+
+    // Rechte des Aufrufers: execute für CALL, und jede Anweisung prüft ihre Tabellen
+    Permission[] asked;
+    auto onlyExecute = (Permission p, string table) @safe {
+        asked ~= p;
+        enforce(p == Permission.execute || p == Permission.select, "denied " ~ permissionName(p));
+    };
+    assertThrown(s.executeAuthorized("", "CALL transfer(1, 2, 1, 1)", onlyExecute)); // UPDATE nicht erlaubt
+    assert(asked[0] == Permission.execute && asked.canFind(Permission.update) && !asked.canFind(Permission.transact));
+    assert(s.execute("SELECT balance FROM acct WHERE id = 1").rows[0][0].get!double == 70);
+    assertThrown(s.executeAuthorized("", "DROP PROCEDURE broken", onlyExecute));
+    assert(s.executeAuthorized("", "SHOW PROCEDURES", onlyExecute).rows.length == 2);
+
+    // Neustart: aus dem Protokoll, auch nach einem Checkpoint
+    s.execute("DROP PROCEDURE broken");
+    auto again = new SqlService(new MemoryTableRepository, log);
+    again.recover();
+    assert(again.execute("SHOW PROCEDURES").rows.length == 1);
+    again.checkpoint();
+    assert(log.lines[0].startsWith("CREATE PROCEDURE transfer"));
+    auto third = new SqlService(new MemoryTableRepository, log);
+    third.recover();
+    assert(third.execute("CALL transfer(2, 1, 0, 100)").rows[0][1].get!double == 100);
+
+    // Sicherung: die Prozeduren stehen als Tabelle hdb_procedures im Stand und kommen beim Wiederherstellen zurück
+    auto snap = third.snapshot();
+    assert(snap.canFind!(t => t.name == "hdb_procedures"));
+    third.execute("DROP PROCEDURE transfer");
+    third.restore(snap);
+    assert(third.execute("SHOW PROCEDURES").rows.length == 1);
+    assert(!third.listTables().canFind("hdb_procedures"));
 }

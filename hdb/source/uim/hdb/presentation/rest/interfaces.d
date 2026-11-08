@@ -205,3 +205,36 @@ interface IBackupRestApi {
     @method(HTTPMethod.DELETE) @path("/backups/:name")
     RestStatus remove(string _name);
 }
+
+/// Audit-, Anwendungs- und Ereignisprotokoll. Lesen mit viewLogs, Einstellen mit manageLogs, jeweils für den
+/// eigenen Bereich. Das Anwendungsprotokoll gibt es nur im Bereich des Servers (system, im Einzelmandanten-Betrieb
+/// default). `kind` ist audit, application oder event.
+@path("/api/v1")
+interface ILogRestApi {
+@safe:
+    /// Die Protokolle, die die Anmeldung lesen darf, mit Einstellungen und Kategorien.
+    @method(HTTPMethod.GET) @path("/logs")
+    RestLogInfo[] list();
+
+    /// Einträge, neueste zuerst. `severity`: Mindestschwere; `text` sucht in Aktion, Ziel, Kategorie und Meldung;
+    /// `from`/`until` sind ISO-Zeiten (UTC, wenn ohne Zone); `tenant` nur im Bereich system; `limit` höchstens 1000;
+    /// `before`: nur Einträge mit kleinerer Id (Blättern).
+    @method(HTTPMethod.GET) @path("/logs/:kind")
+    @queryParam("severity", "severity") @queryParam("category", "category") @queryParam("actor", "actor")
+    @queryParam("text", "text") @queryParam("tenant", "tenant") @queryParam("from", "from")
+    @queryParam("until", "until") @queryParam("limit", "limit") @queryParam("before", "before")
+    RestLogPage entries(string _kind, string severity = "", string category = "", string actor = "",
+        string text = "", string tenant = "", string from = "", string until = "", long limit = 200, long before = 0);
+
+    @method(HTTPMethod.GET) @path("/logs/:kind/settings")
+    RestLogSettings settings(string _kind);
+
+    /// Ändert die Einstellungen des eigenen Bereichs; wird immer im Audit-Protokoll vermerkt.
+    /// Kürzere Aufbewahrung wirkt sofort.
+    @method(HTTPMethod.PUT) @path("/logs/:kind/settings")
+    @bodyParam("enabled", "enabled") @bodyParam("minSeverity", "minSeverity")
+    @bodyParam("retentionDays", "retentionDays") @bodyParam("maxEntries", "maxEntries")
+    @bodyParam("categories", "categories")
+    RestLogSettings configure(string _kind, bool enabled, string minSeverity, int retentionDays, long maxEntries,
+        string[] categories = null);
+}

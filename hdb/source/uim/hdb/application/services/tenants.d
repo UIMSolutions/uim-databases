@@ -87,6 +87,7 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
         SecuredSqlUseCase sql;
         BackupService backups;
         TenantReplication replication;
+        IBackupStore backupStore; // für das Ereignisprotokoll: wann lief die letzte geplante Sicherung
     }
 
     private ITenantStorage storage;
@@ -94,6 +95,9 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
     private IReplicationClient client;
     private size_t retain;
     private Engine[string] engines;
+
+    /// Ereignisprotokoll für geplante Sicherungen und die Replikation; null: keines.
+    IEventLog events;
 
     /// `client` null: dieser Server kann Quelle sein, aber kein Ziel. `retain`: so viele Änderungen bleiben je
     /// Mandant abrufbar, ein Ziel mit größerem Rückstand holt einen vollständigen Stand.
@@ -116,7 +120,7 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
         core.changeSink(feed); // erst nach dem Einspielen: der Strom beginnt mit dem geladenen Stand
         auto configs = parts.replication !is null ? parts.replication : new MemoryReplicationConfigStore;
         engines[tenant] = Engine(new SecuredSqlUseCase(core, current), new BackupService(core, parts.backups, current),
-            new TenantReplication(core, feed, configs, client));
+            new TenantReplication(core, feed, configs, client), parts.backups);
     }
 
     bool isOpen(string tenant) {
@@ -265,8 +269,18 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
             auto e = name in engines;
             if (e is null)
                 continue;
-            if (auto error = e.replication.tick())
+            auto replication = e.replication; // tick gibt die Kontrolle ab, purge kann den Eintrag entfernen
+            immutable before = replication.status().state;
+            auto error = replication.tick();
+            if (error)
                 errors ~= name ~ ": " ~ error;
+            if (events is null)
+                continue;
+            immutable after = replication.status().state;
+            if (error)
+                events.event(name, "replication", LogSeverity.error, "Replication failed: " ~ error);
+            if (after != before && after != "error")
+                events.event(name, "replication", LogSeverity.info, "Replication state: " ~ before ~ " -> " ~ after);
         }
         return errors;
     }
@@ -278,14 +292,33 @@ final class TenantDatabases : ISqlUseCase, IBackupUseCase, IBackupScheduler, IRe
             auto e = name in engines; // purge kann während einer Sicherung laufen
             if (e is null)
                 continue;
-            try {
-                if (auto error = e.backups.tick())
-                    errors ~= name ~ ": " ~ error;
-            } catch (Exception ex)
-                errors ~= name ~ ": " ~ ex.msg;
+            auto engine = *e;
+            string error;
+            immutable lastRun = lastScheduledRun(engine);
+            try
+                error = engine.backups.tick();
+            catch (Exception ex)
+                error = ex.msg;
+            if (error)
+                errors ~= name ~ ": " ~ error;
+            if (events is null)
+                continue;
+            if (error)
+                events.event(name, "backups", LogSeverity.error, "Scheduled backup failed: " ~ error);
+            else if (lastScheduledRun(engine) != lastRun)
+                events.event(name, "backups", LogSeverity.info, "Scheduled backup created");
         }
         return errors.length ? errors.join("; ") : null;
     }
+}
+
+private string lastScheduledRun(TenantDatabases.Engine engine) {
+    if (engine.backupStore is null)
+        return "";
+    try
+        return engine.backupStore.loadSchedule().lastRun;
+    catch (Exception)
+        return "";
 }
 
 /// Mandanten anlegen, ändern und löschen (Recht manageTenants) und auflisten (viewTenants), beides nur im Bereich system.

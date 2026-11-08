@@ -119,7 +119,7 @@ void requireAuthenticated(Principal principal) {
 /// Ob eine Anweisung nur liest. Normalisiert wie SqlService.executeIn, damit beide dasselbe Verb sehen.
 bool isReadOnlyStatement(string statement) {
     auto words = statement.strip.chomp(";").strip.split();
-    return words.length == 0 || words[0].toUpper == "SELECT";
+    return words.length == 0 || words[0].toUpper == "SELECT" || words[0].toUpper == "SHOW";
 }
 
 unittest {

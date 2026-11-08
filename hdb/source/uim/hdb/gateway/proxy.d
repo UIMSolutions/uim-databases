@@ -110,7 +110,7 @@ final class GatewayProxy {
 
         proxy(table, backend, req, res, (scope HTTPClientRequest up) {
             // Ein Token geht nur an das Backend, das es ausgestellt hat
-            up.headers.remove("Authorization");
+            drop(up.headers, "Authorization");
             if (bearer.backend == backend)
                 up.headers["Authorization"] = "Bearer " ~ bearer.token;
             if (auto c = "Cookie" in up.headers) {
@@ -118,9 +118,11 @@ final class GatewayProxy {
                 if (rewritten.length)
                     up.headers["Cookie"] = rewritten;
                 else
-                    up.headers.remove("Cookie");
+                    drop(up.headers, "Cookie");
             }
-            req.bodyReader.pipe(up.bodyWriter);
+            // Ohne Rumpf bleibt bodyWriter unberührt: sonst ginge ein GET mit leerem "chunked"-Rumpf hinaus
+            if ("Content-Length" in req.headers || "Transfer-Encoding" in req.headers)
+                req.bodyReader.pipe(up.bodyWriter);
         }, null);
     }
 
@@ -144,9 +146,9 @@ final class GatewayProxy {
         auto payload = body.toString;
 
         proxy(table, target.backend, req, res, (scope HTTPClientRequest up) {
-            up.headers.remove("Authorization");
-            up.headers.remove("Cookie");
-            up.headers.remove("Content-Length");
+            drop(up.headers, "Authorization");
+            drop(up.headers, "Cookie");
+            drop(up.headers, "Content-Length");
             up.writeBody(cast(const(ubyte)[]) payload, "application/json");
         }, (scope HTTPClientResponse down) {
             auto text = cast(string) readAll(down.bodyReader).idup;
@@ -185,9 +187,9 @@ final class GatewayProxy {
         auto payload = encoded[];
 
         proxy(table, target.backend, req, res, (scope HTTPClientRequest up) {
-            up.headers.remove("Authorization");
-            up.headers.remove("Cookie");
-            up.headers.remove("Content-Length");
+            drop(up.headers, "Authorization");
+            drop(up.headers, "Cookie");
+            drop(up.headers, "Content-Length");
             up.writeBody(cast(const(ubyte)[]) payload, "application/x-www-form-urlencoded");
         }, null);
     }
@@ -229,24 +231,31 @@ final class GatewayProxy {
                 }
                 if (auto length = "Content-Length" in down.headers) {
                     auto size = (*length).to!size_t;
+                    res.headers["Content-Length"] = *length; // writeRawBody setzt die Länge nicht selbst
                     return down.readRawBody((scope InterfaceProxy!InputStream raw) {
                         res.writeRawBody(raw, size);
                     });
                 }
-                res.headers.remove("Content-Encoding"); // bodyReader liefert den entpackten Inhalt
+                drop(res.headers, "Content-Encoding"); // bodyReader liefert den entpackten Inhalt
                 down.bodyReader.pipe(res.bodyWriter);
             }, client);
         catch (Exception e) {
             if (res.headerWritten)
                 throw e; // die Antwort läuft schon: nur noch die Verbindung abbrechen
             logWarn("Gateway: Backend %s (%s) nicht erreichbar: %s", backend, table.urlOf(backend), e.msg);
-            res.headers.remove("Set-Cookie");
+            drop(res.headers, "Set-Cookie");
             reject(res, HTTPStatus.badGateway, "The database server for this tenant can't be reached");
         }
     }
 }
 
 private enum maxLoginBody = 64 * 1024;
+
+/// Entfernt eine Kopfzeile, falls vorhanden (DictionaryList.remove wirft sonst).
+private void drop(H)(ref H headers, string name) {
+    if (name in headers)
+        headers.remove(name);
+}
 
 private void reject(HTTPServerResponse res, int status, string message) {
     res.statusCode = status;

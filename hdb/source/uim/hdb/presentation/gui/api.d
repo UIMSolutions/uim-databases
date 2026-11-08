@@ -92,6 +92,55 @@ struct TenantRow {
     string[] networks;
 }
 
+/// Einstellungen eines Protokolls (audit, application oder event).
+struct LogSettingsData {
+    bool enabled = true;
+    string minSeverity = "info"; // debug, info, warning oder error
+    int retentionDays = 90;
+    long maxEntries = 20_000;
+    string[] categories;
+}
+
+/// Ein Protokoll, das die Anmeldung lesen darf.
+struct LogInfo {
+    string kind;
+    LogSettingsData settings;
+    string[] available, mandatory; // Kategorien; mandatory wird immer aufgezeichnet
+    bool editable;
+
+    /// Name für die Oberfläche.
+    string title() const {
+        switch (kind) {
+        case "audit":
+            return "Audit log";
+        case "application":
+            return "Application log";
+        case "event":
+            return "Event log";
+        default:
+            return kind;
+        }
+    }
+}
+
+struct LogRow {
+    long id;
+    string time, severity, scope_, category, actor, address, action, target, message;
+    bool success;
+}
+
+/// Suche in einem Protokoll; leere Felder filtern nicht.
+struct LogFilter {
+    string severity, category, actor, text, tenant, from, until;
+    long limit = 200;
+    long before; // Id: nur ältere Einträge (Blättern)
+}
+
+struct LogRows {
+    LogRow[] rows; // neueste zuerst
+    long total;
+}
+
 /// Antwort von /api/v1/info.
 struct ServerInfo {
     string mode = "multi";
@@ -289,6 +338,51 @@ final class HdbClient {
         call("DELETE", "/api/v1/tenants/" ~ segment(name));
     }
 
+    // Protokolle
+
+    /// Protokolle, die die Anmeldung lesen darf (Recht viewLogs).
+    LogInfo[] logs() {
+        LogInfo[] result;
+        foreach (j; call("GET", "/api/v1/logs").arrayNoRef)
+            result ~= LogInfo(j["kind"].str, toLogSettings(j["settings"]), strings(j["availableCategories"]),
+                strings(j["mandatoryCategories"]), j["editable"].boolean);
+        return result;
+    }
+
+    LogRows logEntries(string kind, LogFilter filter) {
+        auto path = format("/api/v1/logs/%s?limit=%s", segment(kind), filter.limit);
+        void param(string name, string value) {
+            if (value.strip.length)
+                path ~= "&" ~ name ~ "=" ~ encodeComponent(value.strip);
+        }
+
+        param("severity", filter.severity);
+        param("category", filter.category);
+        param("actor", filter.actor);
+        param("text", filter.text);
+        param("tenant", filter.tenant);
+        param("from", filter.from);
+        param("until", filter.until);
+        if (filter.before > 0)
+            path ~= "&before=" ~ filter.before.to!string;
+        auto j = call("GET", path);
+        LogRows result;
+        result.total = j["total"].integer;
+        foreach (e; j["entries"].arrayNoRef)
+            result.rows ~= LogRow(e["id"].integer, e["time"].str, e["severity"].str, e["scope"].str, e["category"].str,
+                e["actor"].str, e["address"].str, e["action"].str, e["target"].str, e["message"].str, e["success"].boolean);
+        return result;
+    }
+
+    LogSettingsData updateLogSettings(string kind, LogSettingsData s) {
+        JSONValue body = [
+            "enabled": JSONValue(s.enabled), "minSeverity": JSONValue(s.minSeverity),
+            "retentionDays": JSONValue(s.retentionDays), "maxEntries": JSONValue(s.maxEntries),
+            "categories": JSONValue(s.categories)
+        ];
+        return toLogSettings(call("PUT", "/api/v1/logs/" ~ segment(kind) ~ "/settings", body));
+    }
+
     /// Eine Anfrage mit JSON. Fehler des Servers werden zu ApiError mit seiner Meldung.
     private JSONValue call(string method, string path, JSONValue body = JSONValue.init, bool authenticated = true) {
         string[string] headers;
@@ -343,6 +437,11 @@ private string[] strings(JSONValue j) {
 
 private string segment(string name) {
     return encodeComponent(name);
+}
+
+private LogSettingsData toLogSettings(JSONValue j) {
+    return LogSettingsData(j["enabled"].boolean, j["minSeverity"].str, cast(int) j["retentionDays"].integer,
+        j["maxEntries"].integer, strings(j["categories"]));
 }
 
 private BackupRow toBackup(JSONValue b) {
@@ -460,6 +559,32 @@ unittest {
     auto down = new HdbClient(new Down, "http://db:8080");
     e = collectException!ApiError(down.login("", "a", "b"));
     assert(e.status == 0 && e.msg == "The server can't be reached: Connection refused");
+
+    // Protokolle
+    fake.replies["GET /api/v1/logs"] = HttpReply(200, `[{"kind":"audit","settings":{"enabled":true,"minSeverity":"info",`
+        ~ `"retentionDays":365,"maxEntries":50000,"categories":["auth","logs"]},"availableCategories":["auth","data","logs"],`
+        ~ `"mandatoryCategories":["logs"],"editable":true}]`);
+    fake.replies["GET /api/v1/logs/audit?limit=50&severity=warning&text=login%20failed&before=7"] = HttpReply(200,
+        `{"entries":[{"id":6,"time":"2026-11-08T10:00:00.000Z","severity":"warning","scope":"acme","category":"auth",`
+        ~ `"actor":"eve","address":"10.0.0.9","action":"login","target":"","success":false,"message":"Invalid"}],"total":9}`);
+    fake.replies["PUT /api/v1/logs/event/settings"] = HttpReply(200,
+        `{"enabled":false,"minSeverity":"error","retentionDays":7,"maxEntries":100,"categories":["server"]}`);
+    c.login("acme", "ann", "pw");
+    auto logs = c.logs();
+    assert(logs.length == 1 && logs[0].title == "Audit log" && logs[0].editable);
+    assert(logs[0].settings.retentionDays == 365 && logs[0].settings.categories == ["auth", "logs"]);
+    assert(logs[0].available == ["auth", "data", "logs"] && logs[0].mandatory == ["logs"]);
+    LogFilter filter;
+    filter.limit = 50;
+    filter.severity = "warning";
+    filter.text = " login failed ";
+    filter.before = 7;
+    auto found = c.logEntries("audit", filter);
+    assert(found.total == 9 && found.rows[0].actor == "eve" && !found.rows[0].success && found.rows[0].scope_ == "acme");
+    auto saved = c.updateLogSettings("event", LogSettingsData(false, "error", 7, 100, ["server"]));
+    assert(!saved.enabled && saved.maxEntries == 100);
+    assert(fake.lastBody == `{"categories":["server"],"enabled":false,"maxEntries":100,"minSeverity":"error","retentionDays":7}`,
+        fake.lastBody);
 
     // Literale statt 0.1 + 0.2: der Compiler rechnet das mit höherer Genauigkeit und erhält genau 0.3
     assert(cellText(JSONValue(0.30000000000000004)) == "0.30000000000000004");

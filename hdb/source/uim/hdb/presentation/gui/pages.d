@@ -15,6 +15,8 @@ import std.conv : to;
 import std.format : format;
 import std.string : strip;
 import gtk.Box;
+import gtk.Button;
+import gtk.ComboBoxText;
 import gtk.Entry;
 import gtk.Label;
 import gtk.ListBox;
@@ -22,6 +24,9 @@ import gtk.ListBoxRow;
 import gtk.Paned;
 import gtk.ScrolledWindow;
 import gtk.TextView;
+import gtk.TreePath;
+import gtk.TreeView;
+import gtk.TreeViewColumn;
 import gtk.Widget;
 import gtk.Window;
 import gdk.Event;
@@ -528,4 +533,274 @@ private string humanSize(long bytes) {
     if (bytes < 1024 * 1024)
         return format("%.1f KB", bytes / 1024.0);
     return format("%.1f MB", bytes / (1024.0 * 1024));
+}
+
+/// Ein Protokoll (Recht viewLogs): Filter oben, Einträge neueste zuerst, Blättern und Einstellungen (manageLogs).
+/// Ein Doppelklick auf eine Zeile zeigt den ganzen Eintrag.
+final class LogViewPage : Page {
+    private enum pageSize = 200;
+    private LogInfo info;
+    private Box box;
+    private DataGrid grid;
+    private ComboBoxText severity, category;
+    private Entry search, actor, tenant;
+    private Label status;
+    private Button newer, older;
+    private LogRow[] rows;
+    private long[] previous; // before der vorigen Seiten
+    private long before;
+    private long total;
+
+    this(HdbClient client, Window window, void delegate() signedOut, LogInfo info) {
+        super(client, window, signedOut);
+        this.info = info;
+        box = pageBox();
+
+        auto bar = toolbar();
+        severity = new ComboBoxText(false);
+        foreach (s; ["All severities", "info", "warning", "error"])
+            severity.appendText(s);
+        severity.setActive(0);
+        bar.packStart(severity, false, false, 0);
+        if (info.available.length) {
+            category = new ComboBoxText(false);
+            category.appendText("All categories");
+            foreach (c; info.available)
+                category.appendText(c);
+            category.setActive(0);
+            bar.packStart(category, false, false, 0);
+        }
+        search = filterEntry("Search text");
+        bar.packStart(search, true, true, 0);
+        if (info.kind == "audit") {
+            actor = filterEntry("User");
+            bar.packStart(actor, false, false, 0);
+        }
+        if (client.me.isSystem && info.kind != "application") {
+            tenant = filterEntry("Tenant");
+            bar.packStart(tenant, false, false, 0);
+        }
+        bar.packStart(button("Search", &restart), false, false, 0);
+        if (info.editable)
+            bar.packEnd(button("Settings…", &editSettings), false, false, 0);
+        box.packStart(bar, false, false, 0);
+
+        grid = new DataGrid();
+        grid.treeView.addOnRowActivated((TreePath, TreeViewColumn, TreeView) { showDetails(); });
+        box.packStart(grid.widget, true, true, 0);
+
+        auto bottom = toolbar();
+        status = new Label("");
+        status.setXalign(0);
+        bottom.packStart(status, true, true, 0);
+        newer = button("Newer", &showNewer);
+        older = button("Older", &showOlder);
+        bottom.packEnd(older, false, false, 0);
+        bottom.packEnd(newer, false, false, 0);
+        box.packStart(bottom, false, false, 0);
+    }
+
+    override Widget widget() {
+        return box;
+    }
+
+    override string title() {
+        return info.title;
+    }
+
+    override void refresh() {
+        run({
+            LogFilter f;
+            f.limit = pageSize;
+            f.before = before;
+            if (severity.getActive() > 0)
+                f.severity = severity.getActiveText();
+            if (category !is null && category.getActive() > 0)
+                f.category = category.getActiveText();
+            f.text = search.getText();
+            if (actor !is null)
+                f.actor = actor.getText();
+            if (tenant !is null)
+                f.tenant = tenant.getText();
+            auto found = client.logEntries(info.kind, f);
+            rows = found.rows;
+            total = found.total;
+            show();
+        });
+    }
+
+    private Entry filterEntry(string placeholder) {
+        auto e = new Entry();
+        e.setPlaceholderText(placeholder);
+        e.setWidthChars(placeholder.length > 8 ? 24 : 12);
+        e.addOnActivate((Entry _) { restart(); });
+        return e;
+    }
+
+    /// Neue Suche ab dem neuesten Eintrag.
+    private void restart() {
+        previous = null;
+        before = 0;
+        refresh();
+    }
+
+    private void showOlder() {
+        if (rows.length == 0)
+            return;
+        previous ~= before;
+        before = rows[$ - 1].id;
+        refresh();
+    }
+
+    private void showNewer() {
+        if (previous.length == 0)
+            return;
+        before = previous[$ - 1];
+        previous = previous[0 .. $ - 1];
+        refresh();
+    }
+
+    private void show() {
+        immutable withTenant = tenant !is null;
+        Grid g;
+        final switch (columnSet) {
+        case Columns.audit:
+            g.columns = ["Id", "Time (UTC)"] ~ (withTenant ? ["Tenant"] : []) ~ ["Severity", "Category", "User",
+                "Address", "Action", "Target", "Result", "Message"];
+            foreach (r; rows)
+                g.rows ~= [r.id.to!string, shortTime(r.time)] ~ (withTenant ? [r.scope_] : []) ~ [r.severity, r.category,
+                    r.actor, r.address, r.action, r.target, r.success ? "ok" : "failed", oneLine(r.message)];
+            break;
+        case Columns.event:
+            g.columns = ["Id", "Time (UTC)"] ~ (withTenant ? ["Tenant"] : []) ~ ["Severity", "Category", "Message"];
+            foreach (r; rows)
+                g.rows ~= [r.id.to!string, shortTime(r.time)] ~ (withTenant ? [r.scope_] : []) ~ [r.severity,
+                    r.category, oneLine(r.message)];
+            break;
+        case Columns.application:
+            g.columns = ["Id", "Time (UTC)", "Severity", "Source", "Message"];
+            foreach (r; rows)
+                g.rows ~= [r.id.to!string, shortTime(r.time), r.severity, r.category, oneLine(r.message)];
+            break;
+        }
+        grid.show(g);
+        immutable first = previous.length * pageSize;
+        status.setText(rows.length
+                ? format("Entries %s–%s of %s", first + 1, first + rows.length, total)
+                : (previous.length ? "No older entries" : "No entries"));
+        newer.setSensitive(previous.length > 0);
+        older.setSensitive(rows.length == pageSize && first + rows.length < total);
+    }
+
+    private enum Columns {
+        audit,
+        event,
+        application
+    }
+
+    private Columns columnSet() const {
+        return info.kind == "audit" ? Columns.audit : info.kind == "event" ? Columns.event : Columns.application;
+    }
+
+    private void showDetails() {
+        auto id = grid.selected("Id");
+        foreach (r; rows)
+            if (r.id.to!string == id)
+                return showMessage(window, details(r), false);
+    }
+
+    private string details(LogRow r) {
+        string[] lines = ["Time: " ~ r.time, "Severity: " ~ r.severity];
+        void add(string label, string value) {
+            if (value.length)
+                lines ~= label ~ ": " ~ value;
+        }
+
+        add("Tenant", r.scope_);
+        add(info.kind == "application" ? "Source" : "Category", r.category);
+        if (info.kind == "audit") {
+            add("User", r.actor);
+            add("Address", r.address);
+            add("Action", r.action);
+            add("Target", r.target);
+            lines ~= "Result: " ~ (r.success ? "ok" : "failed");
+        }
+        add("Message", r.message);
+        return lines.join("\n");
+    }
+
+    private void editSettings() {
+        auto current = info.settings;
+        auto form = new FormDialog(window, info.title ~ " settings", "Save");
+        form.flag("enabled", "Record entries", current.enabled);
+        form.choice("minSeverity", "Minimum severity", ["debug", "info", "warning", "error"], current.minSeverity);
+        form.text("retentionDays", "Keep for (days)", current.retentionDays.to!string);
+        form.text("maxEntries", "Keep at most (entries)", current.maxEntries.to!string);
+        if (info.available.length) {
+            form.note("Recorded categories:");
+            foreach (c; info.available) {
+                immutable mandatory = info.mandatory.canFind(c);
+                form.flag("cat:" ~ c, categoryLabel(info.kind, c) ~ (mandatory ? " (always recorded)" : ""),
+                    mandatory || current.categories.canFind(c));
+            }
+        }
+        if (info.kind == "audit")
+            form.note("Changes to these settings are always recorded in the audit log, even when recording is off.");
+        scope (exit)
+            form.close();
+        if (!form.run())
+            return;
+        run({
+            LogSettingsData next;
+            next.enabled = form.checked("enabled");
+            next.minSeverity = form["minSeverity"];
+            next.retentionDays = form["retentionDays"].strip.to!int;
+            next.maxEntries = form["maxEntries"].strip.to!long;
+            foreach (c; info.available)
+                if (form.checked("cat:" ~ c))
+                    next.categories ~= c;
+            info.settings = client.updateLogSettings(info.kind, next);
+            showMessage(window, info.title ~ " settings saved.", false);
+            restart();
+        });
+    }
+}
+
+/// Erklärung einer Kategorie für die Einstellungen.
+private string categoryLabel(string kind, string category) {
+    static immutable string[string] audit = [
+        "auth": "auth: sign-in, sign-out, failed sign-ins, own password",
+        "users": "users: users, password resets, grants",
+        "roles": "roles: custom roles",
+        "network": "network: allowed networks",
+        "tenants": "tenants: tenant management",
+        "backups": "backups: create, download, upload, restore, delete, schedule",
+        "replication": "replication: replica setup, full snapshots",
+        "schema": "schema: CREATE and DROP TABLE",
+        "data": "data: INSERT, UPDATE, DELETE (table and row count only)",
+        "maintenance": "maintenance: checkpoint, delta merge",
+        "logs": "logs: changes to log settings",
+    ];
+    static immutable string[string] event = [
+        "server": "server: start, stop, first-time setup",
+        "backups": "backups: scheduled backups",
+        "replication": "replication: state changes and errors",
+    ];
+    auto table = kind == "audit" ? audit : event;
+    if (auto label = category in table)
+        return *label;
+    return category;
+}
+
+/// 2026-11-08T10:00:00.123Z wird zu 2026-11-08 10:00:00.
+private string shortTime(string iso) {
+    import std.array : replace;
+
+    return iso.length >= 19 ? iso[0 .. 19].replace("T", " ") : iso;
+}
+
+private string oneLine(string text) {
+    import std.array : replace;
+
+    return text.replace("\r", " ").replace("\n", " ");
 }

@@ -9,7 +9,7 @@ import uim.hdb;
 import std.algorithm : map;
 import std.array : array;
 import vibe.data.json : Json;
-import vibe.data.serialization : optional;
+import vibe.data.serialization : optional, wireName = name;
 
 @safe:
 
@@ -201,4 +201,56 @@ RestColumnStats toRest(ColumnStats c) {
 
 RestTableInfo toRest(TableStats t) {
     return RestTableInfo(t.table, storageName(t.storage), t.rows, t.deletedRows, t.columns.map!(c => toRest(c)).array);
+}
+
+// --- Protokolle ---
+
+/// Einstellungen eines Protokolls. `categories`: aufgezeichnete Kategorien (beim Anwendungsprotokoll leer).
+struct RestLogSettings {
+    bool enabled;
+    string minSeverity; // debug, info, warning oder error
+    int retentionDays;
+    long maxEntries;
+    string[] categories;
+}
+
+/// Ein Protokoll, das die Anmeldung lesen darf.
+struct RestLogInfo {
+    string kind; // audit, application oder event
+    RestLogSettings settings;
+    string[] availableCategories;
+    string[] mandatoryCategories; // immer aufgezeichnet
+    bool editable; // Recht manageLogs
+}
+
+struct RestLogEntry {
+    long id;
+    string time; // ISO 8601 in UTC mit Millisekunden
+    string severity;
+    @wireName("scope") string scope_; // Mandant oder system
+    string category;
+    string actor, address, action, target; // nur audit
+    bool success; // nur audit
+    string message;
+}
+
+struct RestLogPage {
+    RestLogEntry[] entries; // neueste zuerst
+    long total; // Treffer insgesamt; weiterblättern mit before = kleinste Id der Seite
+}
+
+RestLogSettings toRest(LogSettings s) {
+    return RestLogSettings(s.enabled, severityName(s.minSeverity), s.retentionDays, cast(long) s.maxEntries, s.categories);
+}
+
+RestLogInfo toRest(LogInfo i) {
+    import std.array : array;
+
+    return RestLogInfo(logKindName(i.kind), toRest(i.settings), categoriesOf(i.kind).dup,
+        mandatoryCategoriesOf(i.kind).dup, i.editable);
+}
+
+RestLogEntry toRest(LogEntry e) {
+    return RestLogEntry(cast(long) e.id, e.time, severityName(e.severity), e.scope_, e.category, e.actor, e.address,
+        e.action, e.target, e.success, e.message);
 }

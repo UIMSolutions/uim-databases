@@ -2,8 +2,8 @@ module uim.hdb.presentation.rest.services;
 
 import uim.hdb.adapters.inbound.admin_web : createTableSql, isIdentifier, selectSql;
 import uim.hdb.adapters.inbound.security : bearerToken, currentClientAddress;
-import uim.hdb.application.ports : BackupNotFound, IAccessUseCase, IBackupUseCase, IReplicationUseCase, ISqlUseCase,
-    ITenantUseCase, ReplicationConfig;
+import uim.hdb.application.ports : BackupNotFound, IAccessUseCase, IBackupUseCase, ILogUseCase, IReplicationUseCase,
+    ISqlUseCase, ITenantUseCase, LogQuery, ReplicationConfig;
 import uim.hdb.adapters.outbound.replication_http : changeBatchJson;
 import uim.hdb.infrastructure.repositories.backups : encodeSnapshot;
 import uim.hdb.domain.entities.user;
@@ -296,6 +296,59 @@ final class BackupRestApi : IBackupRestApi {
     }
 }
 
+final class LogRestApi : ILogRestApi {
+    private ILogUseCase logs;
+    private Principal delegate() @safe current;
+
+    this(ILogUseCase logs, Principal delegate() @safe current) {
+        this.logs = logs;
+        this.current = current;
+    }
+
+@safe:
+    RestLogInfo[] list() {
+        return logs.logs(current()).map!(i => toRest(i)).array;
+    }
+
+    RestLogPage entries(string _kind, string severity, string category, string actor, string text, string tenant,
+        string from, string until, long limit, long before) {
+        enforce(limit >= 1 && limit <= 1000, "limit must be between 1 and 1000");
+        enforce(before >= 0, "before must not be negative");
+        LogQuery q;
+        q.kind = kindOf(_kind);
+        if (severity.length)
+            q.minSeverity = parseSeverity(severity);
+        q.category = category;
+        q.actor = actor;
+        q.text = text;
+        q.scope_ = tenant;
+        q.from = from;
+        q.until = until;
+        q.limit = cast(size_t) limit;
+        q.before = cast(ulong) before;
+        auto page = logs.read(current(), q);
+        return RestLogPage(page.entries.map!(e => toRest(e)).array, cast(long) page.total);
+    }
+
+    RestLogSettings settings(string _kind) {
+        return toRest(logs.settings(current(), kindOf(_kind)));
+    }
+
+    RestLogSettings configure(string _kind, bool enabled, string minSeverity, int retentionDays, long maxEntries,
+        string[] categories) {
+        enforce(maxEntries >= 0, "Maximum entries must not be negative");
+        auto next = LogSettings(enabled, parseSeverity(minSeverity), retentionDays, cast(size_t) maxEntries, categories);
+        return toRest(logs.configure(current(), kindOf(_kind), next, currentClientAddress()));
+    }
+
+    private static LogKind kindOf(string name) {
+        try
+            return parseLogKind(name);
+        catch (Exception e)
+            throw new HTTPStatusException(HTTPStatus.notFound, e.msg);
+    }
+}
+
 unittest {
     import std.exception : assertThrown;
 
@@ -375,8 +428,10 @@ private void writeRestError(HTTPServerResponse res, Exception e) @safe {
 
 /// Registers all REST interfaces. Input errors (invalid SQL, locked database) result in a 400
 /// as with POST /sql; the HTTPStatusException retains its status. Stack traces are not included in the response.
+/// `logs` null: ohne die Protokoll-Endpunkte.
 void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups,
-    ITenantUseCase tenants, IReplicationUseCase replication, Principal delegate() @safe current) {
+    ITenantUseCase tenants, IReplicationUseCase replication, Principal delegate() @safe current,
+    ILogUseCase logs = null) {
     auto settings = new RestInterfaceSettings;
     settings.errorHandler = (HTTPServerRequest req, HTTPServerResponse res, RestErrorInformation error) @safe {
         writeRestError(res, error.exception);
@@ -388,6 +443,8 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
     router.registerRestInterface!IUserRestApi(new UserRestApi(access, current), settings);
     router.registerRestInterface!ITenantRestApi(new TenantRestApi(tenants, current), settings);
     router.registerRestInterface!INetworkRestApi(new NetworkRestApi(tenants, current), settings);
+    if (logs !is null)
+        router.registerRestInterface!ILogRestApi(new LogRestApi(logs, current), settings);
     // Das Label ist optional, die REST-Schnittstelle verlangt aber immer einen JSON-Rumpf
     router.post("/api/v1/backups", (HTTPServerRequest req, HTTPServerResponse res) {
         if (req.headers.get("Content-Length", "0") != "0" || "Transfer-Encoding" in req.headers)
@@ -661,7 +718,7 @@ unittest {
         assert(statusOf({ client!ISqlRestApi(tinaToken).execute("SELECT * FROM t JOIN hidden h ON t.id = h.x", "", ""); }) == 403);
         assert(statusOf({ client!ISqlRestApi(tinaToken).execute("DELETE FROM t", "", ""); }) == 403);
         assert(statusOf({ client!IUserRestApi(tinaToken).roles(); }) == 403);
-        assert(client!IAuthRestApi(token).me().permissions.length == 12); // admin: alle Mandantenrechte
+        assert(client!IAuthRestApi(token).me().permissions.length == 16); // admin: alle Mandantenrechte
         assert(statusOf({ users.removeRole("clerk"); }) == 400); // noch verwendet
         users.setGrants("tina", []);
         assert(tinaTables.list().length == 0); // ohne Freigaben sieht sie nichts

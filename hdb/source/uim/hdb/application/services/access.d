@@ -317,7 +317,7 @@ final class AccessService : IAccessUseCase, ITenantAccounts {
             enforce(b.name != normalized, "Built-in roles can't be changed: " ~ normalized);
         auto set = PermissionSet.parse(permissions);
         enforce(set.subsetOf(allowedPermissions(actor.tenant)), actor.tenant == systemTenant
-                ? "System roles can only contain viewTenants, manageTenants and manageAccess"
+                ? "System roles can only contain viewTenants, manageTenants, manageAccess, viewLogs and manageLogs"
                 : "Tenant roles can't contain viewTenants or manageTenants");
         enforce(description.strip.length <= 200, "Role descriptions have at most 200 characters");
         auto role = RoleDef(actor.tenant, normalized, description.strip, set, false);

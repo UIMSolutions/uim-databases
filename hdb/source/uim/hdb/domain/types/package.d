@@ -10,6 +10,7 @@ public:
     import uim.hdb.domain.types.columnstats;
     import uim.hdb.domain.types.columnview;
     import uim.hdb.domain.types.exact;
+    import uim.hdb.domain.types.logentry;
     import uim.hdb.domain.types.mergestatus;
     import uim.hdb.domain.types.network;
     import uim.hdb.domain.types.packed_vector;

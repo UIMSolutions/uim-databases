@@ -11,12 +11,12 @@ import uim.hdb.gateway : GatewayConfigFile, GatewayProxy;
 /// Composition Root: einziger Ort, an dem Adapter und Kern verdrahtet werden.
 /// HDB_MODE wählt die Betriebsart: multi (Standard), single oder gateway. Eingebettet ist keine Betriebsart des
 /// Servers, sondern die Bibliothek (dub build --config=library, Modul uim.hdb.embedded).
-void main() @safe {
+int main() @safe {
     ServerMode mode;
     try
         mode = parseServerMode(environment.get("HDB_MODE", ""));
     catch (Exception e)
-        return logError("%s", e.msg);
+        return fail("%s", e.msg);
     if (mode == ServerMode.gateway)
         return runGateway();
     immutable single = mode == ServerMode.single;
@@ -27,6 +27,24 @@ void main() @safe {
     immutable migrated = migrateLegacyData(tenantsDir, environment.get("TABLES_DIR", "data/tables"),
         environment.get("DATA_FILE", "data/hdb.log"), environment.get("BACKUP_DIR", "data/backups"));
     auto registry = new TenantRegistry(new FileTenantStore(environment.get("TENANTS_FILE", "data/hdb-tenants.json")));
+
+    // Protokolle: Audit, Anwendung, Ereignisse. Einträge unter LOG_DIR, Einstellungen je Bereich in
+    // LOG_SETTINGS_FILE; beides ändern Administratoren mit manageLogs über die API und hdb-admin.
+    // Das Anwendungsprotokoll gehört dem Bereich des Servers: system, im Einzelmandanten-Betrieb default.
+    immutable serverScope = single ? defaultTenant : systemTenant;
+    LogService logs;
+    try
+        logs = new LogService(new FileLogStore(environment.get("LOG_DIR", "data/logs")),
+            new FileLogSettingsStore(environment.get("LOG_SETTINGS_FILE", "data/hdb-logs.json")), serverScope,
+            (string s) => s == systemTenant || registry.has(s));
+    catch (Exception e)
+        return fail("Protokolle nicht lesbar: %s", e.msg);
+    auto capture = new ApplicationLogCapture(logs);
+    capture.start();
+    scope (exit)
+        capture.stop();
+    if (migrated)
+        logs.event(serverScope, "server", LogSeverity.info, "Data from before tenants moved to the tenant " ~ defaultTenant);
     auto userStore = new FileUserStore(environment.get("USERS_FILE", "data/hdb-users.json"));
     // default entsteht beim ersten Start und bei der Umstellung, wenn es bisherige Daten oder Benutzer gibt
     // (Benutzer ohne Mandant gehören zu default, siehe FileUserStore). Wurde er gelöscht, bleibt er weg.
@@ -39,7 +57,7 @@ void main() @safe {
         // Zurück von mehreren Mandanten nur ohne weitere Mandanten: deren Daten wären sonst nicht mehr erreichbar
         auto others = registry.all().filter!(t => t.name != defaultTenant).map!(t => t.name).array;
         if (others.length)
-            return logError("HDB_MODE=single needs a server with only the tenant '%s', but there are also: %s. "
+            return fail("HDB_MODE=single needs a server with only the tenant '%s', but there are also: %s. "
                 ~ "Move or delete these tenants first, or run with HDB_MODE=multi.", defaultTenant, others.join(", "));
     }
 
@@ -48,6 +66,9 @@ void main() @safe {
     auto access = new AccessService(userStore, new OpensslCredentialCrypto, null, &registry.isActive,
         new FileRoleStore(environment.get("ROLES_FILE", "data/hdb-roles.json")), null, &registry.networks);
     void announce(string tenant, string name, string generated) {
+        if (generated.length) // ohne das Passwort: das steht nur in der Konsolenausgabe
+            logs.event(serverScope, "server", LogSeverity.warning, "Initial administrator '" ~ name
+                    ~ "' created in tenant '" ~ tenant ~ "' with a generated password");
         if (generated.length)
             logWarn("Erster Start: Benutzer '%s' im Mandanten '%s' mit Passwort '%s' angelegt. Bitte unter /admin/account ändern.",
                 name, tenant, generated);
@@ -75,9 +96,18 @@ void main() @safe {
         environment.get("REPLICATION_RETAIN", "10000").to!size_t);
     foreach (t; registry.all())
         databases.open(t.name); // Zustand aus dem Protokoll wiederherstellen, bevor HTTP startet
-    auto tenants = new TenantService(registry, access, databases, storage);
-    ISqlUseCase secured = databases;
-    IBackupUseCase backups = databases;
+    databases.events = logs;
+    auto tenantService = new TenantService(registry, access, databases, storage);
+
+    // Audit: alle eingehenden Adapter bekommen die aufzeichnenden Ports, damit jede Aktion auf jedem Weg
+    // (REST, Admin-Oberfläche, OData, Unix-Socket) gleich erfasst wird. Die Zeitgeber nutzen databases direkt.
+    auto principalOf = toDelegate(&currentPrincipal);
+    auto addressOf = toDelegate(&currentClientAddress);
+    auto audited = new AuditedDatabases(databases, databases, databases, logs, principalOf, addressOf);
+    IAccessUseCase auditedAccess = new AuditedAccess(access, logs, principalOf, addressOf);
+    ITenantUseCase tenants = new AuditedTenants(tenantService, logs, addressOf);
+    ISqlUseCase secured = audited;
+    IBackupUseCase backups = audited;
 
     // Fällige Sicherungen anlegen; der Takt legt nur fest, wie schnell eine fällige Sicherung bemerkt wird
     setTimer(environment.get("BACKUP_TICK_SECONDS", "60").to!long.seconds, () nothrow{
@@ -111,6 +141,21 @@ void main() @safe {
         }
     }, true);
 
+    // Aufbewahrung der Protokolle: beim Start und dann stündlich
+    void pruneLogs() nothrow {
+        try
+            logs.maintain();
+        catch (Exception e) {
+            try
+                logWarn("Aufräumen der Protokolle fehlgeschlagen: %s", e.msg);
+            catch (Exception) {
+            }
+        }
+    }
+
+    pruneLogs();
+    setTimer(1.hours, &pruneLogs, true);
+
     auto router = new URLRouter;
     // X-Forwarded-For zählt nur von diesen Proxys (durch Komma getrennt, Adressen oder Netze); ohne die Variable
     // gilt die Adresse der Verbindung
@@ -118,9 +163,9 @@ void main() @safe {
     new SecurityGate(access, trustedProxies).register(router); // muss vor allen anderen Routen stehen
     registerServerInfo(router, mode);
     new SqlRestApi(secured).register(router);
-    registerHdbRestApi(router, secured, access, backups, tenants, databases, toDelegate(&currentPrincipal));
+    registerHdbRestApi(router, secured, auditedAccess, backups, tenants, audited, principalOf, logs);
     new ODataController(secured).register(router);
-    auto adminUi = new SqlAdminUi(secured, access, backups, tenants, databases);
+    auto adminUi = new SqlAdminUi(secured, auditedAccess, backups, tenants, audited);
     adminUi.singleTenant = single;
     adminUi.register(router);
 
@@ -133,21 +178,25 @@ void main() @safe {
 
     listenHTTP(serverSettings(), router);
     logInfo("Betriebsart: %s", modeName(mode));
+    logs.event(serverScope, "server", LogSeverity.info, "Server started (mode " ~ modeName(mode) ~ ", "
+            ~ registry.all().length.to!string ~ " tenants)");
 
     // Optional: lokale Clients ohne TCP. Anmeldung und Rollen gelten wie über HTTP
     UnixServer unixServer;
     auto socketPath = environment.get("UNIX_SOCKET", "");
     if (socketPath.length) {
         unixServer = new UnixServer(socketPath, [
-                new UnixController(secured, access)
+                new UnixController(secured, auditedAccess)
             ]);
         unixServer.start();
     }
 
-    runApplication();
+    immutable status = runApplication();
 
     if (unixServer !is null)
         unixServer.stop();
+    logs.event(serverScope, "server", LogSeverity.info, "Server stopped");
+    return status;
 }
 
 private HTTPServerSettings serverSettings() @safe {
@@ -161,18 +210,24 @@ private HTTPServerSettings serverSettings() @safe {
 /// Verteilter Betrieb: dieser Prozess hat keine Daten und keine Benutzer, er leitet jede Anfrage an den hdb-Server
 /// des Mandanten weiter (GATEWAY_CONFIG, siehe uim.hdb.gateway.routes). Die Backends sollten das Gateway in
 /// TRUSTED_PROXIES eintragen, sonst gelten deren erlaubte Netze für die Adresse des Gateways.
-private void runGateway() @safe {
+private int runGateway() @safe {
     auto path = environment.get("GATEWAY_CONFIG", "data/hdb-gateway.json");
     GatewayConfigFile config;
     try
         config = new GatewayConfigFile(path);
     catch (Exception e)
-        return logError("Gateway: Konfiguration %s nicht lesbar: %s", path, e.msg);
+        return fail("Gateway: Konfiguration %s nicht lesbar: %s", path, e.msg);
     auto router = new URLRouter;
     registerServerInfo(router, ServerMode.gateway);
     new GatewayProxy(&config.current, environment.get("GATEWAY_CONNECT_SECONDS", "5").to!long.seconds,
         environment.get("GATEWAY_READ_SECONDS", "300").to!long.seconds).register(router);
     listenHTTP(serverSettings(), router);
     logInfo("Betriebsart: gateway, Backends: %s", config.current().backendIds);
-    runApplication();
+    return runApplication();
+}
+
+/// Startfehler: Meldung ins Log, Exit-Code 1 (für systemd, Docker und Skripte).
+private int fail(Args...)(string format, Args args) @safe {
+    logError(format, args);
+    return 1;
 }

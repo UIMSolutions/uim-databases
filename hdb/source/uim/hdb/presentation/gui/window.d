@@ -77,6 +77,16 @@ final class AdminWindow : MainWindow {
         }
         if (me.can("manageAccess"))
             list ~= new UsersPage(client, this, expired);
+        if (me.can("viewLogs")) {
+            // Ältere Server kennen die Protokolle nicht (404): dann fehlen nur diese Seiten
+            try
+                foreach (info; client.logs())
+                    list ~= new LogViewPage(client, this, expired, info);
+            catch (ApiError e) {
+                if (e.status != 404)
+                    showMessage(this, "The logs can't be loaded: " ~ e.msg);
+            }
+        }
 
         stack = new Stack();
         foreach (page; list) {

@@ -19,8 +19,9 @@ import std.string : strip, toLower;
 /// Einzelnes Recht. Rollen sind Mengen davon.
 ///
 /// Drei Ebenen:
-///   Server (Rollen im Bereich system):  viewTenants, manageTenants, manageAccess
-///   Mandant (Rolle eines Benutzers):     alle Datenrechte und create, transact, maintain, manage*, replicate
+///   Server (Rollen im Bereich system):  viewTenants, manageTenants, manageAccess, viewLogs, manageLogs
+///   Mandant (Rolle eines Benutzers):     alle Datenrechte und create, transact, maintain, manage*, replicate, *Logs,
+///                                        execute
 ///   Tabelle (Freigabe einer Rolle):      nur select, insert, update, delete, drop
 enum Permission {
     select, /// SELECT auf einer Tabelle; sieht die Tabelle in Listen und Statistik
@@ -37,6 +38,10 @@ enum Permission {
     manageAccess, /// Benutzer, Rollen und Tabellenfreigaben verwalten (im Bereich system: Systembenutzer)
     viewTenants, /// Mandantenliste lesen (nur Bereich system)
     manageTenants, /// Mandanten anlegen, ändern, löschen (nur Bereich system)
+    viewLogs, /// Audit- und Ereignisprotokoll des Bereichs lesen; im Bereich des Servers auch das Anwendungsprotokoll
+    manageLogs, /// Einstellungen der Protokolle des Bereichs ändern
+    execute, /// gespeicherte Prozeduren aufrufen (CALL) und ansehen (SHOW PROCEDURE); jede Anweisung darin prüft die eigenen Rechte
+    manageProcedures, /// gespeicherte Prozeduren anlegen, ersetzen und löschen
 }
 
 /// Name eines Rechts in APIs und Dateien.
@@ -60,12 +65,13 @@ enum PermissionSet tablePermissions = PermissionSet.of(Permission.select, Permis
 
 /// Rechte, die im Bereich system gelten.
 enum PermissionSet serverPermissions = PermissionSet.of(Permission.viewTenants, Permission.manageTenants,
-        Permission.manageAccess);
+        Permission.manageAccess, Permission.viewLogs, Permission.manageLogs);
 
 /// Rechte, die in einem Mandanten gelten.
 enum PermissionSet tenantPermissions = PermissionSet.of(Permission.select, Permission.insert, Permission.update,
         Permission.delete_, Permission.drop, Permission.create, Permission.transact, Permission.maintain,
-        Permission.manageBackups, Permission.replicate, Permission.manageReplication, Permission.manageAccess);
+        Permission.manageBackups, Permission.replicate, Permission.manageReplication, Permission.manageAccess,
+        Permission.viewLogs, Permission.manageLogs, Permission.execute, Permission.manageProcedures);
 
 /// Menge von Rechten.
 struct PermissionSet {
@@ -182,7 +188,7 @@ RoleDef[] builtinRoles(string tenant) {
             RoleDef(tenant, "viewer", "Reads the tenant list", PermissionSet.of(Permission.viewTenants), true),
             RoleDef(tenant, "admin", "Manages tenants and system users", serverPermissions, true),
         ];
-    auto viewer = PermissionSet.of(Permission.select, Permission.replicate);
+    auto viewer = PermissionSet.of(Permission.select, Permission.replicate, Permission.execute);
     auto editor = viewer | PermissionSet.of(Permission.insert, Permission.update, Permission.delete_, Permission.transact);
     return [
         RoleDef(tenant, "viewer", "Reads all tables", viewer, true),

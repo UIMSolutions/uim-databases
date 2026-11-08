@@ -1,6 +1,7 @@
 module uim.hdb.adapters.outbound;
 
 public:
+    import uim.hdb.adapters.outbound.file_log_store;
     import uim.hdb.adapters.outbound.file_statement_log;
     import uim.hdb.adapters.outbound.file_tenant_storage;
     import uim.hdb.adapters.outbound.file_tenant_store;

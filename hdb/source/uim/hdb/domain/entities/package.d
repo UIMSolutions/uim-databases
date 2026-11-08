@@ -5,5 +5,6 @@ public:
     import uim.hdb.domain.entities.column;
     import uim.hdb.domain.entities.mergejob;
     import uim.hdb.domain.entities.permission;
+    import uim.hdb.domain.entities.procedure;
     import uim.hdb.domain.entities.tenant;
     import uim.hdb.domain.entities.user;
