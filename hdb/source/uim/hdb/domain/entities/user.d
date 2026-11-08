@@ -2,18 +2,27 @@ module uim.hdb.domain.entities.user;
 
 import uim.hdb;
 
+/// Ein Benutzer gehört zu genau einem Mandanten; der Name ist nur innerhalb des Mandanten eindeutig.
 struct HdbUser {
     string name;
     string passwordHash;
     HdbRole role;
     bool active = true;
+    string tenant = defaultTenant;
 }
 
 /// Die angemeldete Identität einer Anfrage. Der Standardwert ist anonym.
+/// `tenant` bestimmt, welche Daten und welche Benutzer die Anfrage sieht.
 struct Principal {
     string name;
     HdbRole role;
     bool authenticated;
+    string tenant;
+
+    /// Systemadministratoren verwalten Mandanten und haben keinen Zugriff auf deren Daten.
+    bool isSystem() const {
+        return authenticated && tenant == systemTenant;
+    }
 }
 
 /// Keine gültige Anmeldung (HTTP 401).
@@ -52,6 +61,13 @@ HdbRole parseRole(string name) {
     default:
         throw new Exception("Unknown role: " ~ name);
     }
+}
+
+/// Nur für Administratoren des Systembereichs; wirft AuthenticationRequired oder AccessDenied.
+void requireSystemAdmin(Principal principal) {
+    requireRole(principal, HdbRole.admin);
+    if (principal.tenant != systemTenant)
+        throw new AccessDenied("Requires a system administrator");
 }
 
 /// Prüft die Rolle; wirft AuthenticationRequired oder AccessDenied.
@@ -100,4 +116,10 @@ unittest {
     assertThrown!AuthenticationRequired(requireRole(Principal.init, HdbRole.viewer));
     assertThrown!AccessDenied(requireRole(Principal("v", HdbRole.viewer, true), HdbRole.editor));
     requireRole(Principal("a", HdbRole.admin, true), HdbRole.editor);
+
+    assertThrown!AccessDenied(requireSystemAdmin(Principal("a", HdbRole.admin, true, defaultTenant)));
+    assertThrown!AccessDenied(requireSystemAdmin(Principal("s", HdbRole.editor, true, systemTenant)));
+    assertThrown!AuthenticationRequired(requireSystemAdmin(Principal.init));
+    requireSystemAdmin(Principal("s", HdbRole.admin, true, systemTenant));
+    assert(Principal("s", HdbRole.viewer, true, systemTenant).isSystem && !Principal("s", HdbRole.admin, false, systemTenant).isSystem);
 }

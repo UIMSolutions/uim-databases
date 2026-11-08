@@ -27,8 +27,10 @@ struct LoginResult {
 }
 
 /// Eingehender Port: Anmeldung und Benutzerverwaltung. `actor` ist die anfragende Identität.
+/// Die Benutzerverwaltung wirkt immer nur im Mandanten des actors.
 interface IAccessUseCase {
-    LoginResult login(string name, string password);
+    /// `tenant` leer bedeutet default.
+    LoginResult login(string tenant, string name, string password);
     void logout(string token);
     /// Identität zu einem Token; anonym, wenn es ungültig oder abgelaufen ist.
     Principal authenticate(string token);
@@ -39,6 +41,56 @@ interface IAccessUseCase {
     UserInfo updateUser(Principal actor, string name, HdbRole role, bool active);
     void resetPassword(Principal actor, string name, string replacement);
     void deleteUser(Principal actor, string name);
+}
+
+/// Was die Mandantenverwaltung von der Benutzerverwaltung braucht. Ohne Rollenprüfung: nur TenantService sieht das,
+/// und der prüft selbst auf Systemadministratoren.
+interface ITenantAccounts {
+    /// Legt den ersten Administrator eines Mandanten an. Prüft Name und Passwort, bevor etwas gespeichert wird.
+    void provisionAdmin(string tenant, string name, string password);
+    /// Beendet alle Sitzungen des Mandanten.
+    void revokeTenant(string tenant);
+    /// Löscht alle Benutzer des Mandanten und beendet ihre Sitzungen.
+    void removeTenant(string tenant);
+    size_t userCount(string tenant);
+}
+
+struct TenantInfo {
+    string name, label;
+    bool active;
+    size_t users;
+}
+
+/// Eingehender Port: Mandanten anlegen, ändern und löschen, nur für Systemadministratoren.
+interface ITenantUseCase {
+    TenantInfo[] listTenants(Principal actor);
+    /// Legt den Mandanten mit leerer Datenbank und seinem ersten Administrator an.
+    TenantInfo createTenant(Principal actor, string name, string label, string adminName, string adminPassword);
+    /// Deaktivieren beendet alle Sitzungen des Mandanten; Daten und Benutzer bleiben erhalten.
+    TenantInfo updateTenant(Principal actor, string name, string label, bool active);
+    /// Löscht Benutzer, Daten und Sicherungen endgültig. Nur für deaktivierte Mandanten.
+    void deleteTenant(Principal actor, string name);
+}
+
+/// Ausgehender Port: Liste der Mandanten.
+interface ITenantStore {
+    Tenant[] load();
+    void save(Tenant[] tenants);
+}
+
+/// Die Ablagen einer Mandanten-Datenbank.
+struct TenantStorage {
+    ITableRepository tables;
+    IStatementLog log;
+    IBackupStore backups;
+}
+
+/// Ausgehender Port: getrennte Ablage je Mandant (Tabellen, Protokoll, Sicherungen).
+interface ITenantStorage {
+    TenantStorage open(string tenant);
+    bool exists(string tenant);
+    /// Löscht alle Daten und Sicherungen des Mandanten endgültig.
+    void purge(string tenant);
 }
 
 /// Stand einer Tabelle: alles, was eine Sicherung braucht.

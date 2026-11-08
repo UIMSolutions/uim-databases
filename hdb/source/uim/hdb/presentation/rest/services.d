@@ -2,7 +2,7 @@ module uim.hdb.presentation.rest.services;
 
 import uim.hdb.adapters.inbound.admin_web : createTableSql, isIdentifier, selectSql;
 import uim.hdb.adapters.inbound.security : bearerToken;
-import uim.hdb.application.ports : BackupNotFound, IAccessUseCase, IBackupUseCase, ISqlUseCase;
+import uim.hdb.application.ports : BackupNotFound, IAccessUseCase, IBackupUseCase, ISqlUseCase, ITenantUseCase;
 import uim.hdb.domain.entities.user;
 import uim.hdb;
 import uim.hdb.domain.value;
@@ -24,7 +24,7 @@ import vibe.web.rest : registerRestInterface, RestErrorInformation, RestInterfac
 private enum long maxRowLimit = 1000;
 
 final class SystemRestApi : ISystemRestApi {
-    // vibe verlangt @safe, der Anwendungskern (ISqlUseCase) ist es nicht
+    // vibe requires @safe, the application core (ISqlUseCase) is not
 @trusted:
     private ISqlUseCase sql;
 
@@ -57,7 +57,7 @@ final class SystemRestApi : ISystemRestApi {
 }
 
 final class SqlExecutionRestApi : ISqlRestApi {
-    // vibe verlangt @safe, der Anwendungskern (ISqlUseCase) ist es nicht
+    // vibe requires @safe, the application core (ISqlUseCase) is not
 @trusted:
     private ISqlUseCase sql;
 
@@ -71,7 +71,7 @@ final class SqlExecutionRestApi : ISqlRestApi {
 }
 
 final class TableRestApi : ITableRestApi {
-    // vibe verlangt @safe, der Anwendungskern (ISqlUseCase) ist es nicht
+    // vibe requires @safe, the application core (ISqlUseCase) is not
 @trusted:
     private ISqlUseCase sql;
 
@@ -136,11 +136,11 @@ final class AuthRestApi : IAuthRestApi {
         this.current = current;
     }
 
-    // vibe verlangt @safe, der Anwendungskern (IAccessUseCase) ist es nicht
+    // vibe requires @safe, the application core (IAccessUseCase) is not
 @trusted:
-    RestLogin login(string user, string password) {
-        auto r = access.login(user, password);
-        return RestLogin(r.token, r.expiresInSeconds, RestUser(r.principal.name, roleName(r.principal.role), true));
+    RestLogin login(string user, string password, string tenant) {
+        auto r = access.login(tenant, user, password);
+        return RestLogin(r.token, r.expiresInSeconds, RestUser(r.principal.name, roleName(r.principal.role), true, r.principal.tenant));
     }
 
     RestStatus logout(string authorization) {
@@ -151,7 +151,7 @@ final class AuthRestApi : IAuthRestApi {
     RestUser me() {
         auto p = current();
         requireRole(p, HdbRole.viewer);
-        return RestUser(p.name, roleName(p.role), true);
+        return RestUser(p.name, roleName(p.role), true, p.tenant);
     }
 
     RestStatus changePassword(string oldPassword, string replacement) {
@@ -189,6 +189,34 @@ final class UserRestApi : IUserRestApi {
 
     RestStatus remove(string _name) {
         access.deleteUser(current(), _name);
+        return RestStatus("DELETED");
+    }
+}
+
+final class TenantRestApi : ITenantRestApi {
+    private ITenantUseCase tenants;
+    private Principal delegate() current;
+
+    this(ITenantUseCase tenants, Principal delegate() current) {
+        this.tenants = tenants;
+        this.current = current;
+    }
+
+@trusted:
+    RestTenant[] list() {
+        return tenants.listTenants(current()).map!(t => toRest(t)).array;
+    }
+
+    RestTenant create(string name, string adminName, string adminPassword, string label) {
+        return toRest(tenants.createTenant(current(), name, label, adminName, adminPassword));
+    }
+
+    RestTenant update(string _name, bool active, string label) {
+        return toRest(tenants.updateTenant(current(), _name, label, active));
+    }
+
+    RestStatus remove(string _name) {
+        tenants.deleteTenant(current(), _name);
         return RestStatus("DELETED");
     }
 }
@@ -304,10 +332,10 @@ private void writeRestError(HTTPServerResponse res, Exception e) @trusted {
     res.writeJsonBody(["statusMessage": e.msg]);
 }
 
-/// Registriert alle REST-Schnittstellen. Fehler der Eingabe (ungültiges SQL, gesperrte Datenbank) ergeben 400
-/// wie bei POST /sql; HTTPStatusException behält ihren Status. Stacktraces gelangen nicht in die Antwort.
+/// Registers all REST interfaces. Input errors (invalid SQL, locked database) result in a 400
+/// as with POST /sql; the HTTPStatusException retains its status. Stack traces are not included in the response.
 void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access, IBackupUseCase backups,
-    Principal delegate() current) {
+    ITenantUseCase tenants, Principal delegate() current) {
     auto settings = new RestInterfaceSettings;
     settings.errorHandler = (HTTPServerRequest req, HTTPServerResponse res, RestErrorInformation error) @trusted {
         writeRestError(res, error.exception);
@@ -317,6 +345,7 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
     router.registerRestInterface!ITableRestApi(new TableRestApi(sql), settings);
     router.registerRestInterface!IAuthRestApi(new AuthRestApi(access, current), settings);
     router.registerRestInterface!IUserRestApi(new UserRestApi(access, current), settings);
+    router.registerRestInterface!ITenantRestApi(new TenantRestApi(tenants, current), settings);
     // Das Label ist optional, die REST-Schnittstelle verlangt aber immer einen JSON-Rumpf
     router.post("/api/v1/backups", (HTTPServerRequest req, HTTPServerResponse res) {
         if (req.headers.get("Content-Length", "0") != "0" || "Transfer-Encoding" in req.headers)
@@ -345,8 +374,8 @@ void registerHdbRestApi(URLRouter router, ISqlUseCase sql, IAccessUseCase access
             writeRestError(res, e);
     });
 }
-
-/// Echter Durchlauf über HTTP mit den aus den Schnittstellen generierten Clients, inklusive Gate und Rollen.
+///
+/// Actual run over HTTP using the clients generated from the interfaces, including the gateway and roles.
 unittest {
     import uim.hdb;
     import std.exception : collectException;
@@ -370,18 +399,35 @@ unittest {
         }
     }
 
-    auto access = new AccessService(new MemStore, new OpensslCredentialCrypto);
-    access.bootstrap("root", "correct-horse-root");
+    static class MemTenants : ITenantStore {
+        Tenant[] saved;
+        Tenant[] load() {
+            return saved;
+        }
+
+        void save(Tenant[] tenants) {
+            saved = tenants.dup;
+        }
+    }
+
+    // Derselbe Aufbau wie in app.d: eine Datenbank je Mandant, Systemadministratoren getrennt
+    auto dataDir = buildPath(tempDir, "hdb-rest-tenants-" ~ randomUUID().toString);
+    scope (exit)
+        if (exists(dataDir))
+            rmdirRecurse(dataDir);
     auto principal = toDelegate(&currentPrincipal);
+    auto registry = new TenantRegistry(new MemTenants);
+    registry.put(Tenant(defaultTenant, "Default", true));
+    auto access = new AccessService(new MemStore, new OpensslCredentialCrypto, null, &registry.isActive);
+    access.bootstrap("root", "correct-horse-root");
+    access.bootstrap(systemTenant, "sys", "correct-horse-sys1");
+    auto storage = new FileTenantStorage(dataDir);
+    auto databases = new TenantDatabases(storage, principal);
+    databases.open(defaultTenant);
+    auto tenantService = new TenantService(registry, access, databases, storage);
     auto router = new URLRouter;
     new SecurityGate(access).register(router);
-    auto core = new SqlService(new MemoryTableRepository);
-    auto backupDir = buildPath(tempDir, "hdb-rest-backups-" ~ randomUUID().toString);
-    scope (exit)
-        if (exists(backupDir))
-            rmdirRecurse(backupDir);
-    registerHdbRestApi(router, new SecuredSqlUseCase(core, principal), access,
-        new BackupService(core, new FileBackupStore(backupDir), principal), principal);
+    registerHdbRestApi(router, databases, access, databases, tenantService, principal);
     auto http = new HTTPServerSettings;
     http.port = 0;
     http.bindAddresses = ["127.0.0.1"];
@@ -479,6 +525,43 @@ unittest {
             assert(statusOf({ backups.restore("missing.hdbbak"); }) == 404);
             assert(statusOf({ backups.remove("../x.hdbbak"); }) == 404);
             assert(backups.remove(saved.name).status == "DELETED");
+
+            // Mandanten: nur der Systemadministrator verwaltet sie und sieht keine Daten
+            assert(statusOf({ client!ITenantRestApi(token).list(); }) == 403);
+            auto sysToken = client!IAuthRestApi("").login("sys", "correct-horse-sys1", "system").token;
+            assert(client!IAuthRestApi(sysToken).me().tenant == "system");
+            assert(statusOf({ client!ITableRestApi(sysToken).list(); }) == 403);
+            assert(statusOf({ client!IBackupRestApi(sysToken).list(); }) == 403);
+            assert(statusOf({ client!ISqlRestApi(sysToken).execute("SELECT 1", "", ""); }) == 403);
+            auto tenantsApi = client!ITenantRestApi(sysToken);
+            auto acme = tenantsApi.create("acme", "boss", "correct-horse-acme", "Acme Corp");
+            assert(acme.name == "acme" && acme.label == "Acme Corp" && acme.active && acme.users == 1);
+            assert(tenantsApi.list().map!(t => t.name).array == ["acme", "default"]);
+            assert(statusOf({ tenantsApi.create("acme", "boss", "correct-horse-acme"); }) == 400);
+            assert(statusOf({ tenantsApi.create("../x", "boss", "correct-horse-acme"); }) == 400);
+
+            // Gleicher Tabellenname, getrennte Daten
+            auto acmeToken = client!IAuthRestApi("").login("boss", "correct-horse-acme", "ACME").token;
+            assert(client!IAuthRestApi(acmeToken).me().tenant == "acme");
+            auto acmeTables = client!ITableRestApi(acmeToken);
+            assert(acmeTables.list().length == 0);
+            acmeTables.create("t", [RestColumnDef("id", "integer")]);
+            acmeTables.insert("t", [Json(42)]);
+            assert(acmeTables.rows("t", "", "", false, 10, 0).total == 1);
+            assert(tables.rows("t", "", "", false, 10, 0).total == 3);
+            assert(client!IUserRestApi(acmeToken).list().map!(u => u.name).array == ["boss"]);
+            assert(statusOf({ client!IUserRestApi(acmeToken).remove("root"); }) == 400); // nicht gefunden
+            assert(statusOf({ client!IAuthRestApi("").login("root", "correct-horse-root", "acme"); }) == 401);
+            assert(statusOf({ client!IAuthRestApi("").login("boss", "correct-horse-acme"); }) == 401); // default
+
+            // Deaktivieren beendet die Sitzungen, Löschen entfernt alles
+            assert(statusOf({ tenantsApi.remove("acme"); }) == 400);
+            assert(!tenantsApi.update("acme", false, "Acme Corp").active);
+            assert(statusOf({ acmeTables.list(); }) == 401);
+            assert(statusOf({ client!IAuthRestApi("").login("boss", "correct-horse-acme", "acme"); }) == 401);
+            assert(tenantsApi.remove("acme").status == "DELETED");
+            assert(!exists(buildPath(dataDir, "acme")) && tenantsApi.list().length == 1);
+            assert(statusOf({ tenantsApi.update("acme", true); }) == 400);
 
             assert(tables.drop("t").status == "DROPPED");
             client!IAuthRestApi(token).logout("Bearer " ~ token);

@@ -12,7 +12,6 @@ import vibe.data.json : Json;
 
 /// Formats in which OData transmits values that the core stores differently: Edm.Binary is Base64url instead of Hex,
 /// Edm.Geometry and Edm.Geography are GeoJSON instead of WKT.
-
 ubyte[] hexToBytes(string hex) {
     auto bytes = new ubyte[hex.length / 2];
     foreach (i, ref b; bytes)
@@ -20,6 +19,11 @@ ubyte[] hexToBytes(string hex) {
     return bytes;
 }
 
+/** 
+*    Converts a hexadecimal string to a Base64url-encoded string.
+*    @param hex The hexadecimal string to convert.
+*    @return The Base64url-encoded string.
+*/
 string hexToBase64Url(string hex) {
     return Base64URLNoPadding.encode(hexToBytes(hex)).idup;
 }

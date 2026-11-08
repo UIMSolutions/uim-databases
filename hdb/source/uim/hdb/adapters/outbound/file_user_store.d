@@ -24,9 +24,11 @@ final class FileUserStore : IUserStore {
         HdbUser[] users;
         if (!exists(path))
             return users;
+        // Benutzer aus der Zeit vor den Mandanten gehören zu default
         foreach (j; parseJsonString(readText(path))["users"])
             users ~= HdbUser(j["name"].get!string, j["passwordHash"].get!string,
-                parseRole(j["role"].get!string), j["active"].get!bool);
+                parseRole(j["role"].get!string), j["active"].get!bool,
+                j["tenant"].type == Json.Type.undefined ? defaultTenant : j["tenant"].get!string);
         return users;
     }
 
@@ -38,6 +40,7 @@ final class FileUserStore : IUserStore {
             j["passwordHash"] = u.passwordHash;
             j["role"] = roleName(u.role);
             j["active"] = u.active;
+            j["tenant"] = u.tenant;
             list ~= j;
         }
         auto document = Json.emptyObject;
@@ -66,9 +69,13 @@ unittest {
 
     auto store = new FileUserStore(path);
     assert(store.load().length == 0);
-    store.save([HdbUser("a", "hash", HdbRole.editor, false)]);
-    assert(store.load() == [HdbUser("a", "hash", HdbRole.editor, false)]);
+    store.save([HdbUser("a", "hash", HdbRole.editor, false), HdbUser("a", "h2", HdbRole.admin, true, "acme")]);
+    assert(store.load() == [HdbUser("a", "hash", HdbRole.editor, false), HdbUser("a", "h2", HdbRole.admin, true, "acme")]);
     assert((getAttributes(path) & octal!777) == octal!600);
+
+    // Altbestand ohne Mandant
+    write(path, `{"users":[{"name":"old","passwordHash":"x","role":"admin","active":true}]}`);
+    assert(store.load() == [HdbUser("old", "x", HdbRole.admin, true, defaultTenant)]);
 
     write(path, "{broken");
     assertThrown(store.load());

@@ -26,8 +26,8 @@ private string facets(ColumnType type) {
     return "";
 }
 
-/// Tabellen, die sich als gültige CSDL darstellen lassen. Der Kern erlaubt Namen wie `1a`, OData nicht;
-/// eine einzige solche Tabelle würde sonst das gesamte $metadata-Dokument ungültig machen.
+/// Tables that can be represented as valid CSDL. The core allows names such as `1a`, but OData does not;
+/// otherwise, a single such table would invalidate the entire $metadata document.
 bool isExposable(TableStats table) {
     return isSimpleIdentifier(table.table)
         && table.columns.all!(c => isSimpleIdentifier(c.name) && c.name != rowIdProperty);
@@ -45,7 +45,7 @@ bool isSimpleIdentifier(string name) {
     return true;
 }
 
-/// CSDL-Dokument für $metadata. Namen sind geprüfte Bezeichner, sie brauchen keine XML-Maskierung.
+/// CSDL document for $metadata. Names are validated identifiers, they do not require XML escaping.
 string metadataXml(TableStats[] tables) {
     auto x = appender!string;
     x ~= `<?xml version="1.0" encoding="utf-8"?>` ~ "\n";
@@ -69,7 +69,7 @@ string metadataXml(TableStats[] tables) {
     x ~= "</EntityContainer>\n</Schema>\n</edmx:DataServices>\n</edmx:Edmx>\n";
     return x[];
 }
-
+///
 unittest {
     import std.string : indexOf;
 

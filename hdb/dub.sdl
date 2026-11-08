@@ -1,5 +1,7 @@
 name "hdb"
 description "In-Memory-Spaltendatenbank (HANA-ähnlich) mit vibe.d und hexagonaler Architektur"
 dependency "vibe-d" version="~>0.10.3"
+dependency "uim-framework:oop" version="~>26.11.1"
+
 targetType "executable"
 targetName "hdb"

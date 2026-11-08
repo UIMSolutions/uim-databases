@@ -1,6 +1,6 @@
 module uim.hdb.presentation.odata.errors;
 
-/// Fehler mit HTTP-Status und OData-Code, wird als {"error": {...}} ausgeliefert.
+/// Error with HTTP status and OData code; returned as {“error”: {...}}.
 class ODataError : Exception {
     int status;
     string code;
@@ -24,7 +24,7 @@ ODataError conflict(string msg) {
     return new ODataError(409, "Conflict", msg);
 }
 
-/// Die Spezifikation verlangt einen Fehler, wenn ein Dienst eine Option nicht umsetzt: nie stillschweigend ignorieren.
+/// The specification requires an error to be raised if a service does not implement an option: never silently ignore it.
 ODataError notImplemented(string msg) {
     return new ODataError(501, "NotImplemented", msg);
 }

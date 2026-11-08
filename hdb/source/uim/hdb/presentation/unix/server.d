@@ -12,7 +12,7 @@ import std.string : toStringz;
 import vibe.core.log : logInfo, logWarn;
 import vibe.core.net : listenTCP, NetworkAddress, TCPConnection, TCPListener;
 
-/// Eingehender Adapter: nimmt Verbindungen auf einem Unix Domain Socket an und reicht Anfragen an die Controller.
+/// Inbound adapter: accepts connections on a Unix domain socket and forwards requests to the controllers.
 final class UnixServer : IUnixServer {
     enum size_t defaultMaxBodyBytes = 16 * 1024 * 1024;
     enum Duration idleTimeout = 5.minutes;
@@ -60,7 +60,7 @@ final class UnixServer : IUnixServer {
         remove(path);
     }
 
-    /// Eine Antwort pro Anfrage; die Identität setzt der Controller bei jeder Anfrage neu.
+    /// One response per request; the identity is set by the controller for each request anew.
     IUnixResponse dispatch(IUnixRequest request) {
         foreach (controller; controllers)
             if (controller.canHandle(request))
@@ -92,7 +92,7 @@ final class UnixServer : IUnixServer {
     }
 }
 
-/// Entfernt nur, was sicher ein verwaister Socket ist. Alles andere am Pfad gehört jemand anderem.
+/// Removes only what is certainly a stale socket. Everything else at the path belongs to someone else.
 private void removeStaleSocket(string path) {
     stat_t info;
     if (lstat(path.toStringz, &info) != 0)
@@ -112,7 +112,7 @@ private void removeStaleSocket(string path) {
     throw new Exception("Unix socket is in use: " ~ path);
 }
 
-/// Adresse für listenTCP und connectTCP.
+/// Address for listenTCP and connectTCP.
 NetworkAddress unixAddress(string path) @trusted {
     import core.sys.posix.sys.un : sockaddr_un;
 

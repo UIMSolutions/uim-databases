@@ -4,8 +4,9 @@ import uim.hdb;
 import std.algorithm : map;
 import std.array : array;
 import vibe.data.json : Json;
+import vibe.data.serialization : optional;
 
-/// Antwortformate der REST-Schnittstellen. Sie entkoppeln die öffentliche API vom Domänenmodell.
+/// Response formats of the REST interfaces. They decouple the public API from the domain model.
 
 struct RestStatus {
     string status;
@@ -15,6 +16,13 @@ struct RestUser {
     string name;
     string role; // viewer, editor oder admin
     bool active;
+    @optional string tenant; // Mandant; system für Systemadministratoren
+}
+
+struct RestTenant {
+    string name, label;
+    bool active;
+    long users;
 }
 
 struct RestLogin {
@@ -88,6 +96,10 @@ RestBackup toRest(BackupInfo b) {
 
 RestBackupSchedule toRest(BackupSchedule s) {
     return RestBackupSchedule(s.enabled, s.intervalHours, s.keepScheduled, s.keepSafety, s.lastRun, s.lastError, s.nextRun);
+}
+
+RestTenant toRest(TenantInfo t) {
+    return RestTenant(t.name, t.label, t.active, t.users);
 }
 
 RestUser toRest(UserInfo u) {

@@ -71,9 +71,10 @@ interface ITableRestApi {
 @path("/api/v1/auth")
 interface IAuthRestApi {
 @safe:
+    /// `tenant` ist optional; ohne meldet login im Mandanten default an.
     @method(HTTPMethod.POST) @path("/login")
-    @bodyParam("user", "user") @bodyParam("password", "password")
-    RestLogin login(string user, string password);
+    @bodyParam("user", "user") @bodyParam("password", "password") @bodyParam("tenant", "tenant")
+    RestLogin login(string user, string password, string tenant = "");
 
     @method(HTTPMethod.POST) @path("/logout")
     @headerParam("authorization", "Authorization")
@@ -108,6 +109,29 @@ interface IUserRestApi {
     RestStatus resetPassword(string _name, string password);
 
     @method(HTTPMethod.DELETE) @path("/users/:name")
+    RestStatus remove(string _name);
+}
+
+/// Mandantenverwaltung, nur für Administratoren des Mandanten system. Sie sehen keine Daten der Mandanten.
+@path("/api/v1")
+interface ITenantRestApi {
+@safe:
+    @method(HTTPMethod.GET) @path("/tenants")
+    RestTenant[] list();
+
+    /// Legt den Mandanten mit leerer Datenbank und seinem ersten Administrator an.
+    @method(HTTPMethod.POST) @path("/tenants")
+    @bodyParam("name", "name") @bodyParam("label", "label")
+    @bodyParam("adminName", "adminName") @bodyParam("adminPassword", "adminPassword")
+    RestTenant create(string name, string adminName, string adminPassword, string label = "");
+
+    /// active=false beendet alle Sitzungen des Mandanten.
+    @method(HTTPMethod.PUT) @path("/tenants/:name")
+    @bodyParam("label", "label") @bodyParam("active", "active")
+    RestTenant update(string _name, bool active, string label = "");
+
+    /// Löscht Benutzer, Daten und Sicherungen endgültig; nur für deaktivierte Mandanten.
+    @method(HTTPMethod.DELETE) @path("/tenants/:name")
     RestStatus remove(string _name);
 }
 
