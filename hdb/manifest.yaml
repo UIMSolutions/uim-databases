@@ -3,4 +3,4 @@ applications:
     memory: 256M
     buildpacks:
       - binary_buildpack
-    command: ./hana-lite
+    command: ./hdb

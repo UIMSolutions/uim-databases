@@ -93,8 +93,9 @@ Typisierte vibe.d-Schnittstellen in `presentation/rest` (`interfaces.d`, `models
 | `POST /api/v1/tables/:name/rows` | `{"values": [1, "a", null]}`, ein Wert je Spalte |
 
 Fehler: `{"statusMessage": "..."}` mit 400 (ungültiges SQL, gesperrte Datenbank) oder 404 (Tabelle unbekannt).
-Dazu `POST /api/v1/auth/login|logout|password`, `GET /api/v1/auth/me` und `GET|POST /api/v1/users`,
-`PUT|DELETE /api/v1/users/:name`, `POST /api/v1/users/:name/password`, für Systemadministratoren `GET|POST /api/v1/tenants`
+Dazu `GET|PUT|DELETE /api/v1/replication…` (siehe Replikation), `POST /api/v1/auth/login|logout|password`, `GET /api/v1/auth/me` und `GET|POST /api/v1/users`,
+`PUT|DELETE /api/v1/users/:name`, `POST /api/v1/users/:name/password`, `PUT /api/v1/users/:name/grants`,
+`GET /api/v1/roles`, `PUT|DELETE /api/v1/roles/:name` (siehe Benutzer und Rechte), für Systemadministratoren `GET|POST /api/v1/tenants`
 und `PUT|DELETE /api/v1/tenants/:name` (siehe Mandanten). Fehlende Anmeldung ergibt 401, fehlende Rechte 403.
 Die Endpunkte ohne `/api/v1` (`adapters/inbound/rest_api.d`) bestehen weiter und verlangen ebenfalls ein Bearer-Token.
 
@@ -238,14 +239,54 @@ ohne Mandant funktionieren wie vorher. Das geschieht nur, solange `TENANTS_DIR/d
 
 Außer `GET /health`, `GET /api/v1/health` und den Anmeldeseiten verlangt jede Route eine Anmeldung.
 
-| Rolle | Rechte |
-|---|---|
-| `viewer` | `SELECT`, Tabellen und Statistik lesen |
-| `editor` | zusätzlich `INSERT`, `UPDATE`, `DELETE`, Transaktionen |
-| `admin` | zusätzlich `CREATE`, `DROP`, Merge, Checkpoint, Benutzerverwaltung (`/admin/users`) |
+Rechte werden über Rollen vergeben (RBAC), auf drei Ebenen:
 
-Rollen gelten im eigenen Mandanten (siehe Mandanten). Rechte gelten für die ganze Datenbank des Mandanten, nicht je Tabelle. Rollenänderungen wirken sofort, auch in laufenden Sitzungen.
-Eine offene Transaktion kann nur ihr Besitzer verwenden. Der letzte aktive Administrator lässt sich nicht entfernen.
+| Ebene | Wer | Rechte |
+|---|---|---|
+| Server | Benutzer im Bereich `system` | `viewTenants`, `manageTenants`, `manageAccess` (Systembenutzer und -rollen) |
+| Mandant | Rolle eines Benutzers, gilt für alle Tabellen | `select`, `insert`, `update`, `delete`, `drop`, `create`, `transact`, `maintain`, `manageBackups`, `replicate`, `manageReplication`, `manageAccess` |
+| Tabelle | Freigabe: Rolle für eine einzelne Tabelle | davon nur `select`, `insert`, `update`, `delete`, `drop` |
+
+Vordefinierte Rollen, unveränderlich; bestehende Benutzer behalten damit ihre Rechte:
+
+| Bereich | Rolle | Rechte |
+|---|---|---|
+| Mandant | `viewer` | `select`, `replicate` |
+| Mandant | `editor` | zusätzlich `insert`, `update`, `delete`, `transact` |
+| Mandant | `admin` | alle Mandantenrechte |
+| `system` | `viewer` | `viewTenants` |
+| `system` | `admin` | alle Serverrechte |
+
+Eigene Rollen legt man mit `manageAccess` unter `/admin/roles` oder per API an, je Mandant bzw. im Bereich `system`.
+Ein Benutzer hat höchstens eine Rolle im Mandanten (oder keine) und beliebig viele Tabellenfreigaben unter
+`/admin/users/<name>/grants`. Rechte addieren sich, es gibt keine Verbote. Ein Benutzer ohne Rolle sieht nur die
+freigegebenen Tabellen.
+
+    curl -X PUT localhost:8080/api/v1/roles/clerk -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"description":"Reads and adds rows","permissions":["select","insert"]}'
+    curl localhost:8080/api/v1/users -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"name":"tina","password":"...","role":""}'
+    curl -X PUT localhost:8080/api/v1/users/tina/grants -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"grants":[{"table":"orders","role":"clerk"}]}'
+    curl localhost:8080/api/v1/auth/me -H "Authorization: Bearer $TOKEN"   # aufgelöste Rechte, auch je Tabelle
+
+- Tabellenrechte prüft der SQL-Kern an jeder Stelle, an der eine Anweisung eine Tabelle holt: bei Joins für jede
+  beteiligte Tabelle, vor jeder Änderung. Eine verborgene Tabelle verhält sich wie eine fehlende (403 bzw. 404 mit
+  derselben Meldung wie für unbekannte Tabellen), ihre Existenz wird nicht verraten.
+- Tabellenlisten, Statistik, OData-`$metadata` und die Oberflächen zeigen nur Tabellen, auf denen der Benutzer ein Recht
+  hat, und nur die Schaltflächen, die er nutzen darf.
+- `create` und `transact` gelten nur im ganzen Mandanten: `BEGIN` sperrt alle Tabellen.
+- Freigaben dürfen Tabellen nennen, die es noch nicht gibt, und gelten nach `DROP` für eine neu angelegte Tabelle
+  gleichen Namens wieder.
+- Rollen- und Freigabeänderungen wirken sofort, auch in laufenden Sitzungen. Eine Rolle lässt sich erst löschen,
+  wenn sie niemand mehr verwendet.
+- In jedem Bereich muss ein aktiver Benutzer `manageAccess` behalten; Änderungen, die das verhindern würden, werden
+  abgelehnt. Dieses Recht kommt nur aus der Rolle im Mandanten, nie aus einer Tabellenfreigabe.
+- Sicherungen (`manageBackups`) und der Replikationsstrom (`replicate`) enthalten alle Tabellen: diese Rechte deshalb
+  nur Rollen geben, die ohnehin alles lesen dürfen.
+- Eigene Rollen liegen in `ROLES_FILE` (Standard `data/hdb-roles.json`), Rollen und Freigaben der Benutzer in `USERS_FILE`.
+
+Eine offene Transaktion kann nur ihr Besitzer verwenden.
 
 Erster Start: siehe Mandanten. Erzeugte Passwörter bitte unter `/admin/account` ändern; danach werden die Variablen
 ignoriert. Administrator-Passwort eines Mandanten verloren: ein anderer Administrator des Mandanten setzt es zurück.
@@ -283,11 +324,21 @@ Der Speicher lässt sich später nicht ändern; dafür Tabelle neu anlegen und D
 | `MEMORY` | `MemoryTableRepository` | Anweisungsprotokoll (siehe Persistenz) | eine Zeile im Log |
 | `FILE` | `FileTableRepository` | `tables/file/<name>.tbl` (Text, tabulatorgetrennt) | ganze Datei neu |
 | `JSON` | `JsonTableRepository` | `tables/json/<name>.json` | ganze Datei neu |
+| `BINARY` | `BinaryTableRepository` | `tables/binary/<name>.bin` (kompakt, mit SHA-256) | ganze Datei neu |
+| `BSON` | `BsonTableRepository` | `tables/bson/<name>.bson` (ein BSON-Dokument) | ganze Datei neu |
 
 Die Pfade liegen im Verzeichnis des Mandanten (`TENANTS_DIR/<mandant>`, siehe Mandanten). `RoutingTableRepository` verteilt die Tabellen, Namen sind über alle Speicher
 eindeutig. `GET /stats` und `GET /api/v1/stats` zeigen `storage`.
 
-- `FILE`- und `JSON`-Tabellen stehen nie im Anweisungsprotokoll: jede Tabelle hat genau eine dauerhafte Quelle.
+- `FILE`-, `JSON`-, `BINARY`- und `BSON`-Tabellen stehen nie im Anweisungsprotokoll: jede Tabelle hat genau eine dauerhafte Quelle.
+- `BINARY`: little-endian, Zahlen bitgenau (int64, IEEE-754 double), Text als UTF-8 mit Längenangabe, exakte
+  Dezimalzahlen als Text. Am Ende steht eine SHA-256-Prüfsumme; eine beschädigte Datei bricht den Start ab.
+  Aufbau im Kommentar von `BinaryTableRepository`.
+- `BSON`: `{format: "hdb-table", version: 1, name, columns: [{name, type}], rows: [[...], ...]}`. Ganzzahlen sind int64,
+  `DOUBLE`/`REAL` double, `BOOLEAN` bool, alles andere string (auch `DECIMAL`, damit keine Stelle verloren geht).
+  Lesbar etwa mit `bsondump tables/bson/<name>.bson`. Gelesen wird streng: unbekannte BSON-Typen, falsche Längen oder
+  Werte, die nicht zum Spaltentyp passen, brechen den Start ab. BSON erlaubt höchstens 2 GB je Datei, MongoDB nimmt
+  nur Dokumente bis 16 MB an.
 - Geschrieben wird am Commit-Punkt, also nach jeder Anweisung oder beim `COMMIT`; `ROLLBACK` erreicht die Datei nie.
   Dateien werden per temporärer Datei, `fsync` und `rename` ersetzt, es liegt also der alte oder der neue Stand vor.
 - Bei jeder Änderung wird die ganze Datei neu geschrieben. Für große oder oft geänderte Tabellen ist `MEMORY` die bessere Wahl.
@@ -341,6 +392,42 @@ Einstellbar in beiden Oberflächen und per `GET|PUT /api/v1/backups/schedule`, g
   5 Minuten folgt der nächste Versuch.
 - Die Aufbewahrung zählt, sie prüft keinen Inhalt: ein unbemerkt falscher Datenstand verdrängt nach `keepScheduled` Läufen alle
   älteren geplanten Stände. Wichtige Stände deshalb als eigene Sicherung anlegen.
+
+## Replikation
+
+Ein Mandant lässt sich auf einen anderen hdb-Server spiegeln: eine Quelle, beliebig viele Ziele, Änderungen fließen nur
+von der Quelle zum Ziel. Das Ziel holt zuerst einen vollständigen Stand und danach jede bestätigte Änderung, für alle
+Speicherarten (`MEMORY`, `FILE`, `JSON`). Ein Ziel kann selbst Quelle sein (A -> B -> C).
+
+Einrichten auf dem Ziel, als Administrator des Ziel-Mandanten, unter `/admin/replication` oder per API. Auf der Quelle
+genügt ein Benutzer mit der Rolle `viewer`:
+
+    curl -X PUT localhost:8081/api/v1/replication/source -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"url":"https://primary:8080","tenant":"default","user":"replica","password":"...","intervalSeconds":2}'
+    curl localhost:8081/api/v1/replication -H "Authorization: Bearer $TOKEN"              # Zustand
+    curl -X POST localhost:8081/api/v1/replication/resync -H "Authorization: Bearer $TOKEN"  # vollständig neu holen
+    curl -X DELETE localhost:8081/api/v1/replication/source -H "Authorization: Bearer $TOKEN"  # beenden
+
+- Der erste Lauf ersetzt alle Tabellen des Ziel-Mandanten. Solange die Replikation läuft, nimmt das Ziel keine
+  Schreibzugriffe an (403), auch kein `BEGIN` und keine Wiederherstellung; Lesen, Sicherungen und Statistik gehen.
+  Nach dem Beenden behält das Ziel seinen Stand und ist wieder beschreibbar, etwa um es nach einem Ausfall der Quelle
+  zu übernehmen.
+- Die Quelle liefert `GET /api/v1/replication/snapshot` (Stand im Sicherungsformat, Position in `X-Hdb-Epoch` und
+  `X-Hdb-Sequence`) und `GET /api/v1/replication/changes?epoch=&since=&max=`. Jede Änderung ist eine einzelne Anweisung
+  oder eine ganze Transaktion; das Ziel spielt sie als Einheit ein. Zurückgerollte Transaktionen erscheinen nie.
+- Der Änderungsstrom liegt nur im Speicher. Nach einem Neustart oder einer Wiederherstellung der Quelle beginnt eine neue
+  Epoche, nach einem Neustart des Ziels ebenso: dann holt das Ziel einen vollständigen Stand. Das gilt auch, wenn es weiter
+  zurückliegt, als die Quelle Änderungen aufbewahrt (`REPLICATION_RETAIN`, Standard 10000 je Mandant), oder wenn sich eine
+  Änderung nicht einspielen lässt.
+- Ausfälle der Quelle meldet das Ziel einmal im Log und in `lastError`, danach versucht es es im eingestellten Abstand
+  (mindestens 5 Sekunden) weiter und holt auf. Abgelaufene Sitzungen erneuert es selbst.
+- Das Passwort für die Quelle liegt im Klartext in `TENANTS_DIR/<mandant>/replication.json` (Rechte 0600), damit sich
+  das Ziel neu anmelden kann. Die API gibt es nie aus; ein leeres Passwort beim Ändern behält es, aber nur für dieselbe
+  Quelle und denselben Benutzer.
+- Die Quelle wird mit den Rechten des Servers abgefragt. `REPLICATION_ALLOWED_HOSTS` (durch Komma getrennt) begrenzt
+  die erlaubten Hosts; ohne die Variable dürfen Mandanten-Administratoren jede http(s)-Adresse eintragen.
+- Zwischen Servern im Netz nur über TLS betreiben: Zugangsdaten und Daten gehen sonst im Klartext.
+- Benutzer werden nicht repliziert, wie bei Sicherungen.
 
 ## Persistenz
 
