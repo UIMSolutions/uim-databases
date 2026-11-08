@@ -1,0 +1,65 @@
+extends layout
+
+block content
+  div.card.bg-base-100.shadow
+    div.card-body
+      div.flex.items-center.justify-between.gap-2
+        h2.card-title Roles
+        button.btn.btn-primary.btn-sm(type="button", data-role-new="1")
+          i(data-lucide="plus", class="w-4 h-4")
+          | New role
+      - if (page.isSystem)
+        p.text-sm.opacity-70 Roles of the system area. They decide what system users can do on the server.
+      - else
+        p.text-sm.opacity-70 Roles of tenant #{page.tenant}. A user's role applies to all tables. For table access, only the permissions #{view.tableOnly} of a role count. Changes apply at once, also to users who are signed in.
+      div.overflow-x-auto
+        table.table
+          thead
+            tr
+              th Role
+              th Permissions
+              th.text-right Users
+              th.text-right Actions
+          tbody
+            - foreach (r; view.roles)
+              tr
+                td
+                  span.font-mono #{r.name}
+                  - if (r.builtin)
+                    span.badge.badge-ghost.badge-sm.ml-2 Built in
+                  - if (r.description.length)
+                    span.block.text-xs.opacity-70 #{r.description}
+                td
+                  div.flex.flex-wrap.gap-1
+                    - foreach (p; r.permissions)
+                      span.badge.badge-outline.badge-sm.font-mono #{p}
+                    - if (r.permissions.length == 0)
+                      span.text-sm.opacity-60 None
+                td.text-right #{r.users}
+                td.text-right.whitespace-nowrap
+                  - if (!r.builtin)
+                    button.btn.btn-ghost.btn-xs(type="button", data-role-edit=r.name, data-role-description=r.description, data-role-permissions=r.permissionList) Edit
+                    - if (r.users == 0)
+                      form.inline(action="/admin/roles/#{r.name}/delete", method="POST", data-confirm="Delete role #{r.name}?")
+                        button.btn.btn-ghost.btn-xs.text-error(type="submit") Delete
+
+  dialog#role_modal.modal
+    div.modal-box
+      h3#role-title.font-bold.text-lg.mb-4 New role
+      form#role-form(action="/admin/roles", method="POST")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Name
+          input#role-name.input.w-full.font-mono(type="text", name="role", required=true, maxlength="64", autocomplete="off", autocapitalize="none", spellcheck="false")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Description (optional)
+          input#role-description.input.w-full(type="text", name="description", maxlength="200", autocomplete="off")
+        fieldset.mb-3
+          legend.text-sm.mb-2 Permissions
+          div.grid.grid-cols-2.gap-1
+            - foreach (p; view.allowed)
+              label.flex.items-center.gap-2.text-sm
+                input.checkbox.checkbox-sm(type="checkbox", name="permission", value=p, data-permission=p)
+                span.font-mono #{p}
+        div.modal-action
+          button.btn.btn-ghost(type="button", onclick="role_modal.close()") Cancel
+          button.btn.btn-primary(type="submit") Save role

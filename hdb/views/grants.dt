@@ -1,0 +1,54 @@
+extends layout
+
+block content
+  div.card.bg-base-100.shadow.max-w-3xl
+    div.card-body
+      div.flex.items-center.justify-between.gap-2
+        h2.card-title
+          | Table access of
+          span.font-mono #{view.user}
+        a.btn.btn-ghost.btn-sm(href="/admin/users")
+          i(data-lucide="arrow-left", class="w-4 h-4")
+          | Users
+      p.text-sm.opacity-70
+        - if (view.role.length)
+          | Role in the tenant: #{view.role}. These grants add permissions on single tables on top of it.
+        - else
+          | No role in the tenant: this user sees only the tables below.
+        |  Only the table permissions of a role count here (select, insert, update, delete, drop). A grant can name a table that doesn't exist yet.
+      div.overflow-x-auto
+        table.table
+          thead
+            tr
+              th Table
+              th Role
+              th.text-right Actions
+          tbody
+            - foreach (g; view.grants)
+              tr
+                td.font-mono #{g.table}
+                td.font-mono #{g.role}
+                td.text-right
+                  form.inline(action="/admin/users/#{view.user}/grants", method="POST")
+                    input(type="hidden", name="action", value="remove")
+                    input(type="hidden", name="table", value=g.table)
+                    input(type="hidden", name="role", value=g.role)
+                    button.btn.btn-ghost.btn-xs.text-error(type="submit") Remove
+            - if (view.grants.length == 0)
+              tr
+                td.opacity-60(colspan="3") No table access yet
+
+      form.flex.flex-wrap.items-end.gap-2.mt-2(action="/admin/users/#{view.user}/grants", method="POST")
+        input(type="hidden", name="action", value="add")
+        label.block.grow
+          span.block.text-sm.mb-1 Table
+          input.input.w-full.font-mono(type="text", name="table", required=true, pattern="\\w+", list="known-tables", autocomplete="off")
+          datalist#known-tables
+            - foreach (t; view.tables)
+              option(value=t)
+        label.block
+          span.block.text-sm.mb-1 Role
+          select.select.w-48(name="role", required=true)
+            - foreach (r; view.roles)
+              option(value=r) #{r}
+        button.btn.btn-primary(type="submit") Grant

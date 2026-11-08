@@ -97,16 +97,23 @@ html(lang="en", data-theme="dark")
                   i(data-lucide="app-window", class="w-4 h-4")
                   | Fiori client
 
-              - if (page.isAdmin)
+              - if (page.canManageAccess || page.canManageBackups || page.canManageReplication)
                 li.menu-title.mt-4 Access
+              - if (page.canManageAccess)
                 li
                   a(href="/admin/users", class=page.active == "users" ? "menu-active" : "")
                     i(data-lucide="users", class="w-4 h-4")
                     | Users
                 li
+                  a(href="/admin/roles", class=page.active == "roles" ? "menu-active" : "")
+                    i(data-lucide="shield-check", class="w-4 h-4")
+                    | Roles
+              - if (page.canManageBackups)
+                li
                   a(href="/admin/backups", class=page.active == "backups" ? "menu-active" : "")
                     i(data-lucide="archive", class="w-4 h-4")
                     | Backups
+              - if (page.canManageReplication)
                 li
                   a(href="/admin/replication", class=page.active == "replication" ? "menu-active" : "")
                     i(data-lucide="refresh-cw", class="w-4 h-4")

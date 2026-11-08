@@ -6,7 +6,7 @@ block content
       span.badge.badge-ghost.badge-sm.mr-2 #{view.storage}
       | #{view.live} live rows · #{view.deleted} deleted · #{view.columns.length} columns
     div.flex.flex-wrap.gap-2
-      - if (page.canWrite)
+      - if (view.canInsert)
         button.btn.btn-primary.btn-sm(type="button", data-row-insert="1")
           i(data-lucide="plus", class="w-4 h-4")
           | Add row
@@ -16,10 +16,10 @@ block content
       a.btn.btn-sm(href=view.exportUrl)
         i(data-lucide="download", class="w-4 h-4")
         | Export CSV
-      - if (page.canWrite)
+      - if (view.canDelete)
         form(action="/admin/tables/#{view.name}/truncate", method="POST", data-confirm="Delete all rows in #{view.name}?")
           button.btn.btn-sm.btn-outline.btn-warning(type="submit") Delete all rows
-      - if (page.isAdmin)
+      - if (view.canDrop)
         form(action="/admin/tables/#{view.name}/drop", method="POST", data-confirm-name=view.name)
           button.btn.btn-sm.btn-outline.btn-error(type="submit") Drop table
 
@@ -48,7 +48,7 @@ block content
               th
                 a.link.link-hover.font-mono(href=view.sortUrl(c.name)) #{c.name}#{view.sortMark(c.name)}
                 span.block.text-xs.font-normal.opacity-60 #{c.type}
-            - if (page.canWrite)
+            - if (view.canUpdate || view.canDelete)
               th.text-right Actions
         tbody
           - foreach (row; view.rows)
@@ -62,15 +62,17 @@ block content
                     a.link(href=c.text, target="_blank", rel="noopener noreferrer") #{c.text}
                 - else
                   td.font-mono.max-w-xs.truncate(title=c.text) #{c.text}
-              - if (page.canWrite)
+              - if (view.canUpdate || view.canDelete)
                 td.text-right.whitespace-nowrap
-                  button.btn.btn-square.btn-ghost.btn-xs(type="button", data-row-edit="1", title="Edit row", aria-label="Edit row")
-                    i(data-lucide="pencil", class="w-4 h-4")
-                  form.inline(action="/admin/tables/#{view.name}/rows/delete", method="POST", data-confirm="Delete this row? Rows with identical values are deleted too.")
-                    input(type="hidden", name="match", value=row.match)
-                    input(type="hidden", name="back", value=view.backQuery)
-                    button.btn.btn-square.btn-ghost.btn-xs.text-error(type="submit", title="Delete row", aria-label="Delete row")
-                      i(data-lucide="trash-2", class="w-4 h-4")
+                  - if (view.canUpdate)
+                    button.btn.btn-square.btn-ghost.btn-xs(type="button", data-row-edit="1", title="Edit row", aria-label="Edit row")
+                      i(data-lucide="pencil", class="w-4 h-4")
+                  - if (view.canDelete)
+                    form.inline(action="/admin/tables/#{view.name}/rows/delete", method="POST", data-confirm="Delete this row? Rows with identical values are deleted too.")
+                      input(type="hidden", name="match", value=row.match)
+                      input(type="hidden", name="back", value=view.backQuery)
+                      button.btn.btn-square.btn-ghost.btn-xs.text-error(type="submit", title="Delete row", aria-label="Delete row")
+                        i(data-lucide="trash-2", class="w-4 h-4")
           - if (view.rows.length == 0 && view.queryError.length == 0)
             tr
               td.text-center.opacity-70.py-6(colspan="#{view.columns.length + 1}") No rows found
@@ -109,7 +111,7 @@ block content
                 td.text-right #{c.stats.mainBits}
                 td.text-right #{c.codeSize}
 
-  - if (page.canWrite)
+  - if (view.canInsert || view.canUpdate)
     dialog#row_modal.modal
       div.modal-box
         h3#row-title.font-bold.text-lg.mb-4 Add row

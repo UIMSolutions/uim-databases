@@ -9,15 +9,20 @@ block content
           i(data-lucide="user-plus", class="w-4 h-4")
           | New user
       - if (page.isSystem)
-        p.text-sm.opacity-70 Users of the system area. Admins manage tenants and other system users. They can't see tenant data.
+        p.text-sm.opacity-70 Users of the system area. Their role decides what they can do on the server: see or manage tenants, and manage system users. They can't see tenant data.
       - else
-        p.text-sm.opacity-70 Users of tenant #{page.tenant}. Viewers read data. Editors also change rows. Admins also change tables and manage users.
+        p.text-sm.opacity-70
+          | Users of tenant #{page.tenant}. The role applies to all tables. Table access adds roles for single tables, so a user without a role sees only those tables. Define your own roles under
+          a.link.ml-1(href="/admin/roles") Roles
+          | .
       div.overflow-x-auto
         table.table
           thead
             tr
               th Name
               th Role
+              - if (view.tables)
+                th Table access
               th Status
               th.text-right Actions
           tbody
@@ -31,9 +36,14 @@ block content
                   form(action="/admin/users/#{u.name}/update", method="POST")
                     - if (u.active)
                       input(type="hidden", name="active", value="1")
-                    select.select.select-sm.w-32(name="role", aria-label="Role of #{u.name}", data-autosubmit="1")
+                    select.select.select-sm.w-40(name="role", aria-label="Role of #{u.name}", data-autosubmit="1")
+                      - if (view.tables)
+                        option(value="", selected=u.role.length == 0) (none)
                       - foreach (r; view.roles)
                         option(value=r, selected=r == u.role) #{r}
+                - if (view.tables)
+                  td
+                    a.link.link-hover.text-sm(href="/admin/users/#{u.name}/grants") #{u.grants == 0 ? "None" : u.grants == 1 ? "1 grant" : u.grants.to!string ~ " grants"}
                 td
                   - if (u.active)
                     span.badge.badge-success.badge-sm Active
@@ -60,7 +70,9 @@ block content
           span.block.text-sm.mb-1 Role
           select.select.w-full(name="role")
             - foreach (r; view.roles)
-              option(value=r) #{r}
+              option(value=r, selected=r == "viewer") #{r}
+            - if (view.tables)
+              option(value="") (none: table access only)
         label.block.mb-3
           span.block.text-sm.mb-1 Password (at least 12 characters)
           input.input.w-full(type="password", name="password", required=true, minlength="12", autocomplete="new-password")
