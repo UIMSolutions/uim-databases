@@ -20,6 +20,10 @@ html(lang="en", data-theme="dark")
             span #{loginError}
         form(action="/admin/login", method="POST")
           label.block.mb-3
+            span.block.text-sm.mb-1 Tenant
+            input.input.w-full.font-mono(type="text", name="tenant", value=tenantValue, placeholder="default", autocomplete="organization", autocapitalize="none", spellcheck="false")
+            span.block.text-xs.opacity-60.mt-1 Leave empty for the default tenant. System administrators use "system".
+          label.block.mb-3
             span.block.text-sm.mb-1 User name
             input.input.w-full(type="text", name="user", required=true, autofocus=true, autocomplete="username")
           label.block.mb-4

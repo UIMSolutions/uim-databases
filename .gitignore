@@ -18,6 +18,8 @@ hdb/hana-lite
 hdb/hdb
 hdb/hdb-test-application
 hdb/.yamlink/history-backfill.done
-hdb/data/hdb-users.json
-hdb/data/hdb-users.json.tmp
-hdb/data/tables/
+# Datenbank, Benutzer und Sicherungen gehören nicht ins Repository
+hdb/data/
+hdb/data/hdb.log
+.yamlink/health-snapshots.ndjson
+hdb/.yamlink/health-snapshots.ndjson

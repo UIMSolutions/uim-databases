@@ -1,0 +1,78 @@
+extends layout
+
+block content
+  div.card.bg-base-100.shadow
+    div.card-body
+      div.flex.items-center.justify-between.gap-2
+        h2.card-title Tenants
+        button.btn.btn-primary.btn-sm(type="button", onclick="tenant_modal.showModal()")
+          i(data-lucide="building-2", class="w-4 h-4")
+          | New tenant
+      p.text-sm.opacity-70 Each tenant has its own tables, users and backups. Users sign in with the tenant name. As a system administrator you manage tenants, but you can't see their data.
+      div.overflow-x-auto
+        table.table
+          thead
+            tr
+              th Tenant
+              th Label
+              th.text-right Users
+              th Status
+              th.text-right Actions
+          tbody
+            - foreach (t; rows)
+              tr
+                td
+                  span.font-mono #{t.name}
+                td
+                  form.flex.gap-2(action="/admin/tenants/#{t.name}/update", method="POST")
+                    - if (t.active)
+                      input(type="hidden", name="active", value="1")
+                    input.input.input-sm.w-48(type="text", name="label", value=t.label, maxlength="100", aria-label="Label of #{t.name}")
+                    button.btn.btn-ghost.btn-xs(type="submit") Save
+                td.text-right #{t.users}
+                td
+                  - if (t.active)
+                    span.badge.badge-success.badge-sm Active
+                  - else
+                    span.badge.badge-ghost.badge-sm Disabled
+                td.text-right.whitespace-nowrap
+                  - if (t.active)
+                    form.inline(action="/admin/tenants/#{t.name}/update", method="POST", data-confirm="Disable tenant #{t.name}? Its users are signed out and can't sign in until you enable it again.")
+                      input(type="hidden", name="label", value=t.label)
+                      button.btn.btn-ghost.btn-xs(type="submit") Disable
+                  - else
+                    form.inline(action="/admin/tenants/#{t.name}/update", method="POST")
+                      input(type="hidden", name="label", value=t.label)
+                      input(type="hidden", name="active", value="1")
+                      button.btn.btn-ghost.btn-xs(type="submit") Enable
+                    form.inline(action="/admin/tenants/#{t.name}/delete", method="POST", data-confirm-name=t.name, data-confirm-what="tenant #{t.name} with all its users, tables and backups")
+                      button.btn.btn-ghost.btn-xs.text-error(type="submit") Delete
+            - if (rows.length == 0)
+              tr
+                td.opacity-60(colspan="5") No tenants yet
+      p.text-sm.opacity-70 Disable a tenant before you delete it. Deleting removes its users, tables and backups for good.
+
+  dialog#tenant_modal.modal
+    div.modal-box
+      h3.font-bold.text-lg.mb-4 New tenant
+      form(action="/admin/tenants", method="POST")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Tenant name
+          input.input.w-full.font-mono(type="text", name="tenant", required=true, maxlength="32", pattern="[a-z0-9][a-z0-9_\-]*", autocomplete="off", autocapitalize="none", spellcheck="false")
+          span.block.text-xs.opacity-60.mt-1 Lowercase letters, digits, '_' and '-'. Users type it when they sign in, and it can't be changed later.
+        label.block.mb-3
+          span.block.text-sm.mb-1 Label (optional)
+          input.input.w-full(type="text", name="label", maxlength="100", autocomplete="off")
+        div.divider.text-sm First administrator
+        label.block.mb-3
+          span.block.text-sm.mb-1 User name
+          input.input.w-full.font-mono(type="text", name="user", required=true, value="admin", autocomplete="off")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Password (at least 12 characters)
+          input.input.w-full(type="password", name="password", required=true, minlength="12", autocomplete="new-password")
+        label.block.mb-3
+          span.block.text-sm.mb-1 Repeat password
+          input.input.w-full(type="password", name="confirm", required=true, minlength="12", autocomplete="new-password")
+        div.modal-action
+          button.btn.btn-ghost(type="button", onclick="tenant_modal.close()") Cancel
+          button.btn.btn-primary(type="submit") Create tenant

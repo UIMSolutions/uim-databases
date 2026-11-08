@@ -56,8 +56,10 @@ final class UnixController : IUnixController {
             return reply(RestStatus("UP"));
         case "POST /auth/login":
             auto input = objectOf(request);
-            auto r = access.login(textOf(input, "user"), textOf(input, "password"));
-            return reply(RestLogin(r.token, r.expiresInSeconds, RestUser(r.principal.name, roleName(r.principal.role), true)));
+            auto tenant = input["tenant"].type == Json.Type.string ? input["tenant"].get!string : "";
+            auto r = access.login(tenant, textOf(input, "user"), textOf(input, "password"));
+            return reply(RestLogin(r.token, r.expiresInSeconds,
+                RestUser(r.principal.name, roleName(r.principal.role), true, r.principal.tenant)));
         case "POST /auth/logout":
             requireRole(currentPrincipal(), HdbRole.viewer);
             access.logout(tokenOf(request));
@@ -163,6 +165,11 @@ unittest {
             assert(call("POST", "/auth/login", "", `{"user":"root","password":"wrong-password"}`).status == 401);
 
             auto root = login("root", "correct-horse-root");
+
+            // Der Mandant ist optional: ohne gilt default, ein anderer Mandant kennt root nicht
+            auto withTenant = call("POST", "/auth/login", "", `{"user":"root","password":"correct-horse-root","tenant":"Default"}`);
+            assert(withTenant.status == 200 && parseJsonString(withTenant.body)["user"]["tenant"].get!string == "default");
+            assert(call("POST", "/auth/login", "", `{"user":"root","password":"correct-horse-root","tenant":"acme"}`).status == 401);
             assert(sql(root, "CREATE TABLE t (id INTEGER, n NUMERIC)").status == 200);
             assert(sql(root, "INSERT INTO t VALUES (1, 12345678901234567890.55)").status == 200);
             assert(call("GET", "/tables", root).body == `["t"]`);
@@ -178,7 +185,7 @@ unittest {
             assert(call("GET", "/tables").status == 401);
 
             // Rollen entscheidet der Kern
-            access.createUser(Principal("root", HdbRole.admin, true), "vera", "correct-horse-vera", HdbRole.viewer);
+            access.createUser(Principal("root", HdbRole.admin, true, defaultTenant), "vera", "correct-horse-vera", HdbRole.viewer);
             auto vera = login("vera", "correct-horse-vera");
             assert(sql(vera, "SELECT * FROM t").status == 200);
             assert(sql(vera, "INSERT INTO t VALUES (2, 1)").status == 403);

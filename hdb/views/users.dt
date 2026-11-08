@@ -8,7 +8,10 @@ block content
         button.btn.btn-primary.btn-sm(type="button", onclick="user_modal.showModal()")
           i(data-lucide="user-plus", class="w-4 h-4")
           | New user
-      p.text-sm.opacity-70 Viewers read data. Editors also change rows. Admins also change tables and manage users.
+      - if (page.isSystem)
+        p.text-sm.opacity-70 Users of the system area. Admins manage tenants and other system users. They can't see tenant data.
+      - else
+        p.text-sm.opacity-70 Users of tenant #{page.tenant}. Viewers read data. Editors also change rows. Admins also change tables and manage users.
       div.overflow-x-auto
         table.table
           thead

@@ -18,6 +18,60 @@ Start: `dub run`
     curl -X POST localhost:8080/sql -H 'Content-Type: application/json' \
       -d '{"statement":"SELECT SUM(amount) FROM orders WHERE id >= 1"}'
 
+## Datentypen
+
+Jeder Spaltentyp entspricht einem primitiven EDM-Typ aus OData v4. In `CREATE TABLE` und in der REST-API gilt der SQL-Name, ein
+Synonym oder der EDM-Name, ohne Rücksicht auf die Schreibweise: `CREATE TABLE t (a Edm.Int16, b SMALLINT)`.
+
+| SQL | Synonyme | EDM | Literal in SQL |
+| --- | --- | --- | --- |
+| `BOOLEAN` | `BOOL` | `Edm.Boolean` | `TRUE`, `FALSE` |
+| `TINYINT` | `BYTE` | `Edm.Byte` | `255` (0 bis 255) |
+| `SBYTE` | | `Edm.SByte` | `-128` (-128 bis 127) |
+| `SMALLINT` | `INT16` | `Edm.Int16` | `32767` |
+| `INT32` | | `Edm.Int32` | `2147483647` |
+| `INTEGER` | `INT`, `BIGINT`, `INT64` | `Edm.Int64` | `42` |
+| `REAL` | `SINGLE` | `Edm.Single` | `0.1` |
+| `DECIMAL` | `DOUBLE` | `Edm.Double` | `1.5` |
+| `NUMERIC` | | `Edm.Decimal` | `12345678901234567890.55` |
+| `VARCHAR` | `NVARCHAR`, `TEXT` | `Edm.String` | `'Text'` |
+| `BLOB` | `BINARY`, `VARBINARY` | `Edm.Binary` | `X'00FF'` oder `'00FF'` |
+| `DATE` | | `Edm.Date` | `'2026-11-06'` |
+| `TIMESTAMP` | `DATETIMEOFFSET` | `Edm.DateTimeOffset` | `'2026-11-06T12:30:00+01:00'` |
+| `TIME` | `TIMEOFDAY` | `Edm.TimeOfDay` | `'12:30:00'` |
+| `DURATION` | | `Edm.Duration` | `'P1DT2H'` |
+| `GUID` | `UUID` | `Edm.Guid` | `'01234567-89ab-cdef-0123-456789abcdef'` |
+| `GEO` | `GEOMETRY`, `ST_GEOMETRY` | `Edm.Geometry` | `'POINT(13.4 52.5)'` |
+| `GEOGRAPHY` | | `Edm.Geography` | `'POINT(13.4 52.5)'`, Länge und Breite in Grad |
+| `LINK` | `URL` | `Edm.String` | `'https://example.org/a'` |
+
+`LINK` ist die einzige Ergänzung: EDM kennt keine URL, nach außen ist der Typ deshalb `Edm.String`. Erlaubt sind `http`,
+`https`, `ftp` und `mailto`, die Admin-Oberfläche zeigt die Werte als klickbaren Verweis.
+
+Vorsicht bei `DECIMAL`: Der Name ist aus Kompatibilität mit bestehenden Daten geblieben, der Typ ist ein double. Exakte
+Dezimalzahlen, etwa für Geldbeträge, sind `NUMERIC`.
+
+    CREATE TABLE orte (id GUID, aktiv BOOLEAN, preis NUMERIC, foto BLOB, lage GEOGRAPHY, seit TIMESTAMP, web LINK)
+    INSERT INTO orte VALUES ('01234567-89ab-cdef-0123-456789abcdef', TRUE, 19.99, X'89504E47',
+      'POINT(13.4 52.5)', '2026-11-06T12:30:00+01:00', 'https://example.org')
+    SELECT id FROM orte WHERE aktiv = TRUE AND seit >= '2026-01-01T00:00:00Z' ORDER BY preis
+
+Werte werden beim Schreiben geprüft, auch beim Laden von Dateien und Backups, und in eine einheitliche Form gebracht:
+
+- `TIMESTAMP` wird nach UTC umgerechnet und mit sieben Nachkommastellen gespeichert; der Versatz selbst geht verloren.
+- `DURATION` kennt nur Tage bis Sekunden, wie EDM; `PT36H` wird `P1DT12H`. Sortiert wird nach der Länge.
+- `NUMERIC` ist exakt und sortiert numerisch, `SUM` und `AVG` rechnen aber mit double und runden dabei.
+- `GEO` und `GEOGRAPHY` nehmen WKT für `POINT`, `LINESTRING` und `POLYGON` an, nur 2D. Es gibt keine räumlichen Funktionen wie
+  Abstand oder Schnitt; `Multi*`-Geometrien und Sammlungen fehlen.
+- `SUM` und `AVG` gehen nur auf Zahlen, `LIKE` nur auf Typen, die als Text gespeichert werden, also nicht auf Zahlen, `BOOLEAN`
+  und `DURATION`.
+
+`Edm.Stream` gibt es nicht: Es ist kein Spaltenwert, sondern Medieninhalt mit eigener Adresse. Für Binärdaten dient `BLOB`.
+Intern und über die REST-API ist `BLOB` Hex-Text; das verdoppelt die Größe, große Dateien gehören also nicht hinein.
+
+Die REST-API überträgt `BOOLEAN` als JSON-Wahrheitswert, `NUMERIC` als Text, damit keine Stellen verloren gehen, `GEO` als WKT
+und `BLOB` als Hex-Text. OData nutzt dagegen die Formate der Spezifikation, siehe dort.
+
 ## REST-API v1
 
 Typisierte vibe.d-Schnittstellen in `presentation/rest` (`interfaces.d`, `models.d`, `services.d`), registriert von
@@ -62,13 +116,40 @@ wie bei allen anderen Schnittstellen.
 - Nicht umgesetzt, Antwort 501: `$expand`, `$search`, `$apply`, `$compute`, `$batch`, weitere Funktionen und Arithmetik in
   `$filter`. Es gibt keine ETags und keine Beziehungen zwischen Tabellen.
 
-Typen: `INTEGER` ist `Edm.Int64`, `DECIMAL` ist `Edm.Double`, `VARCHAR` ist `Edm.String`.
+Typen: siehe [Datentypen](#datentypen). `Edm.Binary` ist Base64url, `/$value` liefert die Rohbytes. `Edm.Geometry` und
+`Edm.Geography` sind GeoJSON (`{"type":"Point","coordinates":[13.4,52.5]}`); beim Schreiben geht auch WKT als Text, weil der
+UI5-Client Eigenschaften nur mit einfachen Werten ändern kann. Mit `IEEE754Compatible=true` in `Accept` oder `Content-Type` sind
+`Edm.Int64`, `Edm.Decimal` und `@odata.count` in beide Richtungen Text. Ohne diese Angabe ist `Edm.Decimal` beim Lesen eine
+JSON-Zahl mit allen Stellen, beim Schreiben bleibt nur Text exakt.
 
-Schlüssel: Tabellen haben keinen Primärschlüssel, deshalb gilt eine Spalte `id` (`INTEGER` oder `VARCHAR`) als Schlüssel.
+Literale in `$filter`: `true`, `2026-11-06`, `2026-11-06T12:30:00Z`, `12:30:00`, GUIDs ohne Anführungszeichen, dazu
+`duration'P1D'`, `binary'AAEC'`, `geometry'SRID=0;Point(1 2)'` und `geography'SRID=4326;Point(1 2)'`. `contains`, `startswith`
+und `endswith` gehen nur auf `Edm.String`.
+
+Schlüssel: Tabellen haben keinen Primärschlüssel, deshalb gilt eine Spalte `id` (ganze Zahl, `VARCHAR` oder `GUID`) als Schlüssel.
 Der Kern erzwingt keine Eindeutigkeit: `POST` lehnt vorhandene Schlüssel ab, kommt ein Schlüssel trotzdem mehrfach vor
 (etwa nach SQL-Änderungen), antworten Zugriffe darauf mit 409 statt mehrere Zeilen zu ändern. Tabellen ohne `id` zeigen die
 berechnete Eigenschaft `__rowid`. Das ist nur die Position im Ergebnis, einzelne Zeilen sind dort nicht adressierbar (501).
 Tabellen oder Spalten, deren Name kein gültiger OData-Bezeichner ist (etwa `1a`), erscheinen nicht im Dienst.
+
+## Fiori-Frontend
+
+OpenUI5-Anwendung im Design Fiori 3 (`sap_fiori_3`) unter `http://localhost:8080/ui5/`, Quellen in `public/ui5/`. Sie spricht
+nur mit `/odata/v4` und der Anmeldung (`/api/v1/auth`) und braucht keinen Build-Schritt.
+
+- `FlexibleColumnLayout`: Tabellen, Zeilen, Details. Links wie `#/tables/orders/rows/1` lassen sich teilen und neu laden.
+- Seitennavigation (`sap.tnt.ToolPage`) mit Hamburger-Button in der ShellBar: Tabellen, Statistik, Backups (nur
+  Administratoren), Hilfe und Admin-Konsole. Sie klappt zu einer Symbolleiste ein, auf schmalen Bildschirmen schließt sie nach der Auswahl.
+- Sprache im Profilmenü: Englisch oder Deutsch, gespeichert im `localStorage`. Ohne Wahl gilt die Browsersprache. Die
+  Admin-Oberfläche und Fehlermeldungen des Servers sind davon nicht betroffen.
+- Suche, Sortierung, nachladende Liste, Zeilen anlegen, bearbeiten und löschen. Spalten kommen aus `$metadata`, neue Tabellen
+  brauchen keine Änderung am Client. Tabellen anlegen und Benutzer verwalten bleibt in der Administrationsoberfläche.
+- Das Modell nutzt die Gruppe `$direct`, weil der Dienst kein `$batch` kennt: jede Änderung ist eine eigene Anfrage. Beim
+  Speichern geht jedes geänderte Feld als eigenes `PATCH`, mehrere Felder einer Zeile werden also nicht atomar geändert.
+- Das Token liegt im `sessionStorage` und endet mit dem Browser-Tab. OpenUI5 kommt mit fester Version (1.148.10, Wartung bis
+  Q3/2027) vom CDN `sdk.openui5.org`. Dieses Skript läuft mit Zugriff auf das Token; für den Betrieb ohne fremdes CDN die
+  Bibliothek selbst ausliefern und die URL in `public/ui5/index.html` ändern.
+- `public/ui5/` ist ohne Anmeldung erreichbar und darf deshalb keine Daten oder Geheimnisse enthalten.
 
 ## Administrationsoberfläche
 
@@ -78,11 +159,32 @@ Tabellen oder Spalten, deren Name kein gültiger OData-Bezeichner ist (etwa `1a`
 - Tabellenansicht: Filtern (WHERE), Sortieren, Blättern, Zeilen anlegen, bearbeiten und löschen, CSV-Export,
   Tabelle leeren oder löschen, Speicherstatistik je Spalte.
 - SQL-Konsole: mehrere Anweisungen mit `;`, Abbruch beim ersten Fehler, `BEGIN` trägt über mehrere Ausführungen.
+- Statistik (`/admin/stats`): Speicherkennzahlen aller Tabellen je Spalte. Hilfe (`/admin/help`): Bedienung, SQL, Datentypen.
 
 Tabellen haben keinen Primärschlüssel. Bearbeiten und Löschen einer Zeile treffen deshalb alle Zeilen mit
 identischen Werten; die Oberfläche meldet die Anzahl.
 
 Die Oberfläche blendet aus, was die Rolle nicht darf; entschieden wird aber immer auf dem Server.
+
+## Unix Domain Socket
+
+Mit `UNIX_SOCKET=/run/hdb/hdb.sock` nimmt der Server zusätzlich zu HTTP Anfragen über einen Unix Domain Socket an
+(`presentation/unix`). Ohne die Variable gibt es keinen Socket. Pfade und JSON sind dieselben wie bei der REST-API:
+`/api/v1/health`, `/auth/login`, `/auth/logout`, `/sql`, `/tables`, `/stats`, `/checkpoint` und `/merge`.
+
+    POST /api/v1/sql
+    Authorization: Bearer <token>
+    Content-Length: 37
+
+    {"statement":"SELECT COUNT(*) FROM t"}
+
+Antwort: Zeile `STATUS 200`, Header mit `Content-Length`, Leerzeile, Body. Eine Verbindung bedient mehrere Anfragen nacheinander.
+
+- Der Socket hat die Rechte 0600. Das ersetzt die Anmeldung nicht: jede Anfrage braucht ein Token, Rollen gelten wie bei HTTP.
+- Ein Body hat höchstens 16 MB, Header höchstens 64 KB. Eine ungültige Nachricht wird mit 400 oder 413 beantwortet, danach
+  endet die Verbindung. Ohne Anfrage endet sie nach 5 Minuten.
+- Ein verwaister Socket nach einem Absturz wird beim Start ersetzt. Antwortet er noch oder liegt dort etwas anderes als ein
+  Socket, bricht der Start ab; es wird nichts gelöscht.
 
 ## Benutzer und Rechte
 
@@ -144,6 +246,50 @@ eindeutig. `GET /stats` und `GET /api/v1/stats` zeigen `storage`.
   Dateien werden nacheinander geschrieben, das Log zuletzt.
 - Eine beschädigte Datei, oder derselbe Tabellenname in zwei Speichern, bricht den Start ab.
 - Die Dateien sind Klartext. Sicherungen müssen `TABLES_DIR` einschließen.
+
+## Sichern und Wiederherstellen
+
+Nur für die Rolle `admin`, in der Administrationsoberfläche (`/admin/backups`), im Fiori-Frontend und per REST:
+
+    curl -X POST localhost:8080/api/v1/backups -H "Authorization: Bearer $TOKEN" \
+      -H 'Content-Type: application/json' -d '{"label": "vor dem Update"}'
+    curl localhost:8080/api/v1/backups -H "Authorization: Bearer $TOKEN"
+    curl -o sicherung.hdbbak localhost:8080/api/v1/backups/<name>/content -H "Authorization: Bearer $TOKEN"
+    curl -X POST --data-binary @sicherung.hdbbak localhost:8080/api/v1/backups/import \
+      -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/octet-stream'
+    curl -X POST localhost:8080/api/v1/backups/<name>/restore -H "Authorization: Bearer $TOKEN"
+
+- Eine Sicherung ist eine Datei (`*.hdbbak`, Rechte 0600) in `BACKUP_DIR` (Standard `data/backups`). Sie enthält alle Tabellen
+  aller Speicher mit Schema, Speicherart und exakten Werten und endet mit einer SHA-256-Prüfsumme. Sie ist nicht verschlüsselt.
+- Sichern braucht einen ruhenden Stand: bei einer offenen Transaktion wird abgelehnt. Die Datenbank bleibt sonst benutzbar,
+  ist aber während des Kopierens gesperrt. Eine Sicherung liegt vollständig im Speicher, auch beim Hoch- und Herunterladen.
+- Wiederherstellen ersetzt alle Tabellen. Die Datei wird vorher vollständig geprüft, dann entsteht automatisch die
+  Sicherheitskopie `before-restore`, mit der sich auch ein Erfolg rückgängig machen lässt. Schlägt das Ersetzen fehl, wird der alte
+  Stand zurückgespielt. Bei einem Absturz mitten im Ersetzen kann ein Mischzustand bleiben: dann die Sicherheitskopie
+  wiederherstellen. Sicherheitskopien werden nicht automatisch gelöscht.
+- Benutzer gehören nicht zur Sicherung: eine Wiederherstellung sperrt niemanden aus und bringt keine alten Passwörter zurück.
+  `USERS_FILE` muss getrennt gesichert werden.
+- Hochgeladene Dateien gelten als nicht vertrauenswürdig. Die Prüfsumme erkennt Beschädigung, nicht Fälschung; Namen, Typen und
+  Werte werden deshalb immer geprüft. Hochladen stellt noch nichts wieder her.
+- `MAX_REQUEST_MB` (Standard 256) begrenzt Anfragen und damit die Größe beim Hochladen. Ohne Anmeldung gelten höchstens 64 KB.
+- Sicherungen liegen auf demselben Datenträger wie die Daten: für den Schutz vor dessen Ausfall müssen sie zusätzlich an
+  einen anderen Ort kopiert werden.
+
+Zeitplan und Aufbewahrung sind standardmäßig aktiv: alle 24 Stunden eine Sicherung, 7 geplante und 5 Sicherheitskopien bleiben.
+Einstellbar in beiden Oberflächen und per `GET|PUT /api/v1/backups/schedule`, gespeichert in `BACKUP_DIR/schedule.json`.
+
+    curl -X PUT localhost:8080/api/v1/backups/schedule -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"enabled": true, "intervalHours": 6, "keepScheduled": 28, "keepSafety": 5}'
+
+- Die erste Sicherung entsteht kurz nach dem Start, sobald es Tabellen gibt. Ein Neustart setzt die Frist nicht zurück.
+  `BACKUP_TICK_SECONDS` (Standard 60) legt fest, wie oft auf Fälligkeit geprüft wird.
+- Die Aufbewahrung löscht nur die Arten `scheduled` und `safety`, die ältesten zuerst und erst nach einer erfolgreichen neuen
+  Sicherung. Eigene und hochgeladene Sicherungen bleiben immer. Die Labels `scheduled` und `before-restore` sind deshalb reserviert.
+  Weniger aufzubewahren wirkt sofort.
+- Scheitert eine geplante Sicherung, etwa wegen einer offenen Transaktion, erscheint das in den Oberflächen und im Log; nach
+  5 Minuten folgt der nächste Versuch.
+- Die Aufbewahrung zählt, sie prüft keinen Inhalt: ein unbemerkt falscher Datenstand verdrängt nach `keepScheduled` Läufen alle
+  älteren geplanten Stände. Wichtige Stände deshalb als eigene Sicherung anlegen.
 
 ## Persistenz
 
