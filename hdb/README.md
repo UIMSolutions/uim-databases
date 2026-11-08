@@ -169,6 +169,40 @@ identischen Werten; die Oberfläche meldet die Anzahl.
 
 Die Oberfläche blendet aus, was die Rolle nicht darf; entschieden wird aber immer auf dem Server.
 
+## Admin-Client (GTK)
+
+Ein eigenes Desktop-Programm `hdb-admin` auf Basis von GtkD (GTK 3), Quellen in `source/uim/hdb/presentation/gui`.
+Es spricht den Server nur über die REST-API an, mit derselben Anmeldung und denselben Rechten wie jeder andere
+Client, und enthält keinen Server-Code (kein vibe.d, kein OpenSSL).
+
+    dub build --config=gui                      # erzeugt ./hdb-admin
+    ./hdb-admin --server=http://localhost:8080  # oder HDB_URL=... ./hdb-admin
+    dub test --config=gui                       # Tests des API-Clients
+
+Voraussetzungen zur Laufzeit: GTK 3 und libcurl. Nach der Anmeldung (Server, Mandant, Benutzer, Passwort) zeigt die
+Seitenleiste nur, was die Rechte erlauben:
+
+| Seite | Recht | Inhalt |
+|---|---|---|
+| Tables | Tabellenrechte | Tabellen und Zeilen, WHERE-Filter, Seiten zu 100 Zeilen |
+| SQL Console | wie SQL | Anweisungen mit Strg+Enter; `BEGIN` hält die Transaktion bis `COMMIT`/`ROLLBACK` |
+| Statistics | – | Speicherart und Zeilen je sichtbarer Tabelle |
+| Backups | `manageBackups` | anlegen, wiederherstellen, löschen |
+| Users | `manageAccess` | anlegen, Rolle, aktivieren/deaktivieren, Passwort zurücksetzen, löschen |
+| Tenants | `viewTenants`/`manageTenants` | nur im Bereich `system`: Mandanten anlegen, ändern, löschen |
+
+- Endet die Sitzung (abgelaufen, Passwort geändert, Netz nicht erlaubt), fragt der Client erneut nach der Anmeldung.
+- Anfragen laufen synchron mit 5 Sekunden Verbindungs- und 120 Sekunden Gesamtzeitlimit; währenddessen reagiert das
+  Fenster nicht.
+- Rollen, Tabellenfreigaben, erlaubte Netze, Replikation und Zeitplan der Sicherungen gibt es bisher nur in der
+  Administrationsoberfläche im Browser.
+- Ohne Desktop lässt sich der Client im Browser ansehen: `broadwayd :5 &` und
+  `GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 ./hdb-admin`, dann http://localhost:8085 öffnen.
+
+Aufbau: `api.d` ist der @safe-Client für die REST-API hinter dem Port `IHttpTransport` (getestet mit einem Fake),
+`transport.d` der echte Transport über libcurl, `widgets.d`, `pages.d`, `login.d` und `window.d` die GTK-Oberfläche.
+GtkD ist nicht @safe, die Oberflächenmodule bleiben deshalb @system und enthalten keine eigene Logik.
+
 ## Unix Domain Socket
 
 Mit `UNIX_SOCKET=/run/hdb/hdb.sock` nimmt der Server zusätzlich zu HTTP Anfragen über einen Unix Domain Socket an
