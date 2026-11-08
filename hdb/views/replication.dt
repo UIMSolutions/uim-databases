@@ -1,0 +1,81 @@
+extends layout
+
+block content
+  div.flex.flex-col.gap-6.max-w-4xl
+    div.card.bg-base-100.shadow
+      div.card-body
+        div.flex.items-center.justify-between.gap-2
+          h2.card-title This tenant as a replica
+          - if (!status.replica)
+            span.badge.badge-ghost Off
+          - else if (status.state == "streaming")
+            span.badge.badge-success Up to date
+          - else if (status.state == "error")
+            span.badge.badge-error Error
+          - else
+            span.badge.badge-warning #{status.state == "syncing" ? "Full sync" : "Connecting"}
+        p.text-sm.opacity-70 A replica copies all tables of a tenant on another hdb server and keeps them up to date. While it runs, this tenant is read-only. The first run replaces all tables of this tenant with those of the source.
+        - if (status.replica)
+          div.overflow-x-auto
+            table.table.table-sm
+              tbody
+                tr
+                  th.w-48 Source
+                  td.font-mono #{status.url}, tenant #{status.sourceTenant}, user #{status.user}
+                tr
+                  th Applied changes
+                  td #{status.appliedSequence}
+                tr
+                  th Last successful run (UTC)
+                  td #{status.lastSync.length ? status.lastSync : "Not yet"}
+                - if (status.lastError.length)
+                  tr
+                    th Last error
+                    td.text-error.break-words #{status.lastError}
+          div.flex.flex-wrap.gap-2
+            form(action="/admin/replication/resync", method="POST")
+              button.btn.btn-sm(type="submit")
+                i(data-lucide="rotate-ccw", class="w-4 h-4")
+                | Full sync now
+            form(action="/admin/replication/stop", method="POST", data-confirm="Stop the replication? This tenant keeps its current data and accepts changes again. Starting again later replaces all tables.")
+              button.btn.btn-sm.btn-warning(type="submit")
+                i(data-lucide="circle-stop", class="w-4 h-4")
+                | Stop replication
+
+        form.mt-2(action="/admin/replication", method="POST", data-confirm=status.replica ? "" : "Start the replication? All tables of this tenant are replaced with those of the source, and this tenant becomes read-only.")
+          div.grid.gap-3(class="md:grid-cols-2")
+            label.block(class="md:col-span-2")
+              span.block.text-sm.mb-1 Source server URL
+              input.input.w-full.font-mono(type="url", name="url", required=true, value=status.url, placeholder="https://primary.example.org:8080", autocomplete="off")
+            label.block
+              span.block.text-sm.mb-1 Tenant on the source
+              input.input.w-full.font-mono(type="text", name="tenant", value=status.sourceTenant, placeholder="default", autocomplete="off", autocapitalize="none", spellcheck="false")
+            label.block
+              span.block.text-sm.mb-1 Check every (seconds)
+              input.input.w-full(type="number", name="interval", min="1", max="3600", value=status.intervalSeconds ? status.intervalSeconds : 2)
+            label.block
+              span.block.text-sm.mb-1 User on the source
+              input.input.w-full.font-mono(type="text", name="user", required=true, value=status.user, autocomplete="off")
+            label.block
+              span.block.text-sm.mb-1 Password
+              input.input.w-full(type="password", name="password", required=!status.replica, placeholder=status.replica ? "Unchanged" : "", autocomplete="new-password")
+          p.text-xs.opacity-60.mt-2 The password is stored on this server so it can sign in again. A user with the viewer role on the source is enough.
+          button.btn.btn-primary.mt-3(type="submit") #{status.replica ? "Save" : "Start replication"}
+
+    div.card.bg-base-100.shadow
+      div.card-body
+        h2.card-title This tenant as a source
+        p.text-sm.opacity-70 Other hdb servers can replicate this tenant. Create a user with the viewer role for them, and enter this server's URL, the tenant #{page.tenant} and that user on the replica.
+        div.overflow-x-auto
+          table.table.table-sm
+            tbody
+              tr
+                th.w-48 Changes so far
+                td #{status.sequence}
+              tr
+                th Oldest change available
+                td #{status.retainedFrom}
+              tr
+                th Epoch
+                td.font-mono.text-xs #{status.epoch}
+        p.text-xs.opacity-60 The change count starts again after a restart of this server or a restore, and replicas then fetch a full copy. A replica that falls further behind than the available changes does the same.

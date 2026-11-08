@@ -71,6 +71,7 @@ block content
         div.mockup-code.text-sm
           pre: code CREATE TABLE orders (id INTEGER, customer VARCHAR, amount NUMERIC)
           pre: code CREATE TABLE small (id INTEGER, name VARCHAR) USING JSON
+          pre: code CREATE TABLE archive (id INTEGER, note VARCHAR) USING BSON
           pre: code INSERT INTO orders VALUES (1, 'ACME', 99.50)
           pre: code UPDATE orders SET amount = 120.5 WHERE id = 1
           pre: code DELETE FROM orders WHERE customer = 'ACME'
@@ -203,6 +204,14 @@ block content
               tr
                 td.font-mono JSON
                 td One JSON file per table
+                td Rewriting the whole file
+              tr
+                td.font-mono BINARY
+                td One compact binary file per table, with a checksum. Numbers stay exact to the bit.
+                td Rewriting the whole file
+              tr
+                td.font-mono BSON
+                td One BSON document per table. You can read it with bsondump, mongosh or any MongoDB driver.
                 td Rewriting the whole file
         p.text-sm.opacity-70 For large or frequently changed tables, MEMORY is the better choice.
 

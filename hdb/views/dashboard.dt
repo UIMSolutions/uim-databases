@@ -94,7 +94,9 @@ block content
             option(value="MEMORY", selected=true) Memory: restored from the statement log
             option(value="FILE") File: one compact text file per table
             option(value="JSON") JSON: one readable JSON file per table
-          span.block.text-xs.opacity-70.mt-1 File and JSON rewrite the whole file on every change, so they suit small tables. Storage can't be changed later.
+            option(value="BINARY") Binary: one compact binary file per table, with checksum
+            option(value="BSON") BSON: one BSON document per table, readable with bsondump and MongoDB tools
+          span.block.text-xs.opacity-70.mt-1 File, JSON, Binary and BSON rewrite the whole file on every change, so they suit small tables. Storage can't be changed later.
         p.text-sm.mb-1 Columns
         div#column-list.flex.flex-col.gap-2
           div.flex.gap-2(data-column-row="1")
