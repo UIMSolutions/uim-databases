@@ -231,6 +231,16 @@ private string cleanLabel(string label) {
     return result;
 }
 
+/// Ein vollständiger Stand im Sicherungsformat, etwa für die Übertragung bei der Replikation.
+string encodeSnapshot(string label, TableSnapshot[] tables) {
+    return encode(label, wholeSeconds().toISOExtString, tables);
+}
+
+/// Liest und prüft einen Stand im Sicherungsformat vollständig, inklusive Prüfsumme; wirft bei jedem Fehler.
+TableSnapshot[] decodeSnapshot(string content) {
+    return decode(content).tables;
+}
+
 private struct Header {
     string label, created;
     long tables, rows;

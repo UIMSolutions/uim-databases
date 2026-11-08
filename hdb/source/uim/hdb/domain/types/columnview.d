@@ -6,13 +6,12 @@
 module uim.hdb.domain.types.columnview;
 
 import uim.hdb;
-import uim.hdb.domain.value;
 import std.algorithm : map, sort, uniq;
 import std.array : array;
 import std.exception : enforce;
 import std.range : assumeSorted;
 
-/// Momentaufnahme einer Spalte: erlaubt Lesen einzelner Werte, ohne die Spalte selbst anzufassen.
+/// Snapshot of a column: allows you to read individual values without modifying the column itself.
 struct ColumnView {
     /* private */
     Value[] mainDict;

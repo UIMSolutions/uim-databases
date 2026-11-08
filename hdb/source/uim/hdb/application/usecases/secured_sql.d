@@ -5,6 +5,7 @@ import std.string : chomp, split, strip, toUpper;
 
 /// Checks each operation against the role of the requesting identity. All incoming adapters operate
 /// solely on this basis, so there is no way to bypass the authorization system. Without an identity, the request is rejected.
+
 final class SecuredSqlUseCase : ISqlUseCase {
     private ISqlUseCase inner;
     private Principal delegate() current;

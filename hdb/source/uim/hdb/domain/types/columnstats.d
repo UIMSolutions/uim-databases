@@ -10,6 +10,8 @@ import uim.hdb;
 import uim.hdb.domain.enumerations.columntype;
 import vibe.d;
 
+@safe:
+
 struct ColumnStats {
     string name;
     size_t rows, mainRows, deltaRows, mainDistinct, deltaDistinct;

@@ -1,6 +1,12 @@
+/****************************************************************************************************************
+* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
+* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file.
+* Authors: Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
+*****************************************************************************************************************/
 module uim.hdb.domain.types.packed_vector;
 
-/// Bitgepackter Vektor: jeder Code belegt nur so viele Bits, wie das Dictionary braucht.
+@safe:
+/// Bit-packed vector: each code occupies only as many bits as the dictionary requires.
 struct PackedVector {
     private ulong[] words;
     private uint bits;

@@ -83,6 +83,7 @@ struct TenantStorage {
     ITableRepository tables;
     IStatementLog log;
     IBackupStore backups;
+    IReplicationConfigStore replication;
 }
 
 /// Ausgehender Port: getrennte Ablage je Mandant (Tabellen, Protokoll, Sicherungen).
@@ -91,6 +92,93 @@ interface ITenantStorage {
     bool exists(string tenant);
     /// Löscht alle Daten und Sicherungen des Mandanten endgültig.
     void purge(string tenant);
+}
+
+/// Ausgehender Port des Kerns: erfährt jede bestätigte Änderung, in der Reihenfolge der Commits.
+/// Wird unter der Sperre des Kerns aufgerufen und darf deshalb nicht blockieren.
+interface IChangeSink {
+    /// Schreibende Anweisungen einer Änderung: eine einzelne Anweisung oder alle einer Transaktion.
+    void committed(string[] statements);
+    /// Der ganze Stand wurde ersetzt (Wiederherstellung): einzelne Änderungen reichen nicht mehr.
+    void replaced();
+}
+
+/// Eine bestätigte Änderung im Änderungsstrom einer Quelle.
+struct Change {
+    ulong sequence;
+    string[] statements;
+}
+
+/// Antwort auf eine Abfrage des Änderungsstroms. `resync`: die Position ist nicht mehr lieferbar
+/// (andere Epoche oder zu alt), das Ziel braucht einen vollständigen Stand.
+struct ChangeBatch {
+    string epoch;
+    ulong sequence; // letzte vergebene Nummer der Quelle
+    bool resync;
+    Change[] changes;
+}
+
+/// Vollständiger Stand einer Quelle samt Position im Änderungsstrom.
+struct ReplicationSnapshot {
+    string epoch;
+    ulong sequence;
+    TableSnapshot[] tables; // über HTTP im Sicherungsformat, siehe encodeSnapshot
+}
+
+/// Woher ein Ziel seine Daten bezieht. `password` verlässt den Server nie über eine API.
+struct ReplicationConfig {
+    bool enabled;
+    string url; // Basis-URL der Quelle, etwa https://primary:8080
+    string tenant; // Mandant auf der Quelle
+    string user;
+    string password;
+    int intervalSeconds = 2;
+}
+
+/// Zustand der Replikation eines Mandanten, für die Oberflächen.
+struct ReplicationStatus {
+    // als Quelle
+    string epoch;
+    ulong sequence;
+    ulong retainedFrom; // älteste noch lieferbare Nummer
+    // als Ziel
+    bool replica;
+    string url, sourceTenant, user;
+    int intervalSeconds;
+    string state; // off, connecting, syncing, streaming oder error
+    string sourceEpoch;
+    ulong appliedSequence;
+    string lastSync, lastError; // ISO-Zeit in UTC
+}
+
+/// Eingehender Port: Replikation eines Mandanten. Lesen des Stroms braucht die Rolle viewer, alles andere admin.
+interface IReplicationUseCase {
+    ReplicationSnapshot replicationSnapshot();
+    ChangeBatch replicationChanges(string epoch, ulong since, size_t max);
+    ReplicationStatus replicationStatus();
+    /// Macht den Mandanten zum Ziel der Quelle; er ist danach für Schreibzugriffe gesperrt.
+    /// Ein leeres Passwort behält das bisherige.
+    ReplicationStatus configureReplica(ReplicationConfig config);
+    /// Löst die Verbindung: der Mandant behält seinen Stand und ist wieder beschreibbar.
+    ReplicationStatus stopReplica();
+    /// Holt beim nächsten Lauf einen vollständigen Stand.
+    ReplicationStatus resyncReplica();
+}
+
+/// Ausgehender Port: Zugriff eines Ziels auf seine Quelle.
+interface IReplicationClient {
+    /// Wirft, wenn die URL nicht verwendet werden darf (Schema, erlaubte Hosts).
+    void validate(string url);
+    /// Gibt ein Token zurück; wirft AuthenticationRequired bei falschen Zugangsdaten.
+    string login(string url, string tenant, string user, string password);
+    ReplicationSnapshot snapshot(string url, string token);
+    ChangeBatch changes(string url, string token, string epoch, ulong since, size_t max);
+}
+
+/// Ausgehender Port: Einstellungen der Replikation eines Mandanten.
+interface IReplicationConfigStore {
+    ReplicationConfig load();
+    void save(ReplicationConfig config);
 }
 
 /// Stand einer Tabelle: alles, was eine Sicherung braucht.

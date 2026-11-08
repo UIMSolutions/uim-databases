@@ -27,6 +27,13 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
     private size_t mergesCompleted;
     private string lastMergeError;
     private bool recovering; // beim Einspielen des Logs keine Hintergrund-Merges starten
+    private IChangeSink sink; // erfährt bestätigte Änderungen (Replikation); null: niemand
+
+    /// Empfänger aller bestätigten Änderungen, für alle Speicherarten. Das Einspielen des Logs beim Start meldet nichts.
+    void changeSink(IChangeSink sink) {
+        synchronized (this)
+            this.sink = sink;
+    }
 
     this(ITableRepository repo, IStatementLog log = null) {
         this.repo = repo;
@@ -272,6 +279,8 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
                     durable.flush(t.name);
             }
             checkpoint(); // das Log enthält danach genau die wiederhergestellten Speicher-Tabellen
+            if (sink !is null)
+                sink.replaced();
         }
         mergeDeltaAsync();
     }
@@ -327,6 +336,11 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
                     if (++pending >= checkpointEvery)
                         checkpoint();
                 }
+                // Erst nach dem dauerhaften Schreiben: gemeldet wird nur, was einen Neustart übersteht
+                if (tx !is null)
+                    tx.changes ~= s;
+                else if (sink !is null)
+                    sink.committed([s]);
             }
             if (tx !is null)
                 tx.lastActive = MonoTime.currTime;
@@ -362,6 +376,8 @@ final class SqlService : ISqlUseCase, IDatabaseSnapshots {
             throw e;
         }
         pending += logged;
+        if (sink !is null && tx.changes.length)
+            sink.committed(tx.changes);
         tx = null;
         if (log !is null && pending >= checkpointEvery)
             checkpoint();
@@ -1612,6 +1628,7 @@ private final class Transaction {
     string[] stmts; // schreibende Anweisungen für das Log
     string[string] flushes; // Tabellen mit eigener Datei, die beim COMMIT geschrieben werden
     size_t fileWrites; // Anweisungen auf diesen Tabellen
+    string[] changes; // alle schreibenden Anweisungen, für den Änderungsstrom
 }
 
 unittest {
