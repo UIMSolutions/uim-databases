@@ -108,6 +108,10 @@ html(lang="en", data-theme="dark")
                   a(href="/admin/roles", class=page.active == "roles" ? "menu-active" : "")
                     i(data-lucide="shield-check", class="w-4 h-4")
                     | Roles
+                li
+                  a(href="/admin/network", class=page.active == "network" ? "menu-active" : "")
+                    i(data-lucide="network", class="w-4 h-4")
+                    | Allowed networks
               - if (page.canManageBackups)
                 li
                   a(href="/admin/backups", class=page.active == "backups" ? "menu-active" : "")

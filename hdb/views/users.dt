@@ -21,8 +21,7 @@ block content
             tr
               th Name
               th Role
-              - if (view.tables)
-                th Table access
+              th Additional roles
               th Status
               th.text-right Actions
           tbody
@@ -41,9 +40,8 @@ block content
                         option(value="", selected=u.role.length == 0) (none)
                       - foreach (r; view.roles)
                         option(value=r, selected=r == u.role) #{r}
-                - if (view.tables)
-                  td
-                    a.link.link-hover.text-sm(href="/admin/users/#{u.name}/grants") #{u.grants == 0 ? "None" : u.grants == 1 ? "1 grant" : u.grants.to!string ~ " grants"}
+                td
+                  a.link.link-hover.text-sm(href="/admin/users/#{u.name}/grants") #{u.grants == 0 ? "None" : u.grants == 1 ? "1 grant" : u.grants.to!string ~ " grants"}
                 td
                   - if (u.active)
                     span.badge.badge-success.badge-sm Active

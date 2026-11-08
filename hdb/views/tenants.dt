@@ -16,6 +16,7 @@ block content
               th Tenant
               th Label
               th.text-right Users
+              th Networks
               th Status
               th.text-right Actions
           tbody
@@ -30,6 +31,12 @@ block content
                     input.input.input-sm.w-48(type="text", name="label", value=t.label, maxlength="100", aria-label="Label of #{t.name}")
                     button.btn.btn-ghost.btn-xs(type="submit") Save
                 td.text-right #{t.users}
+                td
+                  details
+                    summary.cursor-pointer.text-sm #{t.networkCount == 0 ? "All" : t.networkCount == 1 ? "1 network" : t.networkCount.to!string ~ " networks"}
+                    form.mt-2(action="/admin/tenants/#{t.name}/networks", method="POST")
+                      textarea.textarea.textarea-sm.w-56.font-mono(name="networks", rows="4", spellcheck="false", aria-label="Allowed networks of #{t.name}") #{t.networksText}
+                      button.btn.btn-ghost.btn-xs.mt-1(type="submit") Save
                 td
                   - if (t.active)
                     span.badge.badge-success.badge-sm Active
@@ -49,7 +56,7 @@ block content
                       button.btn.btn-ghost.btn-xs.text-error(type="submit") Delete
             - if (rows.length == 0)
               tr
-                td.opacity-60(colspan="5") No tenants yet
+                td.opacity-60(colspan="6") No tenants yet
       p.text-sm.opacity-70 Disable a tenant before you delete it. Deleting removes its users, tables and backups for good.
 
   dialog#tenant_modal.modal

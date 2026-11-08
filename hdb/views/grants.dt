@@ -1,54 +1,83 @@
 extends layout
 
 block content
-  div.card.bg-base-100.shadow.max-w-3xl
+  div.card.bg-base-100.shadow.max-w-4xl
     div.card-body
       div.flex.items-center.justify-between.gap-2
         h2.card-title
-          | Table access of
+          | Additional roles of
           span.font-mono #{view.user}
         a.btn.btn-ghost.btn-sm(href="/admin/users")
           i(data-lucide="arrow-left", class="w-4 h-4")
           | Users
       p.text-sm.opacity-70
         - if (view.role.length)
-          | Role in the tenant: #{view.role}. These grants add permissions on single tables on top of it.
+          | Main role: #{view.role}. The roles below add permissions on top of it.
         - else
-          | No role in the tenant: this user sees only the tables below.
-        |  Only the table permissions of a role count here (select, insert, update, delete, drop). A grant can name a table that doesn't exist yet.
+          | No main role: this user has only the permissions below.
+        - if (view.tenantArea)
+          |  With a table, only the table permissions of a role count (select, insert, update, delete, drop). Without a table, the role applies to the whole tenant.
+        |  Start and end are optional and in UTC. Outside that time a grant has no effect, also in sessions that are already open.
       div.overflow-x-auto
         table.table
           thead
             tr
-              th Table
+              - if (view.tenantArea)
+                th Table
               th Role
+              th From (UTC)
+              th Until (UTC)
+              th Status
               th.text-right Actions
           tbody
-            - foreach (g; view.grants)
-              tr
-                td.font-mono #{g.table}
-                td.font-mono #{g.role}
+            - foreach (row; view.grants)
+              tr(class=row.state == "expired" ? "opacity-50" : "")
+                - if (view.tenantArea)
+                  td.font-mono #{row.grant.table.length ? row.grant.table : "(whole tenant)"}
+                td.font-mono #{row.grant.role}
+                td.font-mono.text-xs #{row.grant.from.length ? row.grant.from : "—"}
+                td.font-mono.text-xs #{row.grant.until.length ? row.grant.until : "—"}
+                td
+                  - if (row.state == "active")
+                    span.badge.badge-success.badge-sm #{row.grant.temporary ? "Active" : "Permanent"}
+                  - else if (row.state == "scheduled")
+                    span.badge.badge-info.badge-sm Scheduled
+                  - else
+                    span.badge.badge-ghost.badge-sm Expired
                 td.text-right
                   form.inline(action="/admin/users/#{view.user}/grants", method="POST")
                     input(type="hidden", name="action", value="remove")
-                    input(type="hidden", name="table", value=g.table)
-                    input(type="hidden", name="role", value=g.role)
+                    input(type="hidden", name="table", value=row.grant.table)
+                    input(type="hidden", name="role", value=row.grant.role)
+                    input(type="hidden", name="from", value=row.grant.from)
+                    input(type="hidden", name="until", value=row.grant.until)
                     button.btn.btn-ghost.btn-xs.text-error(type="submit") Remove
             - if (view.grants.length == 0)
               tr
-                td.opacity-60(colspan="3") No table access yet
+                td.opacity-60(colspan="6") No additional roles yet
+      - if (view.hasExpired)
+        form(action="/admin/users/#{view.user}/grants", method="POST")
+          input(type="hidden", name="action", value="purge")
+          button.btn.btn-ghost.btn-sm(type="submit") Remove expired grants
 
-      form.flex.flex-wrap.items-end.gap-2.mt-2(action="/admin/users/#{view.user}/grants", method="POST")
+      form.grid.gap-2.mt-2.items-end(action="/admin/users/#{view.user}/grants", method="POST", class="md:grid-cols-5")
         input(type="hidden", name="action", value="add")
-        label.block.grow
-          span.block.text-sm.mb-1 Table
-          input.input.w-full.font-mono(type="text", name="table", required=true, pattern="\\w+", list="known-tables", autocomplete="off")
-          datalist#known-tables
-            - foreach (t; view.tables)
-              option(value=t)
+        - if (view.tenantArea)
+          label.block
+            span.block.text-sm.mb-1 Table (empty: whole tenant)
+            input.input.w-full.font-mono(type="text", name="table", pattern="\\w*", list="known-tables", autocomplete="off")
+            datalist#known-tables
+              - foreach (t; view.tables)
+                option(value=t)
         label.block
           span.block.text-sm.mb-1 Role
-          select.select.w-48(name="role", required=true)
+          select.select.w-full(name="role", required=true)
             - foreach (r; view.roles)
               option(value=r) #{r}
+        label.block
+          span.block.text-sm.mb-1 From (UTC, optional)
+          input.input.w-full(type="datetime-local", name="from")
+        label.block
+          span.block.text-sm.mb-1 Until (UTC, optional)
+          input.input.w-full(type="datetime-local", name="until")
         button.btn.btn-primary(type="submit") Grant

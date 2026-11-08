@@ -93,7 +93,8 @@ Typisierte vibe.d-Schnittstellen in `presentation/rest` (`interfaces.d`, `models
 | `POST /api/v1/tables/:name/rows` | `{"values": [1, "a", null]}`, ein Wert je Spalte |
 
 Fehler: `{"statusMessage": "..."}` mit 400 (ungültiges SQL, gesperrte Datenbank) oder 404 (Tabelle unbekannt).
-Dazu `GET|PUT|DELETE /api/v1/replication…` (siehe Replikation), `POST /api/v1/auth/login|logout|password`, `GET /api/v1/auth/me` und `GET|POST /api/v1/users`,
+Dazu `GET|PUT /api/v1/network`, `PUT /api/v1/tenants/:name/networks` (siehe Erlaubte Netze),
+`GET|PUT|DELETE /api/v1/replication…` (siehe Replikation), `POST /api/v1/auth/login|logout|password`, `GET /api/v1/auth/me` und `GET|POST /api/v1/users`,
 `PUT|DELETE /api/v1/users/:name`, `POST /api/v1/users/:name/password`, `PUT /api/v1/users/:name/grants`,
 `GET /api/v1/roles`, `PUT|DELETE /api/v1/roles/:name` (siehe Benutzer und Rechte), für Systemadministratoren `GET|POST /api/v1/tenants`
 und `PUT|DELETE /api/v1/tenants/:name` (siehe Mandanten). Fehlende Anmeldung ergibt 401, fehlende Rechte 403.
@@ -287,6 +288,46 @@ freigegebenen Tabellen.
 - Eigene Rollen liegen in `ROLES_FILE` (Standard `data/hdb-roles.json`), Rollen und Freigaben der Benutzer in `USERS_FILE`.
 
 Eine offene Transaktion kann nur ihr Besitzer verwenden.
+
+### Befristete Rechte
+
+Zusätzliche Rollen eines Benutzers (unter `/admin/users/<name>/grants` oder `PUT /api/v1/users/<name>/grants`) lassen
+sich befristen. Ohne Tabelle gilt eine solche Rolle im ganzen Mandanten, im Bereich `system` auf dem Server, etwa
+„admin bis Freitag 18 Uhr“:
+
+    curl -X PUT localhost:8080/api/v1/users/vic/grants -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"grants":[{"table":"","role":"admin","until":"2026-11-13T17:00:00Z"},
+                     {"table":"orders","role":"editor","from":"2026-11-10T08:00","until":"2026-11-10T18:00"}]}'
+
+- `from` (einschließlich) und `until` (ausschließlich) sind optional und UTC; ohne Zeitzone gilt UTC. Gespeichert wird
+  kanonisch (`2026-11-10T08:00:00Z`).
+- Außerhalb des Zeitraums hat eine Freigabe keine Wirkung. Die Rechte werden bei jeder Anfrage neu aufgelöst: eine
+  Freigabe beginnt und endet auf die Sekunde, auch in bereits offenen Sitzungen.
+- Antworten nennen den Zustand (`active`, `scheduled`, `expired`). Abgelaufene Freigaben bleiben zur Nachvollziehbarkeit
+  stehen, bis man sie entfernt („Remove expired grants“); neu anlegen lassen sich abgelaufene nicht.
+- Befristete Rollen zählen nicht für die Regel, dass ein aktiver Benutzer `manageAccess` behalten muss: dafür zählt nur
+  die dauerhafte Rolle.
+
+### Erlaubte Netze
+
+Administratoren eines Mandanten (`manageAccess`) legen unter `/admin/network` oder per API fest, von welchen
+IP-Adressen und Netzen (IPv4/IPv6, CIDR) dessen Benutzer arbeiten dürfen. Eine leere Liste erlaubt alles.
+
+    curl localhost:8080/api/v1/network -H "Authorization: Bearer $TOKEN"     # Liste und eigene Adresse
+    curl -X PUT localhost:8080/api/v1/network -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d '{"networks":["192.168.10.0/24","2001:db8::/32"]}'
+
+- Geprüft wird bei der Anmeldung (nach dem Passwort; außerhalb: 403 mit Meldung) und bei jeder Anfrage. Ein Token, das von
+  einer anderen Adresse kommt, gilt dort nicht; die Sitzung bleibt für erlaubte Adressen bestehen.
+- Eine Liste, die die eigene Adresse ausschließt, wird abgelehnt: so sperrt sich niemand selbst aus. Haben sich die
+  Administratoren eines Mandanten trotzdem ausgesperrt, setzen Systemadministratoren (`manageTenants`) die Liste auf der
+  Mandantenseite oder per `PUT /api/v1/tenants/<name>/networks` zurück.
+- Der Bereich `system` wird nicht eingeschränkt.
+- Clients am Unix-Socket gelten als `127.0.0.1`. Replikationsziele brauchen ihre Adresse in der Liste der Quelle.
+- Hinter einem Reverse-Proxy: `TRUSTED_PROXIES` (Adressen oder Netze, durch Komma getrennt) nennen. Nur von diesen
+  Proxys gilt `X-Forwarded-For`, und zwar der letzte Eintrag, der kein vertrauter Proxy ist. Ohne die Variable zählt
+  die Adresse der Verbindung; dann sieht der Server bei einem Proxy nur dessen Adresse.
+- Die Listen stehen in `TENANTS_FILE` (Feld `networks`).
 
 Erster Start: siehe Mandanten. Erzeugte Passwörter bitte unter `/admin/account` ändern; danach werden die Variablen
 ignoriert. Administrator-Passwort eines Mandanten verloren: ein anderer Administrator des Mandanten setzt es zurück.

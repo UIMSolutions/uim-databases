@@ -1,0 +1,18 @@
+extends layout
+
+block content
+  div.card.bg-base-100.shadow.max-w-2xl
+    div.card-body
+      h2.card-title Allowed networks
+      p.text-sm.opacity-70 Users of tenant #{page.tenant} can sign in and work only from these IP addresses and networks. Leave the list empty to allow all addresses. Changes apply at once, also to sessions that are already open.
+      div.alert.mb-2(role="status")
+        i(data-lucide="map-pin", class="w-5 h-5")
+        span
+          | Your current address:
+          span.font-mono.ml-1 #{view.yourAddress.length ? view.yourAddress : "unknown"}
+      form(action="/admin/network", method="POST")
+        label.block.mb-3
+          span.block.text-sm.mb-1 One address or network per line, IPv4 or IPv6, e.g. 192.168.10.0/24, 203.0.113.7 or 2001:db8::/32
+          textarea.textarea.w-full.font-mono(name="networks", rows="8", spellcheck="false", autocapitalize="none") #{view.networksText}
+        p.text-xs.opacity-60.mb-3 A list that leaves out your current address is refused, so you can't lock yourself out. A replica that copies this tenant needs its address in the list too, and local tools on the Unix socket count as 127.0.0.1.
+        button.btn.btn-primary(type="submit") Save

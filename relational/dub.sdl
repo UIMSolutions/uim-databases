@@ -1,32 +1,23 @@
 name "relational"
-description "A collection of libraries built up over eight years of experience with the D language."
+description "Relational in-memory database with a hexagonal / Clean Architecture and a vibe.d REST API"
 homepage "https://www.sueel.de/uim/framework"
 authors "Ozan Nurettin Süel" "UI Manufaktur"
 copyright "Copyright © 2018-2026, Ozan Nurettin Süel"
 license "Apache-2.0"
-dependency "uim-framework" version="~>26.2.2"
-targetType "library"
+
+dependency "vibe-d" version="~>0.10.3"
+
 targetName "uim-databases-relational"
-configuration "default" {
+
+// Embeddable library: all layers, no main.
+configuration "library" {
 	targetType "library"
+	excludedSourceFiles "source/app.d"
 }
-configuration "modules" {
-	targetType "library"
-	versions "show_module"
-}
-configuration "tests" {
-	targetType "library"
-	versions "show_module" "show_test"
-}
-configuration "inits" {
-	targetType "library"
-	versions "show_module" "show_init"
-}
-configuration "calls" {
-	targetType "library"
-	versions "show_module" "show_test" "show_function"
-}
-configuration "verbose" {
-	targetType "library"
-	versions "show_module" "show_test" "show_init" "show_function"
+
+// REST server: dub run -c executable (reads config/default.json from the working directory)
+configuration "executable" {
+	targetType "executable"
+	targetName "relational"
+	mainSourceFile "source/app.d"
 }

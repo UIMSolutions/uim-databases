@@ -29,3 +29,7 @@ numerical/numerical-test-default
 compilers/compilers-test-default
 uim-framework-test-library
 uim-framework-test-library
+
+# Build outputs
+/relational
+/relational-test-*
