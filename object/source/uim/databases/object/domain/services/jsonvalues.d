@@ -1,3 +1,8 @@
+/****************************************************************************************************************
+* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UIManufaktur)
+* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file.
+* Authors: Ozan Nurettin Süel (aka UIManufaktur)
+*****************************************************************************************************************/
 /// Equality, ordering, index keys and copies of JSON values, as the database defines them.
 ///
 /// - Numbers compare by value, whatever their JSON representation: 1, 1.0 and 1e0 are equal.

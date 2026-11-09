@@ -1,3 +1,8 @@
+/****************************************************************************************************************
+* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UIManufaktur)
+* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file.
+* Authors: Ozan Nurettin Süel (aka UIManufaktur)
+*****************************************************************************************************************/
 /// Loads AppConfig. Precedence, lowest to highest:
 ///   1. built-in defaults (AppConfig field initialisers)
 ///   2. config file, `config/default.json` or the path in OBJECT_CONFIG_FILE
