@@ -7,6 +7,8 @@ module uim.hdb.domain.types.mergestatus;
 
 import uim.hdb;
 
+mixin(ShowModule!());
+
 @safe:
 /// Status of the delta merge in the background.
 struct MergeStatus {

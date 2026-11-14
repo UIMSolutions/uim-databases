@@ -5,15 +5,9 @@
 *****************************************************************************************************************/
 module uim.hdb.presentation.odata.edm;
 
-import uim.hdb.domain.value : exactText;
-import std.algorithm : map;
-import std.array : array, join, replace, split;
-import std.base64 : Base64URLNoPadding;
-import std.conv : to;
-import std.exception : enforce;
-import std.format : format;
-import std.string : strip, stripRight;
-import vibe.data.json : Json;
+import uim.hdb;
+
+// mixin
 
 @safe:
 
@@ -66,18 +60,18 @@ string wktToGeoJson(string wkt) {
 /// WKT from a GeoJSON object. The core checks the validity afterwards.
 string geoJsonToWkt(Json geo) {
     string pair(Json point) {
-        enforce(point.type == Json.Type.array && point.length == 2, "GeoJSON: Koordinate braucht x und y");
+        enforce(point.isArray && point.length == 2, "GeoJSON: Koordinate braucht x und y");
         return exactText(point[0].to!double) ~ " " ~ exactText(point[1].to!double);
     }
 
     string line(Json points) {
-        enforce(points.type == Json.Type.array, "GeoJSON: Liste von Koordinaten erwartet");
+        enforce(points.isArray, "GeoJSON: Liste von Koordinaten erwartet");
         return points.get!(Json[]).map!pair.join(", ");
     }
 
-    enforce(geo.type == Json.Type.object && geo["type"].type == Json.Type.string, "GeoJSON: type fehlt");
+    enforce(geo.isObject && geo["type"].isString, "GeoJSON: type fehlt");
     auto coordinates = geo["coordinates"];
-    enforce(coordinates.type == Json.Type.array, "GeoJSON: coordinates fehlt");
+    enforce(coordinates.isArray, "GeoJSON: coordinates fehlt");
     switch (geo["type"].get!string) {
     case "Point":
         return "POINT(" ~ pair(coordinates) ~ ")";

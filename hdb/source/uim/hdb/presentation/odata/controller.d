@@ -459,7 +459,7 @@ private Json[string] readEntity(HTTPServerRequest req, TableStats table) {
         auto column = table.columns.filter!(c => c.name == name);
         if (column.empty)
             throw badRequest("Unknown property: " ~ name);
-        if (ieee754(req) && column.front.type == ColumnType.integer && value.type == Json.Type.string) {
+        if (ieee754(req) && column.front.type == ColumnType.integer && value.isString) {
             try
                 value = Json(value.get!string.to!long);
             catch (Exception)
@@ -475,7 +475,7 @@ private Json[string] readEntity(HTTPServerRequest req, TableStats table) {
 /// only modify properties with simple values, it cannot set a GeoJSON object.
 private Json fromWire(ColumnStats column, Json value) {
     try {
-        if (column.type == ColumnType.blob && value.type == Json.Type.string)
+        if (column.type == ColumnType.blob && value.isString)
             return Json(base64UrlToHex(value.get!string));
         if ((column.type == ColumnType.geo || column.type == ColumnType.geography) && value.type == Json.Type.object)
             return Json(geoJsonToWkt(value));

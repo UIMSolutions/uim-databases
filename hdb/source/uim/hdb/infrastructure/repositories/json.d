@@ -76,8 +76,9 @@ string tableValueJson(Value v) {
 }
 
 Value tableValueFromJson(ColumnType type, Json j) {
-    if (j.type == Json.Type.null_)
+    if (j.isNull)
         return nullValue;
+    
     switch (type) {
     case ColumnType.integer:
         return Value(j.get!long);

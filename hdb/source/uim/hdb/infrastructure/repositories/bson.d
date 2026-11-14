@@ -80,9 +80,9 @@ final class BsonTableRepository : SnapshotTableRepository {
         auto document = readDocument(r, false, 0);
         enforce(r.remaining == 0, "Unexpected data after the BSON document");
 
-        enforce(document["format"].type == Json.Type.string && document["format"].get!string == format,
+        enforce(document["format"].isString && document["format"].get!string == format,
             "Not an hdb BSON table");
-        enforce(document["version"].type == Json.Type.int_ && document["version"].get!long == formatVersion,
+        enforce(document["version"].isInteger && document["version"].get!long == formatVersion,
             "Unsupported BSON table version");
         auto name = document["name"].get!string;
         ColumnDef[] defs;
@@ -92,7 +92,7 @@ final class BsonTableRepository : SnapshotTableRepository {
         auto table = new ColumnTable(name, defs, TableStorage.bson);
         auto row = new Value[defs.length];
         foreach (values; document["rows"].byValue) {
-            enforce(values.type == Json.Type.array && values.length == defs.length, "Invalid row in BSON table " ~ name);
+            enforce(values.isArray && values.length == defs.length, "Invalid row in BSON table " ~ name);
             foreach (i, d; defs)
                 assign(row[i], tableValueFromJson(d.type, values[i]));
             table.insert(row.dup);

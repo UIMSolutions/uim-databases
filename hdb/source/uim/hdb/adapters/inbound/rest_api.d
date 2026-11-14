@@ -106,7 +106,7 @@ final class SqlRestApi {
             auto stmt = req.json["statement"].get!string;
             string txId = req.headers.get("X-Transaction-Id", "");
             auto bodyTx = req.json["transaction"];
-            if (bodyTx.type == Json.Type.string)
+            if (bodyTx.isString)
                 txId = bodyTx.get!string;
             auto r = sql.executeIn(txId, stmt);
             Json j = Json.emptyObject;

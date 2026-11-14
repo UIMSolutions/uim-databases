@@ -7,6 +7,8 @@ module uim.hdb.domain.types.exact;
 
 import uim.hdb;
 
+mixin(ShowModule!());
+
 @safe:
 
 

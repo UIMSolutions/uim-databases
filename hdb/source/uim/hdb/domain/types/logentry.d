@@ -5,7 +5,7 @@
 *****************************************************************************************************************/
 module uim.hdb.domain.types.logentry;
 
-import uim.hdb.domain.enumerations.logkind;
+import uim.hdb;
 import std.algorithm : canFind, sort, uniq;
 import std.array : array;
 import std.conv : to;
@@ -13,6 +13,8 @@ import std.datetime.systime : SysTime;
 import std.exception : enforce;
 import std.format : format;
 import std.string : strip, toLower;
+
+mixin(ShowModule!());
 
 @safe:
 

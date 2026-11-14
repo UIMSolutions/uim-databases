@@ -2,8 +2,8 @@
 	"fileVersion": 1,
 	"versions": {
 		"diet-ng": "1.8.4",
-		"during": "0.3.0",
-		"eventcore": "0.9.39",
+		"during": "0.6.0",
+		"eventcore": "0.9.40",
 		"mir-linux-kernel": "1.0.1",
 		"openssl": "3.4.0",
 		"openssl-static": "1.0.5+3.0.8",
@@ -11,7 +11,7 @@
 		"stdx-allocator": "2.77.5",
 		"taggedalgebraic": "1.0.1",
 		"vibe-container": "1.7.1",
-		"vibe-core": "2.13.5",
+		"vibe-core": "2.14.0",
 		"vibe-d": "0.9.8"
 	}
 }

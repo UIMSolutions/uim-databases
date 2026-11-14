@@ -5,12 +5,9 @@
 *****************************************************************************************************************/
 module uim.hdb.infrastructure.repositories.memory;
 
-import uim.hdb.application.ports;
-import uim.hdb.domain.table;
-import std.algorithm : sort;
-import std.array : array;
-import std.exception : enforce;
-import std.string : toLower;
+import uim.hdb;
+
+mixin(ShowModule!());
 
 @safe:
 

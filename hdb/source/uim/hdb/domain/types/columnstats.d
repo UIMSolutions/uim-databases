@@ -10,6 +10,8 @@ import uim.hdb;
 import uim.hdb.domain.enumerations.columntype;
 import vibe.d;
 
+mixin(ShowModule!());
+
 @safe:
 
 struct ColumnStats {

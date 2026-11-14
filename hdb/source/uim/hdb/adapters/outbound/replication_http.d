@@ -61,7 +61,7 @@ final class HttpReplicationClient : IReplicationClient {
             req.writeJsonBody(body_);
         }, (string text, scope HTTPClientResponse res) {
             auto j = parseJsonString(text);
-            enforce(j["token"].type == Json.Type.string, "The source sent no session token");
+            enforce(j["token"].isString, "The source sent no session token");
             token = j["token"].get!string;
         });
         return token;
@@ -150,7 +150,7 @@ Json changeBatchJson(ChangeBatch batch) {
 private string messageOf(string text, int status) {
     try {
         auto j = parseJsonString(text);
-        if (j["statusMessage"].type == Json.Type.string)
+        if (j["statusMessage"].isString)
             return j["statusMessage"].get!string;
     } catch (Exception) {
     }

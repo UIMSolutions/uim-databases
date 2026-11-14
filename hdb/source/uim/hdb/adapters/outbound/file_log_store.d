@@ -121,7 +121,7 @@ private Json toJson(ref const LogEntry e) {
 private LogEntry fromJson(Json j) {
     string text(string key) {
         auto v = j[key];
-        return v.type == Json.Type.string ? v.get!string : "";
+        return v.isString ? v.get!string : "";
     }
 
     LogEntry e;
@@ -205,15 +205,15 @@ private Json settingsToJson(LogSettings s) {
 /// Fehlende Felder behalten den Wert von `base` (Dateien älterer Versionen).
 private LogSettings settingsFromJson(Json j, LogSettings base) {
     auto s = base;
-    if (j["enabled"].type == Json.Type.bool_)
+    if (j["enabled"].isBoolean)
         s.enabled = j["enabled"].get!bool;
-    if (j["minSeverity"].type == Json.Type.string)
+    if (j["minSeverity"].isString)
         s.minSeverity = parseSeverity(j["minSeverity"].get!string);
-    if (j["retentionDays"].type == Json.Type.int_)
+    if (j["retentionDays"].isInteger)
         s.retentionDays = j["retentionDays"].get!int;
-    if (j["maxEntries"].type == Json.Type.int_)
+    if (j["maxEntries"].isInteger)
         s.maxEntries = j["maxEntries"].get!size_t;
-    if (j["categories"].type == Json.Type.array) {
+    if (j["categories"].isArray) {
         s.categories = null;
         foreach (c; j["categories"].byValue)
             s.categories ~= c.get!string;

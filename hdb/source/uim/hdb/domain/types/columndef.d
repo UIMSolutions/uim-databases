@@ -7,6 +7,8 @@ module uim.hdb.domain.types.columndef;
 
 import uim.hdb;
 
+mixin(ShowModule!());
+
 @safe:
 struct ColumnDef {
     string name;

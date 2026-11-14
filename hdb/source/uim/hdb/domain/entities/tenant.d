@@ -1,9 +1,14 @@
+/****************************************************************************************************************
+* Copyright: © 2018-2026 Ozan Nurettin Süel (aka UIManufaktur)
+* License: Subject to the terms of the Apache 2.0 license, as written in the included LICENSE.txt file.
+* Authors: Ozan Nurettin Süel (aka UIManufaktur)
+*****************************************************************************************************************/
 module uim.hdb.domain.entities.tenant;
 
-import std.algorithm : all;
+import uim.hdb;
 import std.ascii : isDigit, isLower;
-import std.exception : enforce;
-import std.string : strip, toLower;
+
+mixin(ShowModule!());
 
 @safe:
 

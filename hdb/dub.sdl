@@ -1,6 +1,7 @@
 name "hdb"
 description "In-Memory-Spaltendatenbank (HANA-ähnlich) mit vibe.d und hexagonaler Architektur"
 targetType "executable"
+targetPath "build"
 
 // Server (Standard): dub build, dub run, dub test
 configuration "application" {
@@ -9,7 +10,7 @@ configuration "application" {
     dependency "vibe-d" version="~>0.10.3"
     dependency "uim-framework:oop" version="~>26.11.1"
     // Der Admin-Client ist ein eigenes Programm und spricht den Server nur über HTTP an
-    excludedSourceFiles "source/hdbadmin.d" "source/uim/hdb/presentation/gui/*"
+    excludedSourceFiles "source/hdbadmin.d" "source/hdbcli.d" "source/uim/hdb/presentation/gui/*"
 }
 
 // Admin-Client mit GTK: dub build --config=gui, dub run --config=gui
@@ -18,10 +19,32 @@ configuration "gui" {
     targetName "hdb-admin"
     mainSourceFile "source/hdbadmin.d"
     dependency "gtk-d:gtkd" version="~>3.11.0"
-    excludedSourceFiles "source/app.d" "source/uim/hdb/package.d" "source/uim/hdb/adapters/*" \
+    excludedSourceFiles "source/app.d" "source/hdbcli.d" "source/uim/hdb/package.d" "source/uim/hdb/adapters/*" \
         "source/uim/hdb/application/*" "source/uim/hdb/domain/*" "source/uim/hdb/infrastructure/*" \
-        "source/uim/hdb/testing.d" "source/uim/hdb/presentation/package.d" "source/uim/hdb/presentation/cli/*" \
+        "source/uim/hdb/testing.d" "source/uim/hdb/embedded.d" "source/uim/hdb/gateway/*" \
+        "source/uim/hdb/presentation/package.d" "source/uim/hdb/presentation/cli/*" \
         "source/uim/hdb/presentation/http/*" "source/uim/hdb/presentation/odata/*" \
         "source/uim/hdb/presentation/rest/*" "source/uim/hdb/presentation/tcp/*" \
         "source/uim/hdb/presentation/ui5/*" "source/uim/hdb/presentation/unix/*"
+}
+
+// Eingebettet: die Datenbank als Bibliothek im eigenen Programm, ohne Server (uim.hdb.embedded).
+// dub build --config=library, oder als Abhängigkeit: dependency "hdb" version="*" path="..." mit
+// subConfiguration "hdb" "library"
+configuration "library" {
+    targetType "library"
+    targetName "hdb"
+    dependency "vibe-d" version="~>0.10.3"
+    dependency "uim-framework:oop" version="~>26.11.1"
+    excludedSourceFiles "source/app.d" "source/hdbadmin.d" "source/hdbcli.d" "source/uim/hdb/presentation/gui/*"
+}
+
+// Kommandozeile: SQL-Shell ohne Server auf einem Datenbankverzeichnis oder im Speicher (uim.hdb.presentation.cli).
+// dub build --config=cli, dub run --config=cli -- data/mydb, dub run --config=cli -- --help
+configuration "cli" {
+    targetName "hdb-cli"
+    mainSourceFile "source/hdbcli.d"
+    dependency "vibe-d" version="~>0.10.3"
+    dependency "uim-framework:oop" version="~>26.11.1"
+    excludedSourceFiles "source/app.d" "source/hdbadmin.d" "source/uim/hdb/presentation/gui/*"
 }

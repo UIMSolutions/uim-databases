@@ -1115,11 +1115,11 @@ string createTableSql(string name, const(string)[] columns, const(string)[] type
 /// daher trifft sie alle Zeilen mit genau diesen Werten.
 string rowPredicate(ColumnStats[] cols, string matchJson) {
     auto values = parseJsonString(matchJson);
-    enforce(values.type == Json.Type.array && values.length == cols.length, "Row does not match the table");
+    enforce(values.isArray && values.length == cols.length, "Row does not match the table");
     string[] parts;
     foreach (i, c; cols) {
         auto v = values[i];
-        parts ~= v.type == Json.Type.null_ ? c.name ~ " IS NULL"
+        parts ~= v.isNull ? c.name ~ " IS NULL"
             : c.name ~ " = " ~ toSqlLiteral(valueFromInput(c.type, v.get!string));
     }
     return parts.join(" AND ");

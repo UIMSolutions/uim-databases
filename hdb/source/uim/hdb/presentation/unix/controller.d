@@ -61,7 +61,7 @@ final class UnixController : IUnixController {
             return reply(RestStatus("UP"));
         case "POST /auth/login":
             auto input = objectOf(request);
-            auto tenant = input["tenant"].type == Json.Type.string ? input["tenant"].get!string : "";
+            auto tenant = input["tenant"].isString ? input["tenant"].get!string : "";
             auto r = access.login(tenant, textOf(input, "user"), textOf(input, "password"), localAddress);
             return reply(RestLogin(r.token, r.expiresInSeconds,
                 RestUser(r.principal.name, r.principal.role, true, r.principal.tenant)));
@@ -71,7 +71,7 @@ final class UnixController : IUnixController {
             return reply(RestStatus("LOGGED_OUT"));
         case "POST /sql":
             auto input = objectOf(request);
-            auto transaction = input["transaction"].type == Json.Type.string
+            auto transaction = input["transaction"].isString
                 ? input["transaction"].get!string : request.header("X-Transaction-Id");
             return reply(toRest(sql.executeIn(transaction, textOf(input, "statement"))));
         case "GET /tables":
@@ -101,7 +101,7 @@ final class UnixController : IUnixController {
     }
 
     private string textOf(Json input, string name) {
-        enforce(input[name].type == Json.Type.string, "Text field required: " ~ name);
+        enforce(input[name].isString, "Text field required: " ~ name);
         return input[name].get!string;
     }
 

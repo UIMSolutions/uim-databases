@@ -511,12 +511,12 @@ private void registerReplicationRoutes(URLRouter router, IReplicationUseCase rep
     router.put("/api/v1/replication/source", (HTTPServerRequest req, HTTPServerResponse res) @safe {
         handle(res, {
             auto j = req.json;
-            enforce(j.type == Json.Type.object, "JSON object expected");
+            enforce(j.isObject, "JSON object expected");
             string text(string key) {
                 auto v = j[key];
-                if (v.type == Json.Type.undefined || v.type == Json.Type.null_)
+                if (v.type == Json.Type.undefined || v.isNull)
                     return "";
-                enforce(v.type == Json.Type.string, key ~ " must be text");
+                enforce(v.isString, key ~ " must be text");
                 return v.get!string;
             }
 
@@ -526,7 +526,7 @@ private void registerReplicationRoutes(URLRouter router, IReplicationUseCase rep
             config.user = text("user");
             config.password = text("password");
             auto interval = j["intervalSeconds"];
-            if (interval.type == Json.Type.int_)
+            if (interval.isInteger)
                 config.intervalSeconds = interval.get!int;
             else
                 enforce(interval.type == Json.Type.undefined, "intervalSeconds must be a whole number");
@@ -639,7 +639,7 @@ unittest {
         assert(tables.insert("t", [Json(1), Json("it's; DROP TABLE t"), Json(1234567.891)]).affected == 1);
         assert(tables.insert("t", [Json(2), Json(null), Json(2)]).affected == 1);
         auto page = tables.rows("t", "id >= 1", "id", true, 1, 0);
-        assert(page.total == 2 && page.rows.length == 1 && page.rows[0][0].get!long == 2 && page.rows[0][1].type == Json.Type.null_);
+        assert(page.total == 2 && page.rows.length == 1 && page.rows[0][0].get!long == 2 && page.rows[0][1].type.isNull);
         assert(tables.rows("t", "", "", false, 100, 0).rows[0][1].get!string == "it's; DROP TABLE t");
 
         auto tx = sql.execute("BEGIN", "", "").transaction;
