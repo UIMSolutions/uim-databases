@@ -6,7 +6,7 @@
 module app;
 
 import uim.hdb;
-import uim.hdb.gateway : GatewayConfigFile, GatewayProxy;
+import uim.hdb.infrastructure.gateway : GatewayConfigFile, GatewayProxy;
 
 /// Composition Root: einziger Ort, an dem Adapter und Kern verdrahtet werden.
 /// HDB_MODE wählt die Betriebsart: multi (Standard), single oder gateway. Eingebettet ist keine Betriebsart des
@@ -208,7 +208,7 @@ private HTTPServerSettings serverSettings() @safe {
 }
 
 /// Verteilter Betrieb: dieser Prozess hat keine Daten und keine Benutzer, er leitet jede Anfrage an den hdb-Server
-/// des Mandanten weiter (GATEWAY_CONFIG, siehe uim.hdb.gateway.routes). Die Backends sollten das Gateway in
+/// des Mandanten weiter (GATEWAY_CONFIG, siehe uim.hdb.infrastructure.gateway.routes). Die Backends sollten das Gateway in
 /// TRUSTED_PROXIES eintragen, sonst gelten deren erlaubte Netze für die Adresse des Gateways.
 private int runGateway() @safe {
     auto path = environment.get("GATEWAY_CONFIG", "data/hdb-gateway.json");

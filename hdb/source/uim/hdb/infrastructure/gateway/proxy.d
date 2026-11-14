@@ -6,9 +6,9 @@
 /// Eingehender Adapter des Gateways: nimmt jede Anfrage an und reicht sie an das Backend des Mandanten weiter.
 /// Das Gateway prüft selbst keine Rechte: das tut das Backend, an das die Anfrage geht. Es sorgt nur dafür, dass
 /// ein Token nie an ein anderes Backend gelangt als das, das es ausgestellt hat.
-module uim.hdb.gateway.proxy;
+module uim.hdb.infrastructure.gateway.proxy;
 
-import uim.hdb.gateway.routes;
+import uim.hdb;
 import core.time : Duration, MonoTime, seconds;
 import std.array : Appender;
 import std.conv : to;

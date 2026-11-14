@@ -4,6 +4,8 @@ import uim.hdb;
 import uim.hdb.domain.types.columnstats;
 import uim.hdb.domain.enumerations.tablestorage;
 
+mixin(ShowModule!());
+
 @safe:
 
 struct TableStats {

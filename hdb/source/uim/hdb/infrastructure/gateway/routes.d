@@ -9,7 +9,7 @@
 /// Gateway reicht die Anmeldung an das Backend des Mandanten weiter und gibt dessen Token mit vorangestellter
 /// Backend-Kennung zurück ("eu.<token>"). Spätere Anfragen gehen anhand dieser Kennung an dasselbe Backend,
 /// ohne Kennung.
-module uim.hdb.gateway.routes;
+module uim.hdb.infrastructure.gateway.routes;
 
 import std.algorithm : all, canFind, sort;
 import std.array : array, join, split;

@@ -5,6 +5,10 @@
 *****************************************************************************************************************/
 module uim.hdb.domain.types.packed_vector;
 
+import uim.hdb;
+
+mixin(ShowModule!());
+
 @safe:
 /// Bit-packed vector: each code occupies only as many bits as the dictionary requires.
 struct PackedVector {

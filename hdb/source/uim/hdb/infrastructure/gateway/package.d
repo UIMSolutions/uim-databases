@@ -4,7 +4,8 @@
 * Authors: Ozan Nurettin Süel (aka UI-Manufaktur UG *R.I.P*)
 *****************************************************************************************************************/
 /// Betriebsart „gateway“: ein Zugang vor mehreren hdb-Servern, Weiterleitung nach Mandant.
-module uim.hdb.gateway;
+module uim.hdb.infrastructure.gateway;
 
-public import uim.hdb.gateway.proxy;
-public import uim.hdb.gateway.routes;
+public:
+    import uim.hdb.infrastructure.gateway.proxy;
+    import uim.hdb.infrastructure.gateway.routes;

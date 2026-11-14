@@ -2,6 +2,8 @@ module uim.hdb.domain.types.queryresult;
 
 import uim.hdb;
 
+mixin(ShowModule!());
+
 @safe:
 
 struct QueryResult {

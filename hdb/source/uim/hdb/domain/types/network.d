@@ -11,6 +11,8 @@ import std.conv : to;
 import std.exception : enforce;
 import std.string : indexOf, split, strip, toLower;
 
+mixin(ShowModule!());
+
 @safe:
 
 /// IP-Adresse als 16 Byte. IPv4 liegt im IPv6-Raum als ::ffff:a.b.c.d, so vergleicht eine Regel beide Familien.

@@ -2,6 +2,8 @@ module uim.hdb.domain.types.typespec;
 
 import uim.hdb;
 
+mixin(ShowModule!());
+
 @safe:
 
 struct TypeSpec {
