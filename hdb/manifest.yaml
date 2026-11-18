@@ -1,6 +1,0 @@
-applications:
-  - name: hana-lite
-    memory: 256M
-    buildpacks:
-      - binary_buildpack
-    command: ./hdb
